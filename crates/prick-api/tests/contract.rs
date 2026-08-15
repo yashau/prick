@@ -112,7 +112,14 @@ const PATH_SENTINELS: [&str; 3] = [PROJECT, ENVIRONMENT, KEY];
 /// guard and it names the op that is missing. This number is here so that
 /// growing the API surface cannot be done without someone reading this file:
 /// when it fails, add the call, then bump it.
-const OPS_AT_LAST_REVIEW: usize = 22;
+///
+/// Bumping it is a claim, not a count. It says the new op's request was put
+/// through the comparisons below and read against `docs/openapi.json` -- which
+/// a compiler cannot check and an author raising the number without adding the
+/// call would assert falsely, since the set comparison would then fail first
+/// and name the op. Raise it in the same change that adds the call, never
+/// ahead of one.
+const OPS_AT_LAST_REVIEW: usize = 23;
 
 /// The module under test, read at compile time so the list of ops comes from
 /// the code rather than from anybody's memory of it.
@@ -263,6 +270,7 @@ async fn call_every_op(client: &Client) -> Vec<&'static str> {
     exercise!(called, rollback_secret(client, PROJECT, ENVIRONMENT, KEY, 1, Some("contract test")));
 
     exercise!(called, list_identities(client));
+    exercise!(called, explain_identity_permissions(client, UUID));
     exercise!(called, list_unknown_identities(client));
     exercise!(called, list_grants(client));
     exercise!(called, create_grant(client, UUID, "reader", scope, Some(1_760_000_000_000)));

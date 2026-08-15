@@ -614,6 +614,41 @@ pub async fn list_identities(client: &Client) -> Result<Vec<Identity>, ApiError>
     client.get_json(&client.url(&["identities"])).await
 }
 
+/// The URL of one identity's effective permissions.
+fn effective_permissions_url(client: &Client, identity_id: &str) -> String {
+    client.url(&["identities", identity_id, "effective-permissions"])
+}
+
+/// `GET /identities/{id}/effective-permissions`. Every role an identity holds,
+/// and for each one the rows that confer it.
+///
+/// Takes an **identity id**, not a subject, the same as [`create_grant`], and
+/// resolvable the same way through [`list_identities`].
+///
+/// The one op here that answers a [`serde_json::Value`] rather than a model,
+/// which is a decision about where a malformed answer is refused rather than a
+/// gap. The document is a provenance graph -- scopes carrying sources carrying
+/// groups, with exactly one source flagged `decisive` -- and its only reader
+/// refuses an absent `scopes` with a sentence saying that an absent `scopes`
+/// renders as "no access anywhere", which is the one wrong answer this route
+/// must never produce. A `Deserialize` mirror here would replace that with
+/// "the server returned JSON that does not match what this client expects",
+/// followed by a line and a column -- trading the name of the missing field,
+/// and the reason its absence is dangerous, for an offset into a body this
+/// crate deliberately never prints. The route is the fact this module exists
+/// to hold; reading the document is the caller's.
+///
+/// # Errors
+///
+/// Any transport or response failure, including `404` when no identity has
+/// that id.
+pub async fn explain_identity_permissions(
+    client: &Client,
+    identity_id: &str,
+) -> Result<serde_json::Value, ApiError> {
+    client.get_json(&effective_permissions_url(client, identity_id)).await
+}
+
 /// `GET /access/unknown-identities`. Subjects seen, denied, and never granted.
 ///
 /// # Errors
@@ -718,6 +753,19 @@ mod tests {
         assert_eq!(
             custom_method(&client, "billing", "eu-west", ":export"),
             "https://prick.example.com/api/v1/projects/billing/environments/eu-west/secrets:export"
+        );
+    }
+
+    #[test]
+    fn a_uuid_is_the_only_thing_between_identities_and_effective_permissions() {
+        // Not `/access/identities/...`, and not a query parameter: the id is a
+        // path segment, and the route hangs off `/identities`.
+        // `crates/prick-api/tests/contract.rs` checks this shape against
+        // `docs/openapi.json`; this pins the spelling the code emits, so a
+        // failure says which of the two moved.
+        assert_eq!(
+            effective_permissions_url(&client(), "abc"),
+            "https://prick.example.com/api/v1/identities/abc/effective-permissions"
         );
     }
 

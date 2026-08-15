@@ -39,19 +39,22 @@
 //! seam the server splits `core/permissions.ts` on: this file answers "what
 //! does the access graph say", that one answers "how does a human read it".
 //!
-//! # Where the route lives, and where it should live
+//! # Where the route lives
 //!
-//! In [`prick_api::ops`], by the rule in that crate's own documentation: a route
-//! is a fact about the server, and `crates/prick-api/tests/contract.rs` records
-//! every op's request and compares it with `docs/openapi.json`. This module
-//! builds its URL itself because `crates/prick-api` was owned by another change
-//! when it was written, so the check that file performs is reproduced here
-//! instead -- `the_route_is_one_the_spec_actually_serves` below reads the same
-//! generated document. Moving the request into an
-//! `ops::explain_identity_permissions` is the follow-up, and it deletes that
-//! test rather than duplicating it.
+//! In [`prick_api::ops::explain_identity_permissions`], by the rule in that
+//! crate's own documentation: a route is a fact about the server, not about the
+//! terminal. Nothing here builds a URL, and that is what puts this request in
+//! front of `crates/prick-api/tests/contract.rs`, which calls every op against
+//! a mock server and compares the requests that arrive with
+//! `docs/openapi.json`. A request built in this crate would be invisible to it
+//! -- so the route is checked by the mechanism that exists to check routes,
+//! rather than by a second copy of that check living next to the one caller.
+//!
+//! What is left here is reading the answer, which the op deliberately does not
+//! do: see its documentation for why the document arrives as a
+//! [`serde_json::Value`] and is refused by [`parse`] rather than by `serde`.
 
-use prick_api::Client;
+use prick_api::ops;
 use serde_json::Value;
 
 use crate::cli::GlobalArgs;
@@ -218,16 +221,11 @@ pub fn run(
     let identity = super::access::resolve_identity(context, subject)?;
     let client = context.client();
 
-    let document: Value = context.block_on(client.get_json(&url(client, &identity.id)))?;
+    let document = context.block_on(ops::explain_identity_permissions(client, &identity.id))?;
     let explanation = parse(&document)?;
     report(&explanation, global, out);
 
     Ok(())
-}
-
-/// `GET /identities/{id}/effective-permissions`.
-fn url(client: &Client, identity_id: &str) -> String {
-    client.url(&["identities", identity_id, "effective-permissions"])
 }
 
 // ---------------------------------------------------------------------------
@@ -397,99 +395,7 @@ fn parsed() -> Explanation {
 
 #[cfg(test)]
 mod tests {
-    use prick_api::{Config, Credential};
-
     use super::*;
-
-    fn client() -> Client {
-        Client::new(Config::new("https://prick.example.com"), Credential::Anonymous)
-            .expect("building a client must succeed")
-    }
-
-    // -----------------------------------------------------------------------
-    // The route
-    // -----------------------------------------------------------------------
-
-    /// The check `crates/prick-api/tests/contract.rs` performs for every op,
-    /// done here because this request is built here. `docs/openapi.json` is
-    /// generated from the Hono router and `mise run openapi:check` fails if it
-    /// is stale, so it is the server's own account of itself.
-    #[test]
-    fn the_route_is_one_the_spec_actually_serves() {
-        /// A syntactically valid UUIDv7, so the path is one the server would
-        /// accept as well as one it declares.
-        const IDENTITY: &str = "00000000-0000-7000-8000-000000000001";
-
-        let url = url(&client(), IDENTITY);
-        assert!(!url.contains('?'), "this operation declares no query parameter: {url}");
-
-        let path = url
-            .strip_prefix("https://prick.example.com")
-            .expect("the client builds an absolute URL on its base");
-
-        // The id is a path parameter, so it is compared as a shape -- the spec
-        // calls it `{id}` and the client sends a uuid, and neither is wrong
-        // about the word. Every other segment is a literal and is compared as
-        // written, because the server matches those exactly.
-        let observed = path.replace(IDENTITY, "{}");
-
-        let spec = std::fs::read_to_string(
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/openapi.json"),
-        )
-        .expect("the generated spec is what this test compares against");
-        let spec: Value = serde_json::from_str(&spec).expect("docs/openapi.json is JSON");
-
-        let served: Vec<String> = spec["paths"]
-            .as_object()
-            .expect("the spec has paths")
-            .iter()
-            .filter(|(_, item)| item.get("get").is_some())
-            .map(|(template, _)| empty_parameters(template))
-            .collect();
-
-        assert!(
-            served.contains(&observed),
-            "GET {observed} is not a route docs/openapi.json serves. The GET routes it does \
-             serve under /identities are:\n{}\n\nEither the path is wrong, or the router grew \
-             one and `mise run openapi` has not been run.",
-            served
-                .iter()
-                .filter(|path| path.contains("identities"))
-                .cloned()
-                .collect::<Vec<_>>()
-                .join("\n")
-        );
-    }
-
-    /// Empties every `{parameter}`, so the spec's name for a path parameter and
-    /// the value the client sends are compared as a shape rather than a word.
-    fn empty_parameters(path: &str) -> String {
-        let mut out = String::with_capacity(path.len());
-        let mut inside = false;
-        for character in path.chars() {
-            match character {
-                '{' => {
-                    inside = true;
-                    out.push('{');
-                }
-                '}' => {
-                    inside = false;
-                    out.push('}');
-                }
-                _ if inside => {}
-                _ => out.push(character),
-            }
-        }
-        out
-    }
-
-    #[test]
-    fn a_uuid_is_the_only_thing_between_identities_and_effective_permissions() {
-        // Not `/access/identities/...`, and not a query parameter: the id is a
-        // path segment, and the route hangs off `/identities`.
-        let url = url(&client(), "abc");
-        assert!(url.ends_with("/identities/abc/effective-permissions"), "{url}");
-    }
 
     // -----------------------------------------------------------------------
     // Reading the answer
