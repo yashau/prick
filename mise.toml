@@ -174,7 +174,7 @@ wait_for = ["bootstrap:js"]
 # LINT — pure fan-out, every leaf individually runnable
 # ---------------------------------------------------------------------------
 [tasks.lint]
-description = "Every linter: clippy, vp lint, svelte-check, actionlint, zizmor, pinact, typos"
+description = "Every linter: clippy, vp lint, svelte-check, actionlint, zizmor, pinact, typos, file size"
 depends = [
   "lint:rust",
   "lint:js",
@@ -183,6 +183,7 @@ depends = [
   "lint:zizmor",
   "lint:pinact",
   "lint:typos",
+  "lint:loc",
 ]
 
 [tasks."lint:rust"]
@@ -203,6 +204,17 @@ description = "svelte-check — neither vp lint nor tsc typechecks .svelte files
 # their own, and svelte-check on this app costs a few seconds.
 run = "pnpm --dir packages/app run typecheck"
 wait_for = ["bootstrap:js"]
+
+[tasks."lint:loc"]
+description = "Fail if any source file exceeds 1000 lines"
+# Reviewability, not aesthetics. A file nobody reads end to end is where a
+# subtle change hides, and here that means the write path, the argument escaper
+# and the token store -- exactly the files that grow.
+#
+# No per-file exemption list by design; see the header of check-loc.mjs. Only
+# tool-generated output is excluded, because "split this" is not advice the
+# author can act on.
+run = "node scripts/check-loc.mjs"
 
 [tasks."lint:actions"]
 description = "actionlint over .github/workflows"

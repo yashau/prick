@@ -17,7 +17,8 @@
 # wrong shape: the thing with access to every secret in an environment would be
 # the one file nobody looks at. A composite action installs the CLI that is
 # already published, signed and provenance-attested, and everything this action
-# adds is the two readable files beside this one.
+# adds is the readable JavaScript beside this file: `inject.mjs` and the five
+# small modules it imports, none of them generated, minified or bundled.
 #
 # WHY EVERY INPUT IS PASSED THROUGH `env:` AND NEVER INTERPOLATED INTO A SHELL
 #

@@ -124,7 +124,8 @@ URLs are refused.
 
 Any runner with `node` and `npm` on `PATH` — every GitHub-hosted runner, on Linux, macOS and
 Windows. Nothing is compiled and no build artefact is committed to this repository: the action
-installs the published, provenance-attested CLI and adds the two files next to this README.
+installs the published, provenance-attested CLI and adds the handful of readable `.mjs` files next
+to this README.
 
 ## Security
 
@@ -167,8 +168,10 @@ design and are therefore safe to echo. The one non-obvious case: when the CLI's 
 parse as JSON, the parser's own error is thrown away rather than reported, because Node's JSON
 messages quote a slice of the input — and the input is a document of secret values.
 
-Every one of the above is a test in `inject.test.mjs`, including one that reads `inject.mjs` and
-fails if a second route to stdout or stderr ever appears in it.
+Every one of the above is a test, including one in `inject.test.mjs` that reads **every source file
+in this directory** and fails if a second route to stdout or stderr ever appears anywhere in the
+action. The file list is discovered rather than written down, so a module added tomorrow is audited
+without anyone remembering to add it.
 
 ## Development
 
@@ -179,6 +182,19 @@ cd action && node --test
 Run from inside the directory: since Node 26, `node --test <dir>` tries to load the path as a module
 rather than walking it, so a positional directory argument fails. With no positional it uses Node's
 own recursive discovery.
+
+The action is `inject.mjs` — the two subcommands and the ordering that makes masking come first —
+over five modules it imports:
+
+| File         | What is in it                                                       |
+| ------------ | ------------------------------------------------------------------- |
+| `io.mjs`     | the mask command, the heredoc writer, the only writes to any stream |
+| `cli.mjs`    | the `prk` boundary: version, argv, exit codes, output parsing       |
+| `plan.mjs`   | the name grammar, the unsafe-name denylist, the injection plan      |
+| `inputs.mjs` | the `PRICK_INPUT_*` variables, validated                            |
+| `errors.mjs` | `ActionError`                                                       |
+
+Each has a `*.test.mjs` beside it; `harness.mjs` holds the fakes they share and is not a test file.
 
 No dependencies, no build step, nothing to bundle. `action.yml` is checked by `actionlint` and
 `zizmor` through any workflow that references it.

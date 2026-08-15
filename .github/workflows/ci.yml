@@ -332,6 +332,9 @@ jobs:
       - name: Spell check
         run: mise run lint:typos
 
+      - name: Source file size
+        run: mise run lint:loc
+
       - name: No upstream references
         run: |
           set -euo pipefail

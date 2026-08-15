@@ -1,7 +1,7 @@
-import type { BatchBody, ImportBody, RollbackBody } from "@prick/shared";
-import { and, asc, desc, eq, inArray, ne, sql } from "drizzle-orm";
+import type { BatchBody, ImportBody } from "@prick/shared";
+import { and, eq, inArray, ne, sql } from "drizzle-orm";
 
-import { decryptSecretValue, encryptSecretValue, type Keyring } from "../crypto/index.js";
+import { encryptSecretValue, type Keyring } from "../crypto/index.js";
 import { uuidv7 } from "../db/ids.js";
 import {
   environments,
@@ -11,38 +11,46 @@ import {
   type NewSecret,
   type NewSecretVersion,
 } from "../db/schema.js";
-import { auditStatement, recordAudit } from "./audit.js";
+import { auditStatement } from "./audit.js";
 import { requireKeyring, type CoreContext } from "./context.js";
 import { environmentScope, requireEnvironment } from "./environments.js";
 import { classifyD1Constraint, PrickError, toPrickError } from "./errors.js";
 import { assertRole } from "./guards.js";
 import { parseDotenv } from "./dotenv.js";
+import { readKeyState, type KeyState } from "./secret-state.js";
 import { chunk, rowsPerChunk, runBatch, type Statement } from "./sql.js";
 
 /**
- * A secret as it appears in a LIST. There is no value here, and there must
- * never be one -- this is what the SSR-rendered screens and the audit views
- * consume.
+ * THE BULK WRITE PATH -- and, through the re-exports below, the module every
+ * transport still imports as `core/secrets.js`.
+ *
+ * What is IN this file is one thing: a write of many keys at once, from the
+ * plan through the chunking arithmetic to the single `batch()` that commits it.
+ * `buildStatements` returns ONE array and `writeSecrets` hands that array to
+ * ONE `runBatch`; there is no second call site, and there must never be one.
+ * Keeping the plan, the chunking and the batch in the same file is deliberate:
+ * the atomicity guarantee is an argument about all three together, and an
+ * argument you have to open three files to follow is one nobody checks.
+ *
+ * What has moved out is everything that is NOT that write:
+ *
+ *   ./secret-state.js   the prior-state read every mutation begins with
+ *   ./secret-reads.js   list / reveal / export / versions -- the decrypt side
+ *   ./secret-moves.js   rename and rollback -- one key, one batch each
+ *
+ * They are re-exported here so `core/secrets.js` remains the single import
+ * surface for the HTTP routes and the SvelteKit loads.
  */
-export interface SecretListEntry {
-  key: string;
-  description: string | null;
-  version: number;
-  updatedAt: number;
-  updatedBy: string;
-  /** The master key id the current version is sealed under. Not secret. */
-  kid: string | null;
-  /**
-   * `true` when the stored envelope failed to decrypt or failed its AEAD tag.
-   *
-   * NOT swallowed, NOT skipped. A catch-and-continue around decryption turns a
-   * tamper attempt into a QUIETLY SHORTER .env file -- which is how you deploy
-   * production without DATABASE_URL and find out from an outage. Here the row
-   * is returned marked unreadable, the UI renders it red, and the read is
-   * audited with `outcome: 'error'`.
-   */
-  unreadable: boolean;
-}
+
+export {
+  exportSecrets,
+  listSecrets,
+  listVersions,
+  revealSecret,
+  type SecretListEntry,
+  type VersionEntry,
+} from "./secret-reads.js";
+export { renameSecret, rollbackSecret } from "./secret-moves.js";
 
 export interface WriteSecretsResult {
   /** The environment's revision AFTER the write. */
@@ -81,98 +89,8 @@ const SECRET_ROWS_PER_STATEMENT = rowsPerChunk(SECRET_COLUMNS);
 const DELETE_KEYS_PER_STATEMENT = rowsPerChunk(1, 1);
 
 // ---------------------------------------------------------------------------
-// The one read
-// ---------------------------------------------------------------------------
-
-interface KeyState {
-  /** Highest version ever issued for this key, INCLUDING tombstones. */
-  maxVersion: number;
-  /** Whether a live `secrets` row exists. A tombstoned key is not live. */
-  live: boolean;
-}
-
-/**
- * ONE query for the entire prior state of an environment's keys.
- *
- * It serves four purposes simultaneously, which is why it is one query and not
- * four:
- *
- *   the AAD version numbers   nextVersion = maxVersion + 1
- *   the delete set            every live key not named in a full replace
- *   the audit diff            added / changed / removed
- *   the write plan            which keys are inserts and which are updates
- *
- * (The fifth thing the design note attributed to it, the `expected_rev` check,
- * comes from the environment row that resolving the slug pair already loaded.
- * It is not a separate read either.)
- *
- * THE UNION IS LOAD-BEARING, and the design note's `SELECT key, version, kid
- * FROM secrets` is not sufficient for two independent reasons:
- *
- *   1. `secrets` HAS NO `kid` COLUMN. The key id lives on `secret_versions`,
- *      deliberately -- it belongs to a version, not to a key, and that is what
- *      makes rekeying a version-preserving operation.
- *
- *   2. Reading only `secrets` misses DELETED keys entirely, and their history is
- *      still there. `secret_versions` has no foreign key on `key` precisely so
- *      that deleting `API_TOKEN` and recreating it CONTINUES the version
- *      sequence. Computing `nextVersion` from the live table alone would issue
- *      version 1 for the recreated key, collide with the surviving history on
- *      `UNIQUE(environment_id, key, version)`, and abort the batch -- forever,
- *      since the retry recomputes the same 1. The key would be permanently
- *      uncreatable, and the error would say "version conflict", which is true
- *      and useless.
- *
- * So the state comes from the union of both tables, aggregated once.
- */
-async function readKeyState(
-  ctx: CoreContext,
-  environmentId: string,
-): Promise<Map<string, KeyState>> {
-  const rows = await ctx.db.all<{ key: string; max_version: number; live: number }>(sql`
-    SELECT key, MAX(version) AS max_version, MAX(live) AS live
-    FROM (
-      SELECT key, version, 0 AS live
-        FROM secret_versions WHERE environment_id = ${environmentId}
-      UNION ALL
-      SELECT key, current_version AS version, 1 AS live
-        FROM secrets WHERE environment_id = ${environmentId}
-    )
-    GROUP BY key
-  `);
-
-  const state = new Map<string, KeyState>();
-  for (const row of rows) {
-    state.set(row.key, { maxVersion: Number(row.max_version), live: Number(row.live) === 1 });
-  }
-
-  return state;
-}
-
-// ---------------------------------------------------------------------------
 // The write path
 // ---------------------------------------------------------------------------
-
-/**
- * `rev = rev + 1`, as a statement for a batch.
- *
- * A query BUILDER rather than `db.run(sql`...`)`, and not by preference:
- * drizzle 0.45's D1 batch implementation reaches for `preparedQuery.stmt` on
- * every statement that carries bound parameters, and a raw `SQLiteRaw` has no
- * `.stmt`. A parameterised raw statement in a batch therefore fails with
- * `Cannot read properties of undefined (reading 'bind')` -- at runtime, from
- * inside drizzle, with nothing in the type system to warn you.
- *
- * The alternative -- interpolating the values into the SQL text with
- * `sql.raw()` -- would make every id and timestamp in this module a string
- * concatenation. In a secrets manager that is not a trade worth considering.
- */
-function bumpRevision(ctx: CoreContext, environmentId: string): Statement {
-  return ctx.db
-    .update(environments)
-    .set({ rev: sql`${environments.rev} + 1`, updatedAt: ctx.now })
-    .where(eq(environments.id, environmentId));
-}
 
 interface WritePlan {
   sets: { key: string; value: string; version: number; existed: boolean }[];
@@ -590,578 +508,13 @@ export async function writeSecrets(
 }
 
 // ---------------------------------------------------------------------------
-// Reads
-// ---------------------------------------------------------------------------
-
-interface CurrentRow {
-  key: string;
-  description: string | null;
-  version: number;
-  ciphertext: string | null;
-  kid: string | null;
-  updatedAt: number;
-  updatedBy: string;
-}
-
-/** The live rows of an environment joined to their current ciphertext. */
-async function readCurrent(ctx: CoreContext, environmentId: string): Promise<CurrentRow[]> {
-  return ctx.db
-    .select({
-      key: secrets.key,
-      description: secrets.description,
-      version: secrets.currentVersion,
-      ciphertext: secretVersions.ciphertext,
-      kid: secretVersions.kid,
-      updatedAt: secrets.updatedAt,
-      updatedBy: secrets.updatedBy,
-    })
-    .from(secrets)
-    .innerJoin(
-      secretVersions,
-      and(
-        eq(secretVersions.environmentId, secrets.environmentId),
-        eq(secretVersions.key, secrets.key),
-        eq(secretVersions.version, secrets.currentVersion),
-      ),
-    )
-    .where(eq(secrets.environmentId, environmentId))
-    .orderBy(asc(secrets.key));
-}
-
-/**
- * List an environment's secrets. NO VALUES, ever.
- *
- * Every row IS decrypted, and the plaintext is discarded immediately. That looks
- * wasteful and is not: `unreadable` cannot be determined any other way. AES-GCM
- * has no "verify without decrypting" operation -- the tag check IS the
- * decryption -- so the choice is between attempting it and not knowing.
- *
- * Not knowing is what upstream did. `catch { /* Skip corrupted secrets *\/ }`
- * turned a tampered row into a shorter list, and a shorter list into a `.env`
- * file that deploys production without its `DATABASE_URL`. Here the row comes
- * back marked, the UI renders it red, and an audit row records it with
- * `outcome: 'error'`.
- */
-export async function listSecrets(
-  ctx: CoreContext,
-  projectSlug: string,
-  envSlug: string,
-): Promise<SecretListEntry[]> {
-  const environment = await requireEnvironment(ctx, projectSlug, envSlug);
-  const keyring = requireKeyring(ctx);
-
-  const rows = await readCurrent(ctx, environment.id);
-  const entries: SecretListEntry[] = [];
-  const unreadable: string[] = [];
-
-  for (const row of rows) {
-    let readable = false;
-
-    if (row.ciphertext !== null) {
-      try {
-        await decryptSecretValue({
-          keyring,
-          envelope: row.ciphertext,
-          environmentId: environment.id,
-          key: row.key,
-          version: row.version,
-        });
-        readable = true;
-      } catch {
-        readable = false;
-      }
-    }
-
-    if (!readable) unreadable.push(row.key);
-
-    entries.push({
-      key: row.key,
-      description: row.description,
-      version: row.version,
-      updatedAt: row.updatedAt,
-      updatedBy: row.updatedBy,
-      kid: row.kid,
-      unreadable: !readable,
-    });
-  }
-
-  if (unreadable.length > 0) {
-    // ONE row for the list, naming the affected keys. Not one per key: a
-    // corrupted environment would otherwise write 500 audit rows on every page
-    // load and bury the event that mattered.
-    await recordAudit(ctx, {
-      action: "secret.list",
-      outcome: "error",
-      projectId: environment.projectId,
-      environmentId: environment.id,
-      detail: { kind: "secret.unreadable", keys: unreadable },
-    });
-  }
-
-  return entries;
-}
-
-/**
- * Decrypt and return ONE value.
- *
- * Fetches exactly the one row. Upstream's `secrets get` downloaded every secret
- * in the environment in order to print one of them -- which meant reading one
- * value decrypted all of them into memory, and audited none of them
- * individually.
- *
- * A decrypt failure FAILS THE REQUEST. It is never downgraded to an empty
- * string, an omitted key, or a `null`, and the audit row is written BEFORE the
- * throw, so the record of the attempt survives the failure.
- */
-export async function revealSecret(
-  ctx: CoreContext,
-  projectSlug: string,
-  envSlug: string,
-  key: string,
-  reason: string,
-): Promise<string> {
-  const environment = await requireEnvironment(ctx, projectSlug, envSlug);
-  await assertRole(ctx, environmentScope(environment), "reader");
-
-  const keyring = requireKeyring(ctx);
-
-  const rows = await ctx.db
-    .select({
-      version: secrets.currentVersion,
-      ciphertext: secretVersions.ciphertext,
-    })
-    .from(secrets)
-    .innerJoin(
-      secretVersions,
-      and(
-        eq(secretVersions.environmentId, secrets.environmentId),
-        eq(secretVersions.key, secrets.key),
-        eq(secretVersions.version, secrets.currentVersion),
-      ),
-    )
-    .where(and(eq(secrets.environmentId, environment.id), eq(secrets.key, key)))
-    .limit(1);
-
-  const row = rows[0];
-  if (row === undefined || row.ciphertext === null) {
-    throw new PrickError("NOT_FOUND", "No such secret.");
-  }
-
-  let value: string;
-  try {
-    value = await decryptSecretValue({
-      keyring,
-      envelope: row.ciphertext,
-      environmentId: environment.id,
-      key,
-      version: row.version,
-    });
-  } catch (error) {
-    await recordAudit(ctx, {
-      action: "secret.reveal",
-      outcome: "error",
-      projectId: environment.projectId,
-      environmentId: environment.id,
-      targetKey: key,
-      detail: { kind: "secret.unreadable", keys: [key] },
-    });
-
-    throw toPrickError(error);
-  }
-
-  // Audited BEFORE the value is returned. The reason ('reveal' | 'copy' |
-  // 'export' | 'run') is what makes the log answer "did anyone take this", not
-  // merely "did anyone look at it".
-  await recordAudit(ctx, {
-    action: "secret.reveal",
-    outcome: "success",
-    projectId: environment.projectId,
-    environmentId: environment.id,
-    targetKey: key,
-    detail: { kind: "secret.read", reason, count: 1 },
-  });
-
-  return value;
-}
-
-/**
- * Decrypt every value in the environment, for export.
- *
- * ONE audit row for the export as a whole, not one per key: an export is one
- * decision by one person at one instant, and 500 rows describing it would make
- * the log worse rather than more complete.
- *
- * A single unreadable row FAILS THE WHOLE EXPORT. That is the loud choice and it
- * is the right one: the alternative hands the operator a file that is silently
- * missing a variable, which they will discover in production.
- */
-export async function exportSecrets(
-  ctx: CoreContext,
-  projectSlug: string,
-  envSlug: string,
-): Promise<Record<string, string>> {
-  const environment = await requireEnvironment(ctx, projectSlug, envSlug);
-  await assertRole(ctx, environmentScope(environment), "reader");
-
-  const keyring = requireKeyring(ctx);
-  const rows = await readCurrent(ctx, environment.id);
-
-  const out: Record<string, string> = {};
-
-  for (const row of rows) {
-    if (row.ciphertext === null) {
-      // A LIVE secret whose current version carries no ciphertext is a
-      // tombstone being pointed at as current -- structurally impossible from
-      // this codebase, and therefore evidence of direct database manipulation.
-      // Skipping it is the exact upstream behaviour this design rejects: the
-      // export would be silently one variable short.
-      throw new PrickError(
-        "DECRYPT_FAILED",
-        `The current version of "${row.key}" carries no ciphertext.`,
-        {
-          hint: "This row cannot have been written by this application. Treat it as tampering.",
-        },
-      );
-    }
-
-    try {
-      out[row.key] = await decryptSecretValue({
-        keyring,
-        envelope: row.ciphertext,
-        environmentId: environment.id,
-        key: row.key,
-        version: row.version,
-      });
-    } catch (error) {
-      await recordAudit(ctx, {
-        action: "secret.export",
-        outcome: "error",
-        projectId: environment.projectId,
-        environmentId: environment.id,
-        targetKey: row.key,
-        detail: { kind: "secret.unreadable", keys: [row.key], kid: row.kid },
-      });
-
-      throw toPrickError(error);
-    }
-  }
-
-  await recordAudit(ctx, {
-    action: "secret.export",
-    outcome: "success",
-    projectId: environment.projectId,
-    environmentId: environment.id,
-    detail: { kind: "secret.read", reason: "export", count: rows.length },
-  });
-
-  return out;
-}
-
-// ---------------------------------------------------------------------------
-// History
-// ---------------------------------------------------------------------------
-
-export interface VersionEntry {
-  version: number;
-  op: string;
-  createdAt: number;
-  createdBy: string;
-  kid: string | null;
-  /** A tombstone: this version records the key's deletion. */
-  deleted: boolean;
-}
-
-export async function listVersions(
-  ctx: CoreContext,
-  projectSlug: string,
-  envSlug: string,
-  key: string,
-): Promise<VersionEntry[]> {
-  const environment = await requireEnvironment(ctx, projectSlug, envSlug);
-  await assertRole(ctx, environmentScope(environment), "reader");
-
-  const rows = await ctx.db
-    .select({
-      version: secretVersions.version,
-      op: secretVersions.op,
-      createdAt: secretVersions.createdAt,
-      createdBy: secretVersions.createdBy,
-      kid: secretVersions.kid,
-      ciphertext: secretVersions.ciphertext,
-    })
-    .from(secretVersions)
-    .where(and(eq(secretVersions.environmentId, environment.id), eq(secretVersions.key, key)))
-    .orderBy(desc(secretVersions.version));
-
-  return rows.map((row) => ({
-    version: row.version,
-    op: row.op,
-    createdAt: row.createdAt,
-    createdBy: row.createdBy,
-    kid: row.kid,
-    deleted: row.ciphertext === null,
-  }));
-}
-
-/**
- * Roll a key back to an earlier version.
- *
- * Decrypt version N, RE-ENCRYPT as `current + 1`. The old envelope is never
- * resurrected -- its AAD binds it to version N, so writing those exact bytes
- * back as the current value would fail its tag check on the next read. History
- * is append-only in both directions: a rollback moves forward.
- */
-export async function rollbackSecret(
-  ctx: CoreContext,
-  projectSlug: string,
-  envSlug: string,
-  input: RollbackBody,
-): Promise<{ rev: number; version: number }> {
-  const environment = await requireEnvironment(ctx, projectSlug, envSlug);
-  await assertRole(ctx, environmentScope(environment), "writer");
-
-  const keyring = requireKeyring(ctx);
-
-  const state = await readKeyState(ctx, environment.id);
-  const current = state.get(input.key);
-
-  if (current === undefined) throw new PrickError("NOT_FOUND", "No such secret.");
-
-  const rows = await ctx.db
-    .select({ ciphertext: secretVersions.ciphertext })
-    .from(secretVersions)
-    .where(
-      and(
-        eq(secretVersions.environmentId, environment.id),
-        eq(secretVersions.key, input.key),
-        eq(secretVersions.version, input.to_version),
-      ),
-    )
-    .limit(1);
-
-  const source = rows[0];
-  if (source === undefined) throw new PrickError("NOT_FOUND", "No such version.");
-
-  if (source.ciphertext === null) {
-    throw new PrickError(
-      "VALIDATION_FAILED",
-      `Version ${String(input.to_version)} of "${input.key}" is a deletion and carries no value.`,
-      { hint: "Roll back to a version that set a value, or write a new one." },
-    );
-  }
-
-  const nextVersion = current.maxVersion + 1;
-
-  let plaintext: string;
-  try {
-    plaintext = await decryptSecretValue({
-      keyring,
-      envelope: source.ciphertext,
-      environmentId: environment.id,
-      key: input.key,
-      version: input.to_version,
-    });
-  } catch (error) {
-    await recordAudit(ctx, {
-      action: "secret.rollback",
-      outcome: "error",
-      projectId: environment.projectId,
-      environmentId: environment.id,
-      targetKey: input.key,
-      detail: { kind: "secret.unreadable", keys: [input.key] },
-    });
-    throw toPrickError(error);
-  }
-
-  const envelope = await encryptSecretValue({
-    ringKey: keyring.active,
-    environmentId: environment.id,
-    key: input.key,
-    version: nextVersion,
-    plaintext,
-    maxBytes: ctx.config.secretMaxBytes,
-  });
-
-  await runBatch(ctx.db, [
-    bumpRevision(ctx, environment.id),
-    ctx.db.insert(secretVersions).values({
-      id: uuidv7(ctx.now),
-      environmentId: environment.id,
-      key: input.key,
-      version: nextVersion,
-      ciphertext: envelope,
-      kid: keyring.active.kid,
-      op: "rollback",
-      createdAt: ctx.now,
-      createdBy: ctx.actor.subject,
-    }),
-    ctx.db
-      .update(secrets)
-      .set({ currentVersion: nextVersion, updatedAt: ctx.now, updatedBy: ctx.actor.subject })
-      .where(and(eq(secrets.environmentId, environment.id), eq(secrets.key, input.key))),
-    auditStatement(ctx, {
-      action: "secret.rollback",
-      outcome: "success",
-      projectId: environment.projectId,
-      environmentId: environment.id,
-      targetKey: input.key,
-      detail: {
-        kind: "secret.version",
-        key: input.key,
-        from: input.to_version,
-        to: nextVersion,
-        ...(input.reason === undefined ? {} : { reason: input.reason }),
-      },
-    }),
-  ]);
-
-  return { rev: environment.rev + 1, version: nextVersion };
-}
-
-/**
- * Rename a key.
- *
- * THERE IS NO CHEAP RENAME, and there cannot be one. The ciphertext is bound to
- * the key NAME through the AAD, so moving the blob to a new row would either
- * fail the next tag check or -- if someone "fixed" that by removing `key` from
- * the AAD -- reintroduce cross-key transplant, which is the vulnerability the
- * AAD exists to close. So: decrypt under the old identity, re-encrypt under the
- * new one, tombstone the old, all in one batch.
- *
- * The new version number is `max(history of the NEW key) + 1`, not
- * `old version + 1`. The design note says the latter; it is only correct when
- * the destination has no history of its own, and renaming onto a name that was
- * previously used and deleted is exactly when it is not.
- */
-export async function renameSecret(
-  ctx: CoreContext,
-  projectSlug: string,
-  envSlug: string,
-  oldKey: string,
-  newKey: string,
-): Promise<{ rev: number }> {
-  const environment = await requireEnvironment(ctx, projectSlug, envSlug);
-  await assertRole(ctx, environmentScope(environment), "writer");
-
-  const keyring = requireKeyring(ctx);
-
-  const state = await readKeyState(ctx, environment.id);
-  const source = state.get(oldKey);
-
-  if (source === undefined || !source.live) {
-    throw new PrickError("NOT_FOUND", "No such secret.");
-  }
-
-  if (state.get(newKey)?.live === true) {
-    throw new PrickError("CONFLICT", `A secret named "${newKey}" already exists.`, {
-      hint: "Delete or rename the existing key first.",
-    });
-  }
-
-  const rows = await ctx.db
-    .select({ ciphertext: secretVersions.ciphertext })
-    .from(secretVersions)
-    .where(
-      and(
-        eq(secretVersions.environmentId, environment.id),
-        eq(secretVersions.key, oldKey),
-        eq(secretVersions.version, source.maxVersion),
-      ),
-    )
-    .limit(1);
-
-  const blob = rows[0]?.ciphertext;
-  if (blob === undefined || blob === null) {
-    throw new PrickError("NOT_FOUND", "No such secret.");
-  }
-
-  let plaintext: string;
-  try {
-    plaintext = await decryptSecretValue({
-      keyring,
-      envelope: blob,
-      environmentId: environment.id,
-      key: oldKey,
-      version: source.maxVersion,
-    });
-  } catch (error) {
-    await recordAudit(ctx, {
-      action: "secret.rename",
-      outcome: "error",
-      projectId: environment.projectId,
-      environmentId: environment.id,
-      targetKey: oldKey,
-      detail: { kind: "secret.unreadable", keys: [oldKey] },
-    });
-    throw toPrickError(error);
-  }
-
-  const destinationVersion = (state.get(newKey)?.maxVersion ?? 0) + 1;
-  const tombstoneVersion = source.maxVersion + 1;
-
-  const envelope = await encryptSecretValue({
-    ringKey: keyring.active,
-    environmentId: environment.id,
-    key: newKey,
-    version: destinationVersion,
-    plaintext,
-    maxBytes: ctx.config.secretMaxBytes,
-  });
-
-  await runBatch(ctx.db, [
-    bumpRevision(ctx, environment.id),
-    ctx.db.insert(secretVersions).values([
-      {
-        id: uuidv7(ctx.now),
-        environmentId: environment.id,
-        key: newKey,
-        version: destinationVersion,
-        ciphertext: envelope,
-        kid: keyring.active.kid,
-        op: "rename",
-        createdAt: ctx.now,
-        createdBy: ctx.actor.subject,
-      },
-      {
-        id: uuidv7(ctx.now),
-        environmentId: environment.id,
-        key: oldKey,
-        version: tombstoneVersion,
-        ciphertext: null,
-        kid: null,
-        op: "delete",
-        createdAt: ctx.now,
-        createdBy: ctx.actor.subject,
-      },
-    ]),
-    ctx.db.insert(secrets).values({
-      id: uuidv7(ctx.now),
-      environmentId: environment.id,
-      key: newKey,
-      currentVersion: destinationVersion,
-      description: null,
-      createdAt: ctx.now,
-      updatedAt: ctx.now,
-      updatedBy: ctx.actor.subject,
-    }),
-    ctx.db
-      .delete(secrets)
-      .where(and(eq(secrets.environmentId, environment.id), eq(secrets.key, oldKey))),
-    auditStatement(ctx, {
-      action: "secret.rename",
-      outcome: "success",
-      projectId: environment.projectId,
-      environmentId: environment.id,
-      targetKey: newKey,
-      detail: { kind: "secret.rename", from: oldKey, to: newKey, version: destinationVersion },
-    }),
-  ]);
-
-  return { rev: environment.rev + 1 };
-}
-
-// ---------------------------------------------------------------------------
 // Import
+//
+// The front door to the write path above, and it stays in this file for one
+// reason: the dry run must compute its answer with `planWrite` -- the same
+// function the real write uses -- rather than with a second implementation that
+// agrees by inspection. Keeping both callers in one file is what keeps that
+// checkable, and it is why `planWrite` is module-private.
 // ---------------------------------------------------------------------------
 
 export interface ImportResult {
