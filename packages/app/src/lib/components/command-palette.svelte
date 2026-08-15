@@ -4,9 +4,12 @@
   import KeyRoundIcon from '@lucide/svelte/icons/key-round';
   import ScrollTextIcon from '@lucide/svelte/icons/scroll-text';
   import SettingsIcon from '@lucide/svelte/icons/settings';
+  import UserIcon from '@lucide/svelte/icons/user';
   import UsersIcon from '@lucide/svelte/icons/users';
+  import UsersRoundIcon from '@lucide/svelte/icons/users-round';
 
   import { goto } from '$app/navigation';
+  import { page } from '$app/state';
   import { api, type ProjectSummary } from '$lib/client/api';
   import * as Command from '$lib/components/ui/command/index.js';
 
@@ -25,6 +28,30 @@
   const isMac = $derived(
     typeof navigator !== 'undefined' && /mac|iphone|ipad/i.test(navigator.platform ?? '')
   );
+
+  /**
+   * Global admin, read off page data rather than taken as a prop.
+   *
+   * This palette is mounted at the ROOT layout — on purpose, so it is reachable
+   * from the error page, which is the moment you most want to jump somewhere
+   * else. That is also why the viewer cannot arrive as a prop: the root layout
+   * does not have one. `(app)/+layout.server.ts` puts it in page data, so the
+   * palette reads it there and treats its absence as "not an admin".
+   *
+   * FAILING CLOSED IS THE RIGHT DEFAULT for a navigation hint: the worst case is
+   * a global admin on the error page not being offered a shortcut they can still
+   * type the URL for. It confers nothing either way — the settings load asserts
+   * global admin itself and refuses regardless of what this decided.
+   *
+   * Only SETTINGS is gated. Users, Groups and Access need admin at ANY scope,
+   * which a project admin has and the global role — `null` for exactly that
+   * person — cannot express.
+   */
+  const isGlobalAdmin = $derived.by(() => {
+    const viewer: unknown = page.data['viewer'];
+    if (typeof viewer !== 'object' || viewer === null) return false;
+    return (viewer as { role?: unknown }).role === 'admin';
+  });
 
   /**
    * A global key listener is a genuine side effect, which is what `$effect` is
@@ -83,14 +110,24 @@
         <UsersIcon />
         <span>Access</span>
       </Command.Item>
+      <Command.Item onSelect={() => jump('/users')}>
+        <UserIcon />
+        <span>Users</span>
+      </Command.Item>
+      <Command.Item onSelect={() => jump('/groups')}>
+        <UsersRoundIcon />
+        <span>Groups</span>
+      </Command.Item>
       <Command.Item onSelect={() => jump('/audit')}>
         <ScrollTextIcon />
         <span>Audit log</span>
       </Command.Item>
-      <Command.Item onSelect={() => jump('/settings')}>
-        <SettingsIcon />
-        <span>Settings and keyring</span>
-      </Command.Item>
+      {#if isGlobalAdmin}
+        <Command.Item onSelect={() => jump('/settings')}>
+          <SettingsIcon />
+          <span>Settings and keyring</span>
+        </Command.Item>
+      {/if}
     </Command.Group>
 
     {#if projects.length > 0}

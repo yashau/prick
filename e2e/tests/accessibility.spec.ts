@@ -53,6 +53,22 @@ type Theme = "light" | "dark";
  * its link moves into a menu, and this list failing to resolve when a route is
  * renamed is the point.
  */
+/**
+ * The seeded administrator's identity row, so the per-identity permissions
+ * screen has a static path to be listed at.
+ *
+ * Fixed in `e2e/seed.sql`, and fixed there deliberately — "so a failure message
+ * names a row a human can find". Restated rather than imported for the same
+ * reason every wire shape in `harness/api.ts` is: this project does not depend
+ * on the application's source, and a row that moves should show up here as a
+ * failing assertion rather than as a silently different id.
+ *
+ * The admin is the right subject for it: it holds a real global admin GRANT, so
+ * the screen renders a scope entry, a decisive source and a role badge rather
+ * than the empty state.
+ */
+const ADMIN_IDENTITY = "0199e2e0-0000-7000-8000-000000000021";
+
 const SCREENS: { name: string; path: string }[] = [
   { name: "projects", path: "/projects" },
   { name: "project overview", path: `/p/${SEED.project}` },
@@ -61,6 +77,9 @@ const SCREENS: { name: string; path: string }[] = [
   { name: "project access", path: `/p/${SEED.project}/access` },
   { name: "project settings", path: `/p/${SEED.project}/settings` },
   { name: "access", path: "/access" },
+  { name: "users", path: "/users" },
+  { name: "user permissions", path: `/users/${ADMIN_IDENTITY}` },
+  { name: "groups", path: "/groups" },
   { name: "audit log", path: "/audit" },
   { name: "settings", path: "/settings" },
 ];
@@ -117,6 +136,9 @@ const BASELINE: Record<Theme, Record<string, string[]>> = {
     [`/p/${SEED.project}/access`]: [],
     [`/p/${SEED.project}/settings`]: [],
     "/access": [],
+    "/users": [],
+    [`/users/${ADMIN_IDENTITY}`]: [],
+    "/groups": [],
     "/audit": [],
     "/settings": [],
   },
@@ -128,6 +150,9 @@ const BASELINE: Record<Theme, Record<string, string[]>> = {
     [`/p/${SEED.project}/access`]: [],
     [`/p/${SEED.project}/settings`]: [],
     "/access": [],
+    "/users": [],
+    [`/users/${ADMIN_IDENTITY}`]: [],
+    "/groups": [],
     "/audit": [],
     "/settings": [],
   },

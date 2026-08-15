@@ -34,14 +34,38 @@
     const envSlug = page.params.env as string | undefined;
 
     if (segments[0] !== 'p' || !projectSlug) {
-      const [first] = segments;
+      const [first, second] = segments;
       const labels: Record<string, string> = {
         projects: 'Projects',
         access: 'Access',
+        users: 'Users',
+        groups: 'Groups',
         audit: 'Audit log',
         settings: 'Settings'
       };
-      return first ? [{ label: labels[first] ?? first, href: `/${first}` }] : [];
+      if (!first) return [];
+
+      const trail: Crumb[] = [{ label: labels[first] ?? first, href: `/${first}` }];
+
+      /*
+       * A detail screen's own crumb.
+       *
+       * The label comes from the page's data rather than from the URL, because
+       * `/users/0199…-7000-…` is addressed by uuid and a breadcrumb reading the
+       * uuid back is worse than no breadcrumb at all. `page.data` is typed as
+       * an open record, so the shape is checked at runtime; a load that does
+       * not supply `crumb` falls back to the identifier, which is the honest
+       * answer rather than a blank.
+       */
+      if (second) {
+        const label = page.data['crumb'];
+        trail.push({
+          label: typeof label === 'string' && label !== '' ? label : second,
+          href: `/${first}/${second}`
+        });
+      }
+
+      return trail;
     }
 
     const project = data.projects.find((entry) => entry.slug === projectSlug);

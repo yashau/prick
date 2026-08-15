@@ -5,7 +5,9 @@
   import ScrollTextIcon from '@lucide/svelte/icons/scroll-text';
   import SettingsIcon from '@lucide/svelte/icons/settings';
   import SlidersHorizontalIcon from '@lucide/svelte/icons/sliders-horizontal';
+  import UserIcon from '@lucide/svelte/icons/user';
   import UsersIcon from '@lucide/svelte/icons/users';
+  import UsersRoundIcon from '@lucide/svelte/icons/users-round';
 
   import { page } from '$app/state';
   import type { ProjectSummary, Viewer } from '$lib/client/api';
@@ -53,6 +55,28 @@
    * reading as "you have nothing".
    */
   const roleLabel = $derived(viewer.role ?? 'scoped');
+
+  /**
+   * Global admin, which is what install SETTINGS needs.
+   *
+   * `viewer.role` is the effective role at global scope and already folds in
+   * `BOOTSTRAP_ADMINS`, so this is the same question `assertRole(global, admin)`
+   * asks on the server — not an approximation of it.
+   *
+   * The settings screen has no degraded mode: `getKeyringStatus` is global-admin
+   * only and the load refuses rather than rendering the panel empty, because a
+   * "safe to remove MASTER_KEY_OLD" indicator computed from a status that failed
+   * to fetch is the one irreversible mistake in this design. So a scoped admin
+   * clicking the link would get a 403 page, and a link that cannot be followed
+   * is worse than no link.
+   *
+   * Users, Groups and Access are NOT gated here, deliberately: they need admin
+   * at ANY scope, which a project admin has and `viewer.role` — global only, and
+   * `null` for exactly that person — cannot express. Hiding them on this signal
+   * would take the screens away from the people delegated administration exists
+   * for.
+   */
+  const isGlobalAdmin = $derived(viewer.role === 'admin');
 
   function isActive(href: string, exact = false): boolean {
     return exact ? page.url.pathname === href : page.url.pathname.startsWith(href);
@@ -152,6 +176,35 @@
               {/if}
             </Sidebar.MenuItem>
 
+            <!--
+              Users and Groups sit beside Access rather than inside it, because
+              they answer a different question. Access is "what grants exist";
+              these two are "who is there, and why can they do that" — which,
+              once a role can arrive through a group, is not derivable from the
+              grants list at all.
+            -->
+            <Sidebar.MenuItem>
+              <Sidebar.MenuButton isActive={isActive('/users')} tooltipContent="Users">
+                {#snippet child({ props })}
+                  <a {...props} href="/users">
+                    <UserIcon aria-hidden="true" />
+                    <span>Users</span>
+                  </a>
+                {/snippet}
+              </Sidebar.MenuButton>
+            </Sidebar.MenuItem>
+
+            <Sidebar.MenuItem>
+              <Sidebar.MenuButton isActive={isActive('/groups')} tooltipContent="Groups">
+                {#snippet child({ props })}
+                  <a {...props} href="/groups">
+                    <UsersRoundIcon aria-hidden="true" />
+                    <span>Groups</span>
+                  </a>
+                {/snippet}
+              </Sidebar.MenuButton>
+            </Sidebar.MenuItem>
+
             <Sidebar.MenuItem>
               <Sidebar.MenuButton isActive={isActive('/audit')} tooltipContent="Audit log">
                 {#snippet child({ props })}
@@ -163,16 +216,18 @@
               </Sidebar.MenuButton>
             </Sidebar.MenuItem>
 
-            <Sidebar.MenuItem>
-              <Sidebar.MenuButton isActive={isActive('/settings')} tooltipContent="Settings">
-                {#snippet child({ props })}
-                  <a {...props} href="/settings">
-                    <SettingsIcon aria-hidden="true" />
-                    <span>Settings</span>
-                  </a>
-                {/snippet}
-              </Sidebar.MenuButton>
-            </Sidebar.MenuItem>
+            {#if isGlobalAdmin}
+              <Sidebar.MenuItem>
+                <Sidebar.MenuButton isActive={isActive('/settings')} tooltipContent="Settings">
+                  {#snippet child({ props })}
+                    <a {...props} href="/settings">
+                      <SettingsIcon aria-hidden="true" />
+                      <span>Settings</span>
+                    </a>
+                  {/snippet}
+                </Sidebar.MenuButton>
+              </Sidebar.MenuItem>
+            {/if}
           </Sidebar.Menu>
         </Sidebar.GroupContent>
       </Sidebar.Group>

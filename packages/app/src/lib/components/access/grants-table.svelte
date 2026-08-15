@@ -55,10 +55,22 @@
     return byId.get(grant.identityId)?.displayName ?? grant.subject;
   }
 
+  /**
+   * `projectSlug` CAN be null on an environment-scoped row, and this used to
+   * render the string `null/production` for it.
+   *
+   * `grants.project_id` is nullable and is not populated on every
+   * environment-scoped grant -- a row seeded directly, or written before the
+   * column was maintained, carries NULL -- so the left join that supplies the
+   * project slug finds nothing. The environment slug is never null in that
+   * case, and it is the half that identifies the scope, so it is shown alone
+   * rather than beside the word `null`.
+   */
   function scopeLabel(grant: GrantRecord): string {
     if (grant.scopeType === 'global') return 'Everything';
     if (grant.scopeType === 'project') return grant.projectSlug ?? '—';
-    return `${grant.projectSlug}/${grant.environmentSlug}`;
+    if (grant.projectSlug === null) return grant.environmentSlug ?? '—';
+    return `${grant.projectSlug}/${grant.environmentSlug ?? '—'}`;
   }
 
   const isLastGlobalAdmin = $derived.by(() => {

@@ -97,7 +97,14 @@
     </Dialog.Trigger>
   {/if}
 
-  <Dialog.Content class="sm:max-w-lg">
+  <!--
+    Capped and scrollable: with an environment scope selected this form is taller
+    than a 720px viewport, and the registry's dialog content has no height limit
+    of its own, so the submit button ends up below the fold with nothing to
+    scroll. Found on the equivalent dialog under `rbac/`, and it is the same
+    defect here.
+  -->
+  <Dialog.Content class="max-h-[85svh] overflow-y-auto sm:max-w-lg">
     <form
       method="POST"
       action="?/createGrant"
