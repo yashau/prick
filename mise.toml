@@ -393,6 +393,38 @@ run = "node scripts/release.mjs cut"
 description = "Follow the most recent release.yml run. Read-only"
 run = "node scripts/release.mjs status"
 
+# --- documentation site ----------------------------------------------------
+# The docs site is a SEPARATE Worker from the app: public, no secrets, no
+# access control. Deploying it is reversible -- a bad deploy is fixed by
+# deploying again -- so unlike release:cut it asks a plain y/N rather than
+# demanding a typed token.
+#
+# Cloudflare credentials live in GitHub repository secrets, so the deploy runs
+# in CI. Nothing here needs a Cloudflare token on a developer machine.
+
+[tasks."docs:dev"]
+description = "Run the documentation site locally with hot reload"
+run = "pnpm --dir packages/docs run dev"
+raw = true
+
+[tasks."docs:build"]
+description = "Build the documentation site from the docs/ Markdown"
+run = "pnpm --dir packages/docs run build"
+
+[tasks."docs:preview"]
+description = "Serve the built documentation site locally"
+run = "pnpm --dir packages/docs run preview"
+raw = true
+
+[tasks."docs:deploy"]
+description = "Cut a docs release: dispatch deploy-docs.yml to build and deploy the docs Worker"
+# Pass --yes for automation: `mise run docs:deploy -- --yes`.
+run = "node scripts/docs.mjs deploy"
+
+[tasks."docs:status"]
+description = "Follow the most recent deploy-docs.yml run. Read-only"
+run = "node scripts/docs.mjs status"
+
 # ---------------------------------------------------------------------------
 # CI — pure fan-out; an exact mirror of ci.yml
 # ---------------------------------------------------------------------------
