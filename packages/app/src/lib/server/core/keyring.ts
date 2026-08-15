@@ -199,13 +199,25 @@ export async function getKeyringStatus(ctx: CoreContext): Promise<KeyringStatus>
     /*
      * TRUE ONLY AT ZERO, AND ONLY WITH EVERYTHING ACCOUNTED FOR.
      *
-     * `every` over a list built from a query that ran, plus the unattributed
-     * guard. What this expression must never become is "we found nothing to
-     * worry about": a census that returned no rows because the query was wrong,
-     * or because it read the wrong table, produces an empty `byKid` and would
-     * satisfy a naive `every` -- so the emptiness that would make this true has
-     * to be an emptiness of `secret_versions` itself, which is the one case
-     * where removing the old key really does lose nothing.
+     * Two distinct hazards, and it is worth being exact about which one each
+     * half covers, because they are easy to conflate:
+     *
+     *   `unattributed === 0` covers ciphertext this application cannot have
+     *   written -- a row with a value and no `kid`. It belongs to no entry, so
+     *   `every` below would never look at it, and something unreadable that no
+     *   key accounts for is the last thing that should read as safe.
+     *
+     *   `every` covers kids the ring no longer holds. A kid present in the
+     *   census but absent from the ring gets `status: "retired"` and its real
+     *   count, so a key that was deleted while rows still referenced it keeps
+     *   this red rather than vanishing from the comparison.
+     *
+     * What NEITHER covers, and no expression here could: a census that returns
+     * nothing because the query drifted looks exactly like an empty
+     * `secret_versions`, and both produce `true`. That is not defended by
+     * cleverness in this function -- it is defended by the tests in
+     * `test/core/keyring.test.ts`, which seed real rows and assert this goes
+     * false. If you change `census`, run them and watch them fail first.
      */
     safeToRemoveOldKey:
       counted.unattributed === 0 &&
