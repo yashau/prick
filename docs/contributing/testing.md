@@ -178,16 +178,31 @@ forever.
 Playwright against a locally built Worker, with its own Access harness under
 `e2e/harness/`. The specs:
 
-| Spec                    | Asserts                                                             |
-| ----------------------- | ------------------------------------------------------------------- |
-| `secrets-table.spec.ts` | A value is absent from the DOM until Reveal completes; auto-mask    |
-| `ssr-boundary.spec.ts`  | No value appears in a server-rendered page payload                  |
-| `import-export.spec.ts` | The `.env` dry-run diff, and an export that round-trips             |
-| `access.spec.ts`        | Grants and revocation from the UI                                   |
-| `api-flow.spec.ts`      | The API path the client-rendered subtree uses                       |
-| `headers.spec.ts`       | `frame-ancestors 'none'` and `Cache-Control: no-store` where needed |
-| `keyboard.spec.ts`      | A keyboard-only walkthrough                                         |
-| `accessibility.spec.ts` | An accessibility scan                                               |
+| Spec                    | Asserts                                                              |
+| ----------------------- | -------------------------------------------------------------------- |
+| `secrets-table.spec.ts` | A value is absent from the DOM until Reveal completes; auto-mask     |
+| `ssr-boundary.spec.ts`  | No value appears in a server-rendered page payload                   |
+| `import-export.spec.ts` | The `.env` dry-run diff, and an export that round-trips              |
+| `access.spec.ts`        | Grants and revocation from the UI                                    |
+| `groups.spec.ts`        | A role reaching an identity through a group, and removal revoking it |
+| `journey.spec.ts`       | The whole flow in one serial run, in a project of its own            |
+| `api-flow.spec.ts`      | The API path the client-rendered subtree uses                        |
+| `headers.spec.ts`       | `frame-ancestors 'none'` and `Cache-Control: no-store` where needed  |
+| `keyboard.spec.ts`      | A keyboard-only walkthrough                                          |
+| `accessibility.spec.ts` | An accessibility scan                                                |
+
+### The browsers
+
+`mise run e2e:install` downloads the browser binaries. It does **not** install
+system libraries, and CI does not either: the ubuntu-24.04 runner image ships
+Chrome, Chromium, Edge and Firefox as packages, so the shared libraries Chromium
+links against are already present, and running `apt-get update` there once stalled
+the job for twenty-four minutes against an unreachable mirror.
+
+On a bare Linux box those libraries genuinely are missing. Run
+`mise run e2e:install:deps` once — it needs root, which is the other reason it is
+not folded into `e2e:install`. If you skip it and need it, Playwright refuses to
+launch and names the packages.
 
 ## Before you open a pull request
 
