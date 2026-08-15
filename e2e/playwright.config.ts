@@ -1,49 +1,68 @@
 import { defineConfig, devices } from "@playwright/test";
 
 /**
- * End-to-end suite, run against `wrangler dev` (miniflare) -- the same runtime
- * the Worker is deployed to, with real D1.
+ * The end-to-end suite.
  *
- * The `webServer` block is deliberately left commented out until the local
- * Access/JWKS harness exists. Starting `wrangler dev` now would produce a suite
- * that cannot authenticate and therefore cannot assert anything, and a suite of
- * skipped tests is worse than an honestly empty one.
+ * ---------------------------------------------------------------------------
+ * WHAT IT RUNS AGAINST
+ * ---------------------------------------------------------------------------
+ * `wrangler dev` -- the same `workerd` and the same miniflare-backed D1 that
+ * `wrangler deploy` produces, with the SvelteKit half present. `global-setup.ts`
+ * builds it, makes a fresh database, migrates it, seeds it, and boots it; the
+ * server is torn down when the run ends. There is no `webServer` block because
+ * a `webServer` cannot do the parts that matter here: generate the Access
+ * keypair the Worker will be configured against, and establish the TLS trust
+ * that lets the real JWT verifier fetch a local JWKS.
  *
- * What this suite is FOR, once wired (plan, "Verification"):
+ * ---------------------------------------------------------------------------
+ * ARTEFACTS
+ * ---------------------------------------------------------------------------
+ * `screenshot` and `video` are OFF, unconditionally, and this is a security
+ * setting rather than a preference: a screenshot of the secrets table taken
+ * after a Reveal is a plaintext secret written into a CI artifact that outlives
+ * the run and is downloadable by anyone with read access to the repository.
+ * Traces are kept only on a retry, and Playwright redacts nothing.
  *
- *   - create project -> environment -> secret
- *   - assert the value is ABSENT FROM THE DOM until Reveal is clicked and the
- *     request completes; then assert auto-mask
- *   - .env import dry-run diff; export and diff
- *   - assert the audit log has secret.reveal / secret.import with the right actor
- *   - revoke a grant, reload, assert 403
- *   - assert `frame-ancestors 'none'` and `Cache-Control: no-store` land on the
- *     right responses
- *   - keyboard-only walkthrough
- *   - axe scan, both themes
+ * The HTML reporter is CI-only for a different reason: it writes a directory of
+ * vendored minified JavaScript into the working tree, and CI greps the whole
+ * tree case-insensitively for a forbidden substring. A megabyte of third-party
+ * minified code is an excellent way to produce a false positive.
  */
 export default defineConfig({
   testDir: "./tests",
+  globalSetup: "./global-setup.ts",
+
   fullyParallel: true,
 
   // A committed `test.only` is a suite that silently stops covering anything.
   forbidOnly: Boolean(process.env["CI"]),
   retries: process.env["CI"] ? 2 : 0,
-  workers: process.env["CI"] ? 1 : undefined,
+  workers: process.env["CI"] ? 2 : undefined,
 
-  // Locally: `list` only. The HTML reporter writes a `playwright-report/`
-  // directory of vendored, minified JavaScript into the working tree on every
-  // run -- which in this repo is not merely untidy: CI greps the whole tree
-  // case-insensitively for a forbidden substring, and a megabyte of minified
-  // third-party code is an excellent way to produce a false positive.
+  /*
+   * 45 s rather than the 30 s default.
+   *
+   * `reveal.svelte.ts` holds a value for exactly 30 000 ms, and the auto-mask
+   * test waits for that to elapse for real. Faking the clock would be quicker
+   * and would stop testing the thing: the mask has to come back because the
+   * sweep ran and the SvelteMap deletion re-rendered the cell, not because a
+   * test told the page what time it was.
+   */
+  timeout: 45_000,
+  expect: { timeout: 10_000 },
+
   reporter: process.env["CI"] ? [["github"], ["html", { open: "never" }]] : [["list"]],
 
   use: {
-    baseURL: process.env["PRICK_E2E_BASE_URL"] ?? "http://127.0.0.1:8787",
+    /*
+     * `baseURL` is deliberately NOT set here.
+     *
+     * The Worker's port is chosen during global setup, and this file is
+     * evaluated before that runs. `e2e/fixtures.ts` overrides the option with
+     * the port that was actually taken, so two runs on one machine cannot
+     * collide over a hard-coded 8787.
+     */
     trace: "on-first-retry",
-
-    // Never `on`. A Playwright screenshot of the secrets table after a Reveal
-    // is a plaintext secret written to a CI artifact that outlives the run.
     screenshot: "off",
     video: "off",
   },
@@ -54,13 +73,4 @@ export default defineConfig({
       use: { ...devices["Desktop Chrome"] },
     },
   ],
-
-  // TODO(build order step 16): enable once the local JWKS harness exists.
-  //
-  // webServer: {
-  //   command: 'pnpm --filter @prick/app run preview',
-  //   url: 'http://127.0.0.1:8787/api/v1/health',
-  //   reuseExistingServer: !process.env['CI'],
-  //   timeout: 120_000
-  // }
 });

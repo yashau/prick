@@ -66,17 +66,30 @@ export const SEED = {
   quarantine: "quarantine",
 } as const;
 
-/** The keys `globalSetup` writes into `atlas/production` through the API. */
+/**
+ * The keys `globalSetup` writes into `atlas/production` through the API.
+ *
+ * EVERY VALUE CARRIES THE `SEED_MARKER`, and that is load-bearing rather than
+ * decorative. The SSR-boundary spec searches the raw HTML and every served
+ * script for these strings, so a value that could plausibly occur in the bundle
+ * for an innocent reason would make that assertion useless -- the first draft
+ * used `checkout_v2,dark_mode`, which is a literal in the UI's own fixture
+ * dataset, and the spec failed on a collision rather than on a leak. With the
+ * marker, a match is unambiguous evidence that a value written to D1 reached
+ * the browser through something other than a `fetch`.
+ */
+export const SEED_MARKER = "e2eseed9f13c7";
+
 export const SEEDED_SECRETS: Record<string, string> = {
-  DATABASE_URL: "postgres://atlas:e2e-only-not-a-real-password@db.internal:5432/atlas",
-  FEATURE_FLAGS: "checkout_v2,dark_mode",
-  SESSION_SIGNING_KEY: "0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a69788796a5b4c3d2e1f0",
+  DATABASE_URL: `postgres://atlas:${SEED_MARKER}-prod@db.internal:5432/atlas?sslmode=require`,
+  FEATURE_FLAGS: `${SEED_MARKER}-checkout-v2,${SEED_MARKER}-dark-mode`,
+  SESSION_SIGNING_KEY: `${SEED_MARKER}-0f1e2d3c4b5a69788796a5b4c3d2e1f0`,
 };
 
 /** The keys `globalSetup` writes into `atlas/staging`. Used by the import diff. */
 export const STAGING_SECRETS: Record<string, string> = {
-  DATABASE_URL: "postgres://atlas:staging-only@db-staging.internal:5432/atlas",
-  FEATURE_FLAGS: "checkout_v2",
+  DATABASE_URL: `postgres://atlas:${SEED_MARKER}-stage@db-staging.internal:5432/atlas`,
+  FEATURE_FLAGS: `${SEED_MARKER}-checkout-v2`,
 };
 
 /** The key seeded by `seed.sql` whose envelope cannot be opened. */
@@ -91,3 +104,17 @@ export const REVEAL_TTL_MS = 30_000;
 /** The header Access sets. The cookie is the browser's fallback. */
 export const ASSERTION_HEADER = "Cf-Access-Jwt-Assertion";
 export const ASSERTION_COOKIE = "CF_Authorization";
+
+/**
+ * The resolved appearance, mirrored into a cookie so the server can paint the
+ * right palette in the first byte.
+ *
+ * Mirrors `THEME_COOKIE` in `packages/app/src/lib/client/theme.ts`. Restated
+ * rather than imported for the same reason every wire shape in `harness/api.ts`
+ * is: the e2e project deliberately does not depend on the application's source,
+ * so a rename shows up here as a failing assertion rather than as a symbol that
+ * quietly moved with it.
+ *
+ * It carries no authority. Forging it changes which colours are painted.
+ */
+export const THEME_COOKIE = "prick_theme";
