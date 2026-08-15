@@ -33,11 +33,7 @@ const SIGTERM: i32 = 15;
 #[track_caller]
 fn assert_killed_by(status: ExitStatus, signal: i32, why: &str) {
     assert_eq!(status.signal(), Some(signal), "{why}");
-    assert_eq!(
-        status.code(),
-        None,
-        "a signal-killed process has no exit code of its own; {why}"
-    );
+    assert_eq!(status.code(), None, "a signal-killed process has no exit code of its own; {why}");
 }
 
 /// The fixture binary, located by cargo rather than guessed at.

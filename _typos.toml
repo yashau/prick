@@ -66,6 +66,11 @@ abd = "abd"
 INSERTs = "INSERTs"
 DELETEs = "DELETEs"
 
+# "the view condition is ANDed with the filter" -- SQL's AND used as a verb.
+# Same camel-case split as the two above: typos cuts after the uppercase run and
+# reads the trailing "Ded" as "Dead".
+ANDed = "ANDed"
+
 # Leetspeak literal in the Access token harness -- a nonce value chosen to be
 # visibly synthetic so it cannot be mistaken for a real claim.
 n0nce = "n0nce"
