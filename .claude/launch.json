@@ -6,6 +6,12 @@
       "runtimeExecutable": "npx",
       "runtimeArgs": ["-y", "pnpm@11.21.0", "--filter", "@prick/app", "exec", "vite", "dev"],
       "port": 5173
+    },
+    {
+      "name": "docs",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["-y", "pnpm@11.21.0", "--dir", "packages/docs", "run", "dev"],
+      "port": 4321
     }
   ]
 }

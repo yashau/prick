@@ -57,14 +57,19 @@ export default defineConfig({
 
       tagline: SITE_TAGLINE,
 
-      // The lockup already contains the wordmark, so `replacesTitle` stops the
-      // header rendering the name twice. Both variants point at the same file:
-      // the mark is legible on either background, so a second asset would be a
-      // second thing to keep in sync for no gain.
+      // The mark alone, with Starlight rendering `title` as text beside it.
+      // `lockup.svg` bakes the wordmark into the artwork, which makes the site's
+      // name an image: not selectable, not searchable, and fixed at one colour
+      // in both themes. As text it is none of those things, and it is the same
+      // string the `<title>` is composed from, so the header and the tab cannot
+      // drift apart.
+      //
+      // Both variants point at the same file: the mark is legible on either
+      // background, so a second asset would be a second thing to keep in sync
+      // for no gain.
       logo: {
-        light: "./src/assets/lockup.svg",
-        dark: "./src/assets/lockup.svg",
-        replacesTitle: true,
+        light: "./src/assets/logo.svg",
+        dark: "./src/assets/logo.svg",
       },
 
       social: [{ icon: "github", label: "GitHub", href: "https://github.com/yashau/prick" }],

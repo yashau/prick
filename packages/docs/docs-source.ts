@@ -74,8 +74,15 @@ const GROUP_ORDER = [
   { directory: "contributing", label: "Contributing" },
 ] as const;
 
-/** The site's own name. Also compared against page titles, in `src/routeData.ts`. */
-export const SITE_TITLE = "prick";
+/**
+ * The site's own name, rendered as text in the header beside the mark.
+ *
+ * Starlight composes every `<title>` as `${page title} | ${SITE_TITLE}`, so this
+ * is what a browser tab, a bookmark and a search result carry. "prick" alone was
+ * ambiguous there -- it is the name of the product, not of this site, and a tab
+ * reading `prick` says nothing about being documentation.
+ */
+export const SITE_TITLE = "Prick Documentation";
 
 /** Expansion of the acronym, used as the tagline and the meta description. */
 export const SITE_TAGLINE = "Portable Runtime Injection of Cloudflare (stored) Keys";
