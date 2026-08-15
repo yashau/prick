@@ -164,11 +164,11 @@ The parts that matter, beyond the vars above.
 | `assets.directory`      | Served **without invoking the Worker**, which is why `packages/app/_headers` exists                                                                          |
 | `head_sampling_rate: 1` | Sample nothing away. This is an admin console's request volume, not a CDN's, and a dropped log line is a missing answer to "who read that secret"            |
 
-The `guard` job in `.github/workflows/deploy.yml` greps the config for
-`workers_dev` and `preview_urls` and blocks both deploy jobs if either is not
-explicitly `false`. Note that `deploy.yml` is manual-only, so that assertion runs
-when somebody deploys rather than on every push — see
-[Development](/contributing/development#deployment-guard).
+CI greps this config for `workers_dev` and `preview_urls` on **every push** and
+fails if either is not explicitly `false` — see
+[Development](/contributing/development#deployment-guard). A hostname
+Cloudflare Access is not attached to serves every secret in the installation to
+the open internet, so this is the one setting worth checking mechanically.
 
 ## Local development
 

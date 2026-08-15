@@ -179,9 +179,7 @@ allowance.
 - **A misconfigured Access application.** If Access is not attached to the
   hostname, the entire authorization model is bypassed — every project, every
   environment, every reveal endpoint, open to the internet. `workers_dev` and
-  `preview_urls` are set to `false` and the deploy workflow's guard job asserts
-  both before either deploy job runs — though that workflow is manual-only, so the
-  assertion fires at deploy time rather than on every push. An Access application
+  `preview_urls` are set to `false`, and CI asserts both on every push. An Access application
   with an over-broad policy is not something prick can detect at all. Verify it
   yourself, as in the [Quickstart](/getting-started/quickstart), and note that
   `prk login` and `prk doctor` both fail loudly if `/health` answers `200`

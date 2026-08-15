@@ -289,54 +289,31 @@ published, and there are ten of them.
 After that no token exists to leak, and provenance is automatic — drop
 `--provenance`.
 
-## Deploying the Worker
+## Deploying the application Worker
 
-`deploy.yml` is a separate workflow from the release, is not tied to a version,
-and is **manual only**.
+**This repository does not deploy it.** prick is self-hosted: the application
+Worker runs in *your* Cloudflare account, and you deploy it yourself.
 
-```yaml
-on:
-  workflow_dispatch:
-    inputs:
-      environment: # production | preview, default preview
+```bash
+pnpm install
+pnpm --filter @prick/app exec wrangler d1 migrations apply prick --remote
+pnpm --filter @prick/app exec wrangler deploy
 ```
 
-There is no push trigger and no pull-request trigger. That is deliberate, and it
-follows from what prick is: **self-hosted**. What matters is that a reader's own
-`wrangler deploy` works, not that this repository keeps an instance running. An
-automatic production deploy would gate every merge on Cloudflare credentials the
-project does not need, and would make a red X on `main` mean "the maintainer's
-instance is unhappy" rather than "the code is broken".
+There was briefly a workflow for this. It was removed, because it deployed a
+"production" instance that does not exist -- nobody's install is this
+repository's to keep running -- and its only lasting effect would have been to
+gate every merge on Cloudflare credentials the project does not need.
 
-Preview is dispatch-only for a second, sharper reason: doing it on pull requests
-safely would mean `pull_request_target`, which runs with full access to secrets
-while checking out attacker-controlled code. There is no version of that which is
-safe here, so the feature is absent rather than guarded. A dispatched preview uses
-the commit SHA as its alias, which is the only identifier a manual run has.
+The one thing worth keeping from it moved to `ci.yml`, where it now runs on
+every push: the assertion that `workers_dev` and `preview_urls` are both
+`false`. That check needs no secrets, and a hostname Cloudflare Access is not
+attached to serves every secret in the installation to the open internet.
 
-| Job          | Runs when                        | Does                                                     |
-| ------------ | -------------------------------- | -------------------------------------------------------- |
-| `guard`      | Always, and blocks the other two | Asserts `workers_dev: false` and `preview_urls: false`   |
-| `preview`    | `environment == 'preview'`       | Migrations, then `versions upload --preview-alias sha-…` |
-| `production` | `environment == 'production'`    | Migrations, then `wrangler deploy`                       |
+The **documentation** site is different, and is deployed from here -- it is
+public, holds nothing, and has no reason to live in a reader's account. See
+`docs-release.yml`, triggered by a `docs-v*` tag.
 
-The **guard** needs no secrets. A hostname Access is not attached to is a complete
-bypass of the authentication model, so it is checked mechanically before anything
-reaches Cloudflare — and because it is the part worth running on every change, CI
-runs it independently, with no secrets and no dispatch.
-
-Migrations run **before** the deploy in both jobs, which is what makes "old code,
-new schema" the only state that exists in the window between the two steps. That
-is also why the migration policy is expand/contract only. A preview version shares
-the production database, so the ordering matters there too.
-
-Deploys serialise per environment and are **never cancelled**: interrupting one
-between `d1 migrations apply` and `deploy` leaves the schema ahead of the code.
-
-Toolchain caching is disabled entirely in the deploy workflow, in **both**
-directions. Disabling only the save would still let a lower-privilege workflow
-write a poisoned entry that this privileged job restores and publishes. A cold
-install costs about 30 seconds; deploys are not a hot path.
 
 ## Next
 

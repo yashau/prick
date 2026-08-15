@@ -129,15 +129,14 @@ call, or a dependency with a C shim. Impure code belongs in `prick-api`,
 ### Deployment guard
 
 `workers_dev` and `preview_urls` must be explicitly `false` in the wrangler
-config. The `guard` job in `.github/workflows/deploy.yml` greps for both and
-blocks the preview and production jobs otherwise. It needs no secrets.
+config. The `workflows` job in `.github/workflows/ci.yml` greps for both on
+**every push**. It needs no secrets, so it runs on forks and on pull requests
+from them.
 
-:::caution[It only runs on a deploy]
-`deploy.yml` is `workflow_dispatch` only, and `ci.yml` does not run the guard
-independently today. So the assertion fires when somebody deploys, not on every
-push. Do not rely on a green pull request to tell you those two settings are still
-`false`.
-:::
+This is the only invariant in the repository that, if broken, exposes every
+secret in the installation to the open internet: a hostname Cloudflare Access
+is not attached to serves the whole application without a JWT. A green pull
+request means both settings are still `false`.
 
 ## Rules you have to hold yourself
 
