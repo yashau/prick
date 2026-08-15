@@ -43,8 +43,8 @@ Breaking these fails the build, not review.
 2. **Do not describe this project by comparison to another.** It stands alone, so a reader has no
    referent for "what X did". State the property and the hazard on their own terms — "a decrypt
    failure must be loud, because a silently skipped row becomes a `.env` that deploys production
-   without `DATABASE_URL`" carries the whole argument and needs no absent other. This was briefly a
-   CI grep; the grep is gone, so it is now yours to hold.
+   without `DATABASE_URL`" carries the whole argument and needs no absent other. Nothing checks
+   this; it is yours to hold.
 3. **Never return a secret value from a SvelteKit `+*.server.ts` load or form action.** SvelteKit
    serialises those into the page payload. Secret values reach the browser only via a client-side
    `fetch` to `/api/*`, from the `ssr = false` subtree.

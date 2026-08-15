@@ -338,12 +338,10 @@ jobs:
       # ---------------------------------------------------------------------
       # The deployment guard, run on EVERY push rather than only at deploy time.
       #
-      # It used to live in a deploy workflow. That workflow has since been
-      # deleted outright: prick is self-hosted, so a "production" instance
-      # belonging to this repository does not exist, and deploying one from here
-      # would only have gated merges on Cloudflare credentials the project does
-      # not need. This assertion was the one part worth keeping, and it belongs
-      # on every push rather than on whoever remembered to deploy.
+      # It runs here, on every push, rather than at deploy time, because the
+      # people who need to know are the ones reviewing the change -- and because
+      # prick is self-hosted, so this repository never deploys the application
+      # and has no deploy-time to hook.
       #
       # A workers.dev hostname that Cloudflare Access is not attached to is a
       # complete bypass of the authentication model: the whole application,

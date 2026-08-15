@@ -292,7 +292,7 @@ After that no token exists to leak, and provenance is automatic — drop
 ## Deploying the application Worker
 
 **This repository does not deploy it.** prick is self-hosted: the application
-Worker runs in *your* Cloudflare account, and you deploy it yourself.
+Worker runs in _your_ Cloudflare account, and you deploy it yourself.
 
 ```bash
 pnpm install
@@ -300,20 +300,18 @@ pnpm --filter @prick/app exec wrangler d1 migrations apply prick --remote
 pnpm --filter @prick/app exec wrangler deploy
 ```
 
-There was briefly a workflow for this. It was removed, because it deployed a
-"production" instance that does not exist -- nobody's install is this
-repository's to keep running -- and its only lasting effect would have been to
-gate every merge on Cloudflare credentials the project does not need.
+No workflow here deploys it, deliberately. Nobody's installation is this
+repository's to keep running, and wiring one up would gate every merge on
+Cloudflare credentials the project has no other use for.
 
-The one thing worth keeping from it moved to `ci.yml`, where it now runs on
-every push: the assertion that `workers_dev` and `preview_urls` are both
-`false`. That check needs no secrets, and a hostname Cloudflare Access is not
-attached to serves every secret in the installation to the open internet.
+CI does assert one thing about your config on every push: that `workers_dev`
+and `preview_urls` are both `false`. A hostname Cloudflare Access is not
+attached to serves every secret in the installation to the open internet, so it
+is worth checking mechanically. The check needs no secrets.
 
-The **documentation** site is different, and is deployed from here -- it is
-public, holds nothing, and has no reason to live in a reader's account. See
+The **documentation** site is the one exception, and is released from here --
+it is public, holds nothing, and has no reason to live in your account. See
 `docs-release.yml`, triggered by a `docs-v*` tag.
-
 
 ## Next
 
