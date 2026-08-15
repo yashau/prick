@@ -332,6 +332,203 @@ export const grants = sqliteTable(
 );
 
 // ---------------------------------------------------------------------------
+// groups
+// ---------------------------------------------------------------------------
+
+/**
+ * A named set of identities. FLAT -- a group holds identities, never other
+ * groups.
+ *
+ * Nesting is excluded deliberately rather than left for later. It buys one
+ * thing (an org chart expressed in the access model) and costs cycle detection
+ * on every write, a recursive CTE on the hot authorization path, and an
+ * "effective members" answer that no operator can compute in their head. The
+ * question this whole area exists to answer is "why does this identity have
+ * production?", and a two-line answer -- "the platform group has it; they are in
+ * the platform group" -- is the feature. A seven-level derivation is the thing
+ * that made the question worth asking.
+ *
+ * A group with no grants is a LIST, not a permission. Membership confers exactly
+ * nothing on its own; see `group_grants`.
+ */
+export const groups = sqliteTable(
+  "groups",
+  {
+    id: text("id").primaryKey(),
+    /** URL-safe identifier, unique across the installation. */
+    slug: text("slug").notNull(),
+    name: text("name").notNull(),
+    description: text("description"),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+    createdBy: text("created_by").notNull(),
+  },
+  (t) => [uniqueIndex("groups_slug_uniq").on(t.slug)],
+);
+
+// ---------------------------------------------------------------------------
+// group_members
+// ---------------------------------------------------------------------------
+
+/**
+ * Membership. Deliberately just the pair, plus who added it and when.
+ *
+ * `ON DELETE CASCADE` in BOTH directions: deleting a group removes its
+ * memberships, and deleting an identity removes it from every group. Neither
+ * cascade is optional -- a membership row pointing at a deleted identity would
+ * be a grant attached to nobody, which is the kind of row that survives an
+ * access review because it renders as blank.
+ *
+ * No surrogate id. The pair IS the identity of this row, `added_at`/`added_by`
+ * are facts about it, and the API addresses a membership as
+ * `(group, identity)` -- which is also what a removal names, so there is no id
+ * for a caller to have to look up first.
+ */
+export const groupMembers = sqliteTable(
+  "group_members",
+  {
+    groupId: text("group_id")
+      .notNull()
+      .references(() => groups.id, { onDelete: "cascade" }),
+
+    identityId: text("identity_id")
+      .notNull()
+      .references(() => identities.id, { onDelete: "cascade" }),
+
+    addedAt: integer("added_at").notNull(),
+    /** Actor subject that added the member. Denormalised, like `created_by`. */
+    addedBy: text("added_by").notNull(),
+  },
+  (t) => [
+    /**
+     * One row per (group, identity). A plain UNIQUE is correct here and a
+     * PARTIAL index is not needed, for the reason the `grants` indexes below
+     * are partial: NEITHER COLUMN IS NULLABLE, so SQLite's "NULLs are distinct"
+     * rule has nothing to bite on.
+     */
+    uniqueIndex("group_members_group_identity_uniq").on(t.groupId, t.identityId),
+
+    /**
+     * The hot direction. Authorization resolves "which groups is THIS identity
+     * in" on every request; the unique index above is ordered (group, identity)
+     * and cannot serve that lookup.
+     */
+    index("group_members_identity_idx").on(t.identityId),
+  ],
+);
+
+// ---------------------------------------------------------------------------
+// group_grants
+// ---------------------------------------------------------------------------
+
+/**
+ * A grant held by a GROUP. Same three scopes, same roles, same expiry as
+ * `grants`.
+ *
+ * ---------------------------------------------------------------------------
+ * WHY A SECOND TABLE RATHER THAN A NULLABLE `group_id` ON `grants`
+ * ---------------------------------------------------------------------------
+ * The alternative considered was one table: add `group_id` to `grants`, make
+ * `identity_id` nullable, and add `CHECK (exactly one of them is set)`. It reads
+ * well and it is the wrong trade here, for three reasons in increasing order of
+ * seriousness.
+ *
+ *   1. IT IS NOT AN ADDITIVE MIGRATION. SQLite cannot drop a NOT NULL or add a
+ *      CHECK in place; both require the 12-step table rebuild, and drizzle-kit
+ *      emits that rebuild wrapped in `PRAGMA foreign_keys=OFF`, which D1 rejects
+ *      mid-transaction. The rebuild would be of `grants` -- the table every
+ *      authenticated request reads -- during the window between
+ *      `migrations apply` and `deploy`, when the OLD code is still live. This
+ *      repository's migration rule ("additive only, destructive changes take
+ *      three releases") exists to keep exactly that off the table.
+ *
+ *   2. THE CONSTRAINT GETS WEAKER, NOT STRONGER. In one table, "a grant names an
+ *      identity or a group, never both and never neither" is a CHECK plus two
+ *      nullable foreign keys. Split, it is two NOT NULL foreign keys the
+ *      database enforces without being asked, and "exactly one" is expressed by
+ *      which table the row is in -- a property that cannot be violated because
+ *      there is nowhere to write the violating row.
+ *
+ *   3. THE PARTIAL UNIQUE INDEXES WOULD HAVE TO GROW A NULL CASE. `grants_global_uniq`
+ *      is `UNIQUE(identity_id) WHERE scope_type = 'global'`. Group rows would
+ *      carry `identity_id = NULL`, and SQLite treats NULLs as DISTINCT, so that
+ *      index would silently permit unlimited duplicate global GROUP grants --
+ *      the precise failure the indexes were made partial to avoid, reintroduced
+ *      through the back door. It is fixable (`AND identity_id IS NOT NULL`, plus
+ *      three more indexes on `group_id`), but it means the one subtlety in this
+ *      schema now has two places to get right instead of one.
+ *
+ * Split, `grants` is untouched by this feature -- its three partial unique
+ * indexes keep working because nothing about their rows changed -- and this
+ * table gets the SAME three, keyed on `group_id`, for the same reason.
+ *
+ * The cost is honest and it is paid on the read side: effective role is now the
+ * max over two sources. That is ONE query, not two -- see `loadSnapshot`, which
+ * unions the two branches into a single statement -- so the "one authorization
+ * query per request" property is preserved rather than traded away.
+ */
+export const groupGrants = sqliteTable(
+  "group_grants",
+  {
+    id: text("id").primaryKey(),
+
+    groupId: text("group_id")
+      .notNull()
+      .references(() => groups.id, { onDelete: "cascade" }),
+
+    /** 'reader' | 'writer' | 'admin' */
+    role: text("role").notNull(),
+
+    /** 'global' | 'project' | 'environment' */
+    scopeType: text("scope_type").notNull(),
+
+    /** NULL for a global grant. */
+    projectId: text("project_id").references(() => projects.id, { onDelete: "cascade" }),
+
+    /** NULL for a global or project grant. */
+    environmentId: text("environment_id").references(() => environments.id, {
+      onDelete: "cascade",
+    }),
+
+    /** Epoch ms, or NULL for a grant that does not expire. */
+    expiresAt: integer("expires_at"),
+
+    createdAt: integer("created_at").notNull(),
+    createdBy: text("created_by").notNull(),
+  },
+  (t) => [
+    /*
+     * PARTIAL, one per scope type, for exactly the reason spelled out on
+     * `grants` above: a composite index over (group_id, scope_type, project_id,
+     * environment_id) would make two global grants for one group
+     * (id, 'global', NULL, NULL) non-colliding, because NULL != NULL. Revoking
+     * "the" global grant would then leave its duplicates in place.
+     */
+    uniqueIndex("group_grants_global_uniq")
+      .on(t.groupId)
+      .where(sql`scope_type = 'global'`),
+
+    uniqueIndex("group_grants_project_uniq")
+      .on(t.groupId, t.projectId)
+      .where(sql`scope_type = 'project'`),
+
+    uniqueIndex("group_grants_environment_uniq")
+      .on(t.groupId, t.environmentId)
+      .where(sql`scope_type = 'environment'`),
+
+    /** The per-request resolution query: all grants for a set of groups. */
+    index("group_grants_group_idx").on(t.groupId),
+
+    /**
+     * "Does any global admin grant still exist?" has to consider group-derived
+     * admins too, or an installation whose only administrator is a group member
+     * answers 503 NO_ADMINS_CONFIGURED to every request.
+     */
+    index("group_grants_scope_role_idx").on(t.scopeType, t.role),
+  ],
+);
+
+// ---------------------------------------------------------------------------
 // audit_log
 // ---------------------------------------------------------------------------
 
@@ -461,6 +658,15 @@ export type NewIdentity = typeof identities.$inferInsert;
 
 export type Grant = typeof grants.$inferSelect;
 export type NewGrant = typeof grants.$inferInsert;
+
+export type Group = typeof groups.$inferSelect;
+export type NewGroup = typeof groups.$inferInsert;
+
+export type GroupMember = typeof groupMembers.$inferSelect;
+export type NewGroupMember = typeof groupMembers.$inferInsert;
+
+export type GroupGrant = typeof groupGrants.$inferSelect;
+export type NewGroupGrant = typeof groupGrants.$inferInsert;
 
 export type AuditEntry = typeof auditLog.$inferSelect;
 export type NewAuditEntry = typeof auditLog.$inferInsert;

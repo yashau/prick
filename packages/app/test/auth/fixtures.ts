@@ -3,7 +3,15 @@ import { applyD1Migrations, env } from "cloudflare:test";
 import type { Actor, CoreContext, RuntimeConfig } from "../../src/lib/server/core/context.js";
 import { createDatabase, type Database } from "../../src/lib/server/db/client.js";
 import { uuidv7 } from "../../src/lib/server/db/ids.js";
-import { environments, grants, identities, projects } from "../../src/lib/server/db/schema.js";
+import {
+  environments,
+  grants,
+  groupGrants,
+  groupMembers,
+  groups,
+  identities,
+  projects,
+} from "../../src/lib/server/db/schema.js";
 import { harnessMigrations } from "./harness/client.js";
 
 /** A fixed instant. Grant expiry is compared against this, never a wall clock. */
@@ -18,6 +26,9 @@ export const NOW = 1_800_000_000_000;
  */
 const TABLES = [
   "audit_log",
+  "group_grants",
+  "group_members",
+  "groups",
   "grants",
   "secret_versions",
   "secrets",
@@ -191,6 +202,67 @@ export async function seedEnvironment(
     rev: 0,
     createdAt: NOW,
     updatedAt: NOW,
+    createdBy: "seed",
+  });
+
+  return id;
+}
+
+export async function seedGroup(db: Database, slug: string): Promise<string> {
+  const id = uuidv7(NOW);
+
+  await db.insert(groups).values({
+    id,
+    slug,
+    name: slug,
+    description: null,
+    createdAt: NOW,
+    updatedAt: NOW,
+    createdBy: "seed",
+  });
+
+  return id;
+}
+
+export async function seedGroupMember(
+  db: Database,
+  groupId: string,
+  identityId: string,
+): Promise<void> {
+  await db.insert(groupMembers).values({ groupId, identityId, addedAt: NOW, addedBy: "seed" });
+}
+
+/**
+ * A grant held by a GROUP.
+ *
+ * Deliberately mirrors `seedGrant`'s signature down to the field names, so a
+ * test that asserts "group-derived and direct are the same thing" can be read
+ * side by side against one that seeds the direct case. Any difference between
+ * the two is then a difference in the CODE rather than in how the fixture spelt
+ * it.
+ */
+export async function seedGroupGrant(
+  db: Database,
+  input: {
+    groupId: string;
+    role: "reader" | "writer" | "admin";
+    scopeType: "global" | "project" | "environment";
+    projectId?: string | null;
+    environmentId?: string | null;
+    expiresAt?: number | null;
+  },
+): Promise<string> {
+  const id = uuidv7(NOW);
+
+  await db.insert(groupGrants).values({
+    id,
+    groupId: input.groupId,
+    role: input.role,
+    scopeType: input.scopeType,
+    projectId: input.projectId ?? null,
+    environmentId: input.environmentId ?? null,
+    expiresAt: input.expiresAt ?? null,
+    createdAt: NOW,
     createdBy: "seed",
   });
 

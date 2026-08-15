@@ -10,10 +10,12 @@ import {
   revokeGrant,
   updateIdentity,
 } from "../../core/identities.js";
+import { explainIdentityPermissions } from "../../core/permissions.js";
 import { core } from "../context.js";
 import type { ApiEnv } from "../env.js";
 import { describe, jsonBody, jsonResponse } from "../openapi.js";
 import {
+  EffectivePermissionsResponse,
   GrantRecordResponse,
   IdentityRecordResponse,
   IdParams,
@@ -67,6 +69,25 @@ export function accessRoutes(): Hono<ApiEnv> {
     validate("json", UpdateIdentityBody),
     async (c) =>
       c.json(await updateIdentity(core(c), c.req.valid("param").id, c.req.valid("json"))),
+  );
+
+  app.get(
+    "/identities/:id/effective-permissions",
+    describe({
+      summary: 'Why this identity has what it has ("why does Bob have production?")',
+      description:
+        'The question an access review actually asks is not "what is Bob\'s role" but "why does Bob have production, and what do I remove to stop that". A response of `"admin"` answers the first and leaves the second exactly as hard — and with groups in the model it is genuinely hard, because the answer can be a grant on the environment, a grant on its project, a global grant, any of those held by a group Bob is in, or the `BOOTSTRAP_ADMINS` var, none of which are visible from Bob\'s own row.\n\nSo each entry carries its `sources`: the rows that confer it, each naming the group it came through when it came through one, with exactly one marked `decisive`. "Remove this" is something the response says rather than something the reader derives.\n\n**Which scopes appear.** Only those some grant *names* — never the cross product of every project and environment. A global admin is one entry saying so, not one entry per project.\n\n**Sources include covering grants.** An entry for an environment lists the global and project-scoped grants that reach it, because "the platform group has admin on the project" *is* the answer. Listing only exact-scope matches would produce an entry with a role and no explanation.\n\n**A disabled identity** reports `role: null` on every entry, with the sources still listed and nothing decisive. The kill switch outranks every grant, so the honest answer is "nothing — and here is what re-enabling would restore".\n\nVisible to any admin, narrowed to the scopes the caller administers. Sources inside a visible entry are **not** narrowed: a project admin who can see that Bob has admin on their project must be able to see that it comes from a global grant on a group, or the entry has a role and no explanation again.',
+      tags: ["access"],
+      operationId: "explainIdentityPermissions",
+      responses: {
+        200: jsonResponse(
+          "Every scope this identity holds a role at, and what conferred it.",
+          EffectivePermissionsResponse,
+        ),
+      },
+    }),
+    validate("param", IdParams),
+    async (c) => c.json(await explainIdentityPermissions(core(c), c.req.valid("param").id)),
   );
 
   app.get(

@@ -49,6 +49,13 @@ export type AuditAction =
   | "identity.update"
   | "grant.create"
   | "grant.revoke"
+  | "group.create"
+  | "group.update"
+  | "group.delete"
+  | "group.member.add"
+  | "group.member.remove"
+  | "group.grant.create"
+  | "group.grant.revoke"
   | "admin.rekey"
   /** A read or write refused before it reached the resource. */
   | "access.denied";
@@ -124,6 +131,30 @@ export type AuditDetail =
       kind: "identity";
       subject: string;
       fields: readonly string[];
+    }
+  | {
+      /**
+       * A grant held by a GROUP.
+       *
+       * A separate member rather than a `group?: string` bolted onto `grant`,
+       * because `grant.subject` means "the identity this was granted to" and a
+       * group is not one. Writing the group's slug into a field called `subject`
+       * would make the audit log's most-read filter -- "everything granted to
+       * X" -- quietly return rows that were granted to a set containing X, or
+       * not containing them at all.
+       */
+      kind: "group.grant";
+      role: string;
+      scopeType: string;
+      /** The group's slug. */
+      group: string;
+      expiresAt: number | null;
+    }
+  | {
+      /** A membership change. Names the group and the subject, never a role. */
+      kind: "group.member";
+      group: string;
+      subject: string;
     }
   | {
       kind: "denial";

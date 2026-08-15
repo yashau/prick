@@ -2,7 +2,14 @@ import { createExecutionContext, env, waitOnExecutionContext } from "cloudflare:
 
 import { createApi } from "../../src/lib/server/http/app.js";
 import type { Database } from "../../src/lib/server/db/client.js";
-import { freshDatabase, seedGrant, seedIdentity } from "../auth/fixtures.js";
+import {
+  freshDatabase,
+  seedGrant,
+  seedGroup,
+  seedGroupGrant,
+  seedGroupMember,
+  seedIdentity,
+} from "../auth/fixtures.js";
 import { certsEndpoint, harnessKeys } from "../auth/harness/client.js";
 import { mintServiceToken, mintUserToken } from "../auth/harness/mint.js";
 import { TEST_MASTER_KEY } from "../core/fixtures.js";
@@ -82,6 +89,27 @@ export interface ApiHarness {
     expiresAt?: number | null;
     disabled?: boolean;
   }): Promise<{ identityId: string; grantId: string }>;
+  /**
+   * The same thing, one level of indirection further out: create the identity,
+   * a group, put one in the other, and grant the GROUP the role.
+   *
+   * Signature-identical to `grant` on purpose. Every assertion that a
+   * group-derived role behaves exactly like a direct one is then a matter of
+   * swapping one call for the other, which is the cheapest possible way to be
+   * sure the two paths are not quietly different.
+   */
+  groupGrant(input: {
+    subject: string;
+    kind?: "user" | "service";
+    role: "reader" | "writer" | "admin";
+    scopeType: "global" | "project" | "environment";
+    projectId?: string | null;
+    environmentId?: string | null;
+    expiresAt?: number | null;
+    disabled?: boolean;
+    /** Defaults to a slug derived from the subject. */
+    group?: string;
+  }): Promise<{ identityId: string; groupId: string; grantId: string }>;
   /** A token for the baseline global administrator. */
   ownerToken(): Promise<string>;
   /** The bindings the app is invoked with, so a test can vary one. */
@@ -200,6 +228,31 @@ export async function apiHarness(options: HarnessOptions = {}): Promise<ApiHarne
       });
 
       return { identityId, grantId };
+    },
+    async groupGrant(input) {
+      const identityId = await seedIdentity(db, {
+        kind: input.kind ?? "user",
+        subject: input.subject,
+        ...(input.disabled === undefined ? {} : { disabled: input.disabled }),
+      });
+
+      const groupId = await seedGroup(
+        db,
+        input.group ?? `grp-${input.subject.replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")}`,
+      );
+
+      await seedGroupMember(db, groupId, identityId);
+
+      const grantId = await seedGroupGrant(db, {
+        groupId,
+        role: input.role,
+        scopeType: input.scopeType,
+        projectId: input.projectId ?? null,
+        environmentId: input.environmentId ?? null,
+        expiresAt: input.expiresAt ?? null,
+      });
+
+      return { identityId, groupId, grantId };
     },
     bindings,
   };

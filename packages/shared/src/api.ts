@@ -142,11 +142,23 @@ export type RevealQuery = z.infer<typeof RevealQuery>;
 // Identities and grants
 // ---------------------------------------------------------------------------
 
-const GrantFields = {
-  identity_id: Id,
+/**
+ * What every grant carries, regardless of WHO holds it.
+ *
+ * Split out from `GrantFields` so that a grant on a group and a grant on an
+ * identity cannot drift in role vocabulary or expiry semantics. They are the
+ * same object with a different holder, and the day that stops being true is the
+ * day "why does Bob have production?" stops having one answer.
+ */
+const GrantTerms = {
   role: Role,
   /** Absolute expiry in epoch ms. `null` means the grant does not expire. */
   expires_at: EpochMillis.nullable().default(null),
+};
+
+const GrantFields = {
+  identity_id: Id,
+  ...GrantTerms,
 };
 
 /**
@@ -190,6 +202,89 @@ export const UpdateIdentityBody = z
   })
   .strict();
 export type UpdateIdentityBody = z.infer<typeof UpdateIdentityBody>;
+
+// ---------------------------------------------------------------------------
+// Groups
+// ---------------------------------------------------------------------------
+
+/**
+ * Create a group.
+ *
+ * A group is a NAMED SET OF IDENTITIES and nothing else -- there is no `role`
+ * and no scope here, and their absence is the design. Creating a group grants
+ * nobody anything; the grant is a separate call, at a separate scope, requiring
+ * admin at that scope. Folding the two together would mean the act of writing
+ * down "these five people work on payments" was also the act of giving them
+ * access to something.
+ */
+export const CreateGroupBody = z
+  .object({
+    slug: Slug,
+    name: DisplayName,
+    description: Description.optional(),
+  })
+  .strict();
+export type CreateGroupBody = z.infer<typeof CreateGroupBody>;
+
+/**
+ * Rename a group, or change its description.
+ *
+ * `slug` is absent on purpose. It is how humans and scripts address the group,
+ * and a rename that silently repoints an identifier somebody else has written
+ * down is a change nobody notices until it matters. Delete and recreate, which
+ * is loud and drops the grants with it.
+ */
+export const UpdateGroupBody = z
+  .object({
+    name: DisplayName.optional(),
+    description: Description.optional(),
+  })
+  .strict();
+export type UpdateGroupBody = z.infer<typeof UpdateGroupBody>;
+
+/** Add one identity to a group. The group is named by the path. */
+export const AddGroupMemberBody = z.object({ identity_id: Id }).strict();
+export type AddGroupMemberBody = z.infer<typeof AddGroupMemberBody>;
+
+/**
+ * Grant a role to a GROUP at a scope.
+ *
+ * Discriminated on `scope_type` for the same reason `CreateGrantBody` is: the
+ * scope fields are required exactly where they are meaningful and rejected where
+ * they are not, so `{scope_type: "global", project: "prod"}` cannot arrive and
+ * have to be guessed at.
+ *
+ * There is no `identity_id`, and there is no deny variant. Group grants are
+ * PURELY ADDITIVE: effective role is the max over the identity's own grants and
+ * its groups', so a group can only ever raise a role, never lower one. A deny
+ * rule that silently overrode an explicit grant would make the access graph
+ * unreadable in exactly the situation -- an incident, at 3am -- where somebody
+ * has to be able to read it. Removal is what revocation is for.
+ */
+export const CreateGroupGrantBody = z.discriminatedUnion("scope_type", [
+  z
+    .object({
+      scope_type: z.literal("global"),
+      ...GrantTerms,
+    })
+    .strict(),
+  z
+    .object({
+      scope_type: z.literal("project"),
+      project: Slug,
+      ...GrantTerms,
+    })
+    .strict(),
+  z
+    .object({
+      scope_type: z.literal("environment"),
+      project: Slug,
+      environment: Slug,
+      ...GrantTerms,
+    })
+    .strict(),
+]);
+export type CreateGroupGrantBody = z.infer<typeof CreateGroupGrantBody>;
 
 // ---------------------------------------------------------------------------
 // Audit

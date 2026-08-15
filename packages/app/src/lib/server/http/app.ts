@@ -12,6 +12,7 @@ import { accessRoutes } from "./routes/access.js";
 import { adminRoutes } from "./routes/admin.js";
 import { auditRoutes } from "./routes/audit.js";
 import { environmentCollectionRoutes, registerEnvironmentRoutes } from "./routes/environments.js";
+import { groupRoutes } from "./routes/groups.js";
 import { healthRoutes, whoamiRoutes } from "./routes/meta.js";
 import { projectRoutes } from "./routes/projects.js";
 import { registerSecretRoutes } from "./routes/secrets.js";
@@ -188,6 +189,7 @@ export function createApi() {
   v1.route("/p/:project/e/:env", environmentApp);
 
   v1.route("/", accessRoutes());
+  v1.route("/", groupRoutes());
   v1.route("/", auditRoutes());
   v1.route("/", adminRoutes());
 

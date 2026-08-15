@@ -14,6 +14,8 @@ import { z } from "zod";
 import type { AuditEntryView, AuditPage } from "../core/audit.js";
 import type { EnvironmentSummary } from "../core/environments.js";
 import type { GrantRecord, IdentityRecord, UnknownIdentity } from "../core/identities.js";
+import type { EffectivePermissions } from "../core/permissions.js";
+import type { GroupGrantRecord, GroupMemberRecord, GroupRecord } from "../core/groups.js";
 import type { KeyringStatus } from "../core/keyring.js";
 import type { ProjectSummary } from "../core/projects.js";
 import type {
@@ -88,6 +90,25 @@ export const RevealParams = EnvironmentParams.extend({
 }).strict();
 
 export const IdParams = z.object({ id: Id }).strict();
+
+/**
+ * A membership, addressed as the pair it is.
+ *
+ * `group_members` has no surrogate key, and this is why that is comfortable
+ * rather than awkward: a removal names the group and the identity, both of which
+ * the caller already has, instead of requiring a lookup to turn the pair into an
+ * id and then post the id back.
+ */
+export const GroupMemberParams = z.object({ id: Id, identityId: Id }).strict();
+
+/**
+ * A group's grant, addressed through the group.
+ *
+ * Both halves are validated and both are checked in `core`, so a grant id from
+ * another group is a 404 rather than a revocation of somebody else's access
+ * because a UI paired the wrong two values.
+ */
+export const GroupGrantParams = z.object({ id: Id, grantId: Id }).strict();
 
 // ---------------------------------------------------------------------------
 // Query strings
@@ -297,6 +318,104 @@ export const GrantRecordResponse = z
   })
   .strict();
 
+export const GroupRecordResponse = z
+  .object({
+    id: Id,
+    slug: Slug,
+    name: z.string(),
+    description: z.string().nullable(),
+    /** Members, and live grants. Both zero is a group that confers nothing. */
+    memberCount: z.number().int().nonnegative(),
+    grantCount: z.number().int().nonnegative(),
+    updatedAt: EpochMillis,
+  })
+  .strict();
+
+export const GroupMemberRecordResponse = z
+  .object({
+    identityId: Id,
+    kind: IdentityKind,
+    subject: z.string(),
+    displayName: z.string().nullable(),
+    /** The kill switch. A disabled member of a privileged group holds nothing. */
+    disabled: z.boolean(),
+    addedAt: EpochMillis,
+    addedBy: z.string(),
+  })
+  .strict();
+
+export const GroupGrantRecordResponse = z
+  .object({
+    id: Id,
+    groupId: Id,
+    groupSlug: Slug,
+    role: Role,
+    scopeType: ScopeType,
+    projectSlug: Slug.nullable(),
+    environmentSlug: Slug.nullable(),
+    expiresAt: EpochMillis.nullable(),
+  })
+  .strict();
+
+/** A group named as the provenance of a role. */
+const GroupRefResponse = z.object({ id: Id, slug: Slug, name: z.string() }).strict();
+
+/**
+ * ONE ROW THAT CONFERS A ROLE, named well enough to be acted on.
+ *
+ * This is the field that makes the effective-permissions view worth having.
+ * `role: "admin"` is not an answer to "why does Bob have production" -- `via:
+ * "group"`, `group: {slug: "platform"}`, `scopeType: "project"`, `grantId: …` is,
+ * because it says both what to look at and what to delete.
+ *
+ * `grantId` is nullable for exactly one source: `via: "bootstrap"`, which comes
+ * from the `BOOTSTRAP_ADMINS` var and has no row behind it anywhere. That is the
+ * source an operator would otherwise never find, having searched the database
+ * for it.
+ */
+const PermissionSourceResponse = z
+  .object({
+    via: z.enum(["direct", "group", "bootstrap"]),
+    grantId: Id.nullable(),
+    role: Role,
+    /** Where the GRANT sits, which may be broader than the scope it explains. */
+    scopeType: ScopeType,
+    projectSlug: Slug.nullable(),
+    environmentSlug: Slug.nullable(),
+    group: GroupRefResponse.nullable(),
+    expiresAt: EpochMillis.nullable(),
+    /** The one that set `role` on the entry. None, for a disabled identity. */
+    decisive: z.boolean(),
+  })
+  .strict();
+
+const EffectiveScopeEntryResponse = z
+  .object({
+    scopeType: ScopeType,
+    projectSlug: Slug.nullable(),
+    environmentSlug: Slug.nullable(),
+    /** `null` ONLY for a disabled identity, whose grants are all overruled. */
+    role: Role.nullable(),
+    /** Every live grant reaching this scope, strongest first. Never empty. */
+    sources: z.array(PermissionSourceResponse),
+  })
+  .strict();
+
+export const EffectivePermissionsResponse = z
+  .object({
+    identity: IdentityRecordResponse,
+    /** Every group, including ones holding no grants -- also an answer. */
+    groups: z.array(GroupRefResponse),
+    bootstrap: z.boolean(),
+    /**
+     * One entry per scope some grant NAMES. An empty array means no access
+     * anywhere, which is the correct answer for an identity nobody has granted
+     * anything -- there is no implicit role in this system.
+     */
+    scopes: z.array(EffectiveScopeEntryResponse),
+  })
+  .strict();
+
 /**
  * A subject that authenticated, was denied, and holds no grant.
  *
@@ -427,6 +546,10 @@ export type ResponseSchemasDescribeCore = [
   Assert<Same<ImportResult, z.infer<typeof ImportResultResponse>>>,
   Assert<Same<IdentityRecord, z.infer<typeof IdentityRecordResponse>>>,
   Assert<Same<GrantRecord, z.infer<typeof GrantRecordResponse>>>,
+  Assert<Same<GroupRecord, z.infer<typeof GroupRecordResponse>>>,
+  Assert<Same<GroupMemberRecord, z.infer<typeof GroupMemberRecordResponse>>>,
+  Assert<Same<GroupGrantRecord, z.infer<typeof GroupGrantRecordResponse>>>,
+  Assert<Same<EffectivePermissions, z.infer<typeof EffectivePermissionsResponse>>>,
   Assert<Same<UnknownIdentity, z.infer<typeof UnknownIdentityResponse>>>,
   Assert<Same<AuditEntryView, z.infer<typeof AuditEntryResponse>>>,
   Assert<Same<AuditPage, z.infer<typeof AuditPageResponse>>>,

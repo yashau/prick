@@ -24,5 +24,7 @@ export * from "./projects.js";
 export * from "./environments.js";
 export * from "./secrets.js";
 export * from "./identities.js";
+export * from "./groups.js";
+export * from "./permissions.js";
 export * from "./audit.js";
 export * from "./keyring.js";

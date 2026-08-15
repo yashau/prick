@@ -1,10 +1,19 @@
 import type { CreateGrantBody, IdentityKind, Role, UpdateIdentityBody } from "@prick/shared";
 import { count, eq, gt, isNull, max, min, or } from "drizzle-orm";
+import { unionAll } from "drizzle-orm/sqlite-core";
 
 import { resolveAuthorization } from "../auth/authorize.js";
 import { assertNotLastAdmin } from "../auth/bootstrap.js";
 import { uuidv7 } from "../db/ids.js";
-import { auditLog, environments, grants, identities, projects } from "../db/schema.js";
+import {
+  auditLog,
+  environments,
+  grants,
+  groupGrants,
+  groupMembers,
+  identities,
+  projects,
+} from "../db/schema.js";
 import { auditStatement } from "./audit.js";
 import type { CoreContext, Scope } from "./context.js";
 import { PrickError, notFound } from "./errors.js";
@@ -45,7 +54,7 @@ export interface GrantRecord {
  * What they may see is then narrowed per row by `visibleGrant` below. Being
  * allowed to open the screen is not being allowed to read every grant on it.
  */
-async function assertAnyAdmin(ctx: CoreContext): Promise<void> {
+export async function assertAnyAdmin(ctx: CoreContext): Promise<void> {
   const snapshot = await resolveAuthorization(ctx);
 
   if (!snapshot.disabled) {
@@ -279,7 +288,7 @@ export async function createGrant(ctx: CoreContext, input: CreateGrantBody): Pro
   };
 }
 
-interface ResolvedScope {
+export interface ResolvedScope {
   scope: Scope;
   projectId: string | null;
   environmentId: string | null;
@@ -287,7 +296,30 @@ interface ResolvedScope {
   environmentSlug: string | null;
 }
 
-async function resolveGrantScope(ctx: CoreContext, input: CreateGrantBody): Promise<ResolvedScope> {
+/**
+ * The scope half of a grant body, structurally.
+ *
+ * Named separately from `CreateGrantBody` so that `resolveGrantScope` serves
+ * BOTH holders -- an identity grant and a group grant differ only in who holds
+ * them, and resolving "project `acme`, environment `prod`" twice, in two files,
+ * is how one of them ends up resolving a slug the other would have refused.
+ */
+export type GrantScopeInput =
+  | { scope_type: "global" }
+  | { scope_type: "project"; project: string }
+  | { scope_type: "environment"; project: string; environment: string };
+
+/**
+ * Resolve a grant body's scope to ids and slugs, THROUGH the visibility rules.
+ *
+ * `requireProject` is what makes an unauthorized project slug a 404 here rather
+ * than a 403, which is why a grantless actor posting a grant at project scope
+ * gets 404 and not "that project exists and you may not grant on it".
+ */
+export async function resolveGrantScope(
+  ctx: CoreContext,
+  input: GrantScopeInput,
+): Promise<ResolvedScope> {
   if (input.scope_type === "global") {
     return {
       scope: { type: "global" },
@@ -422,14 +454,32 @@ export async function listUnknownIdentities(ctx: CoreContext): Promise<UnknownId
     .where(eq(auditLog.outcome, "denied"))
     .groupBy(auditLog.actorKind, auditLog.actorSubject);
 
-  // Subjects that DO hold a live grant are not "unknown" -- they were denied
-  // something narrower than what they hold, which is ordinary authorization
-  // doing its job rather than a missing introduction.
-  const granted = await ctx.db
-    .selectDistinct({ subject: identities.subject })
-    .from(identities)
-    .innerJoin(grants, eq(grants.identityId, identities.id))
-    .where(liveGrant(ctx.now));
+  /*
+   * Subjects that DO hold a live grant are not "unknown" -- they were denied
+   * something narrower than what they hold, which is ordinary authorization
+   * doing its job rather than a missing introduction.
+   *
+   * GROUP-DERIVED ACCESS COUNTS. An identity whose every role comes from a group
+   * is granted, fully and normally; listing it under "Seen but not granted"
+   * would put a provisioned service token on the screen whose entire purpose is
+   * to surface UNPROVISIONED ones, and the operator's correct response to that
+   * screen -- click Grant -- would be to issue a second, redundant grant.
+   *
+   * One statement, via UNION ALL, for the same reason `loadSnapshot` uses one.
+   */
+  const granted = await unionAll(
+    ctx.db
+      .select({ subject: identities.subject })
+      .from(identities)
+      .innerJoin(grants, eq(grants.identityId, identities.id))
+      .where(liveGrant(ctx.now)),
+    ctx.db
+      .select({ subject: identities.subject })
+      .from(identities)
+      .innerJoin(groupMembers, eq(groupMembers.identityId, identities.id))
+      .innerJoin(groupGrants, eq(groupGrants.groupId, groupMembers.groupId))
+      .where(or(isNull(groupGrants.expiresAt), gt(groupGrants.expiresAt, ctx.now))),
+  );
 
   const known = new Set(granted.map((row) => row.subject));
 

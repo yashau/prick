@@ -1,10 +1,18 @@
 import { and, eq } from "drizzle-orm";
+import { unionAll } from "drizzle-orm/sqlite-core";
 import type { Role } from "@prick/shared";
 
 import { ROLE_RANK, type Actor, type CoreContext, type Scope } from "../core/context.js";
 import { PrickError } from "../core/errors.js";
 import { uuidv7 } from "../db/ids.js";
-import { auditLog, environments, grants, identities } from "../db/schema.js";
+import {
+  auditLog,
+  environments,
+  grants,
+  groupGrants,
+  groupMembers,
+  identities,
+} from "../db/schema.js";
 import { isBootstrapAdmin } from "./bootstrap.js";
 
 /**
@@ -25,12 +33,27 @@ import { isBootstrapAdmin } from "./bootstrap.js";
  * query, not two hundred, and adding groups must not make it two.
  */
 
+/**
+ * The resolved authorization state for one request.
+ *
+ * The three role maps are the MAX over the identity's OWN grants and the grants
+ * of every group it belongs to. They are merged before this type exists, and
+ * that is a deliberate choice rather than laziness: nothing downstream of here
+ * -- `resolveEffectiveRole`, `visibleProjectIds`, the audit view -- should have
+ * to ask "and also check the groups", because the one that forgets is the one
+ * that becomes a privilege bug. Provenance is a separate question with a
+ * separate query behind it (`explainIdentityPermissions`), asked only by the
+ * screen that exists to answer it.
+ */
 export interface AuthorizationSnapshot {
   /** `identities.id`, or `null` when this subject has never been recorded. */
   identityId: string | null;
   /** The kill switch. Outranks every grant, and the bootstrap var too. */
   disabled: boolean;
-  /** From a real `scope_type = 'global'` grants row, never from a shortcut. */
+  /**
+   * From a real `scope_type = 'global'` row -- in `grants`, or in `group_grants`
+   * for a group this identity belongs to. Never from a shortcut.
+   */
   globalRole: Role | null;
   byProject: ReadonlyMap<string, Role>;
   byEnvironment: ReadonlyMap<string, Role>;
@@ -66,16 +89,49 @@ function asScopeType(value: string | null): "global" | "project" | "environment"
 }
 
 /**
- * Load the actor's identity row and every grant attached to it, in ONE query.
+ * Load the actor's identity row, every grant attached to it, and every grant
+ * held by a group it belongs to -- in ONE query.
  *
- * A `LEFT JOIN` rather than two round-trips, because an identity with no grants
- * is the normal case for a service token that has just been pointed at this
- * Worker for the first time -- and that case must still produce a snapshot, so
- * the denial can be audited and the subject can appear in "Seen but not
- * granted".
+ * A `LEFT JOIN` for the direct half rather than two round-trips, because an
+ * identity with no grants is the normal case for a service token that has just
+ * been pointed at this Worker for the first time -- and that case must still
+ * produce a snapshot, so the denial can be audited and the subject can appear in
+ * "Seen but not granted".
+ *
+ * ---------------------------------------------------------------------------
+ * WHY THE GROUP HALF IS A `UNION ALL` AND NOT TWO MORE JOINS
+ * ---------------------------------------------------------------------------
+ * Hanging `LEFT JOIN group_members LEFT JOIN group_grants` off the same row
+ * source would also be one round-trip, and would also be correct -- MAX over
+ * roles is idempotent, so duplicates do not change the answer. What it would not
+ * be is BOUNDED: the join produces the CROSS PRODUCT of the two branches, so an
+ * identity with 12 direct grants in 4 groups holding 9 grants each returns 432
+ * rows to compute a handful of roles from. That is a cost that grows
+ * multiplicatively with something an operator is encouraged to do more of.
+ *
+ * `UNION ALL` returns `direct + group` rows instead of `direct * group`, and it
+ * is still exactly ONE prepared statement -- which the authorization suite
+ * asserts by counting `prepare()` calls through a binding proxy, the same way
+ * the write path asserts that a bulk write is one `batch()`. Adding groups did
+ * not add a query.
+ *
+ * (The suite is named indirectly on purpose: a sentinel test greps every shipped
+ * source for references into the test tree, because a Worker that mentions one
+ * is a Worker that might import one.)
+ *
+ * Both branches select the identity's own columns, so `rows[0]` carries
+ * `identityId` and `disabled` whichever branch happens to come back first. The
+ * direct branch always yields at least one row for an existing identity (that is
+ * what the LEFT JOIN is for), so a non-empty group half never arrives without
+ * it.
  */
 async function loadSnapshot(ctx: CoreContext): Promise<AuthorizationSnapshot> {
-  const rows = await ctx.db
+  const isActor = and(
+    eq(identities.kind, ctx.actor.kind),
+    eq(identities.subject, ctx.actor.subject),
+  );
+
+  const direct = ctx.db
     .select({
       identityId: identities.id,
       disabled: identities.disabled,
@@ -87,7 +143,30 @@ async function loadSnapshot(ctx: CoreContext): Promise<AuthorizationSnapshot> {
     })
     .from(identities)
     .leftJoin(grants, eq(grants.identityId, identities.id))
-    .where(and(eq(identities.kind, ctx.actor.kind), eq(identities.subject, ctx.actor.subject)));
+    .where(isActor);
+
+  /*
+   * INNER joins, deliberately. A group with no grants must contribute NOTHING --
+   * membership is a list, not a permission -- and an inner join is how that is
+   * expressed in SQL rather than in a conditional below that somebody could
+   * later "simplify".
+   */
+  const viaGroups = ctx.db
+    .select({
+      identityId: identities.id,
+      disabled: identities.disabled,
+      role: groupGrants.role,
+      scopeType: groupGrants.scopeType,
+      projectId: groupGrants.projectId,
+      environmentId: groupGrants.environmentId,
+      expiresAt: groupGrants.expiresAt,
+    })
+    .from(identities)
+    .innerJoin(groupMembers, eq(groupMembers.identityId, identities.id))
+    .innerJoin(groupGrants, eq(groupGrants.groupId, groupMembers.groupId))
+    .where(isActor);
+
+  const rows = await unionAll(direct, viaGroups);
 
   const bootstrapAdmin = isBootstrapAdmin(ctx.config, ctx.actor.subject);
 

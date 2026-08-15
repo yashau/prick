@@ -246,6 +246,11 @@ export const DOCUMENT: GenerateSpecOptions["documentation"] = {
     { name: "environments", description: "Environments within a project." },
     { name: "secrets", description: "Secret metadata, values, history and bulk writes." },
     { name: "access", description: "Identities and grants." },
+    {
+      name: "groups",
+      description:
+        "Named sets of identities that can hold grants. Purely additive and flat: effective role is the max over an identity's own grants and its groups', there is no deny rule, and a group never contains another group.",
+    },
     { name: "audit", description: "The append-only audit log." },
     { name: "admin", description: "Key ring status and rekeying." },
   ],

@@ -1,9 +1,10 @@
-import { and, eq, gt, isNull, ne, or } from "drizzle-orm";
+import { and, eq, gt, isNull, ne, or, type AnyColumn, type SQLWrapper } from "drizzle-orm";
+import { unionAll } from "drizzle-orm/sqlite-core";
 
 import type { CoreContext, RuntimeConfig } from "../core/context.js";
 import { PrickError } from "../core/errors.js";
 import { uuidv7 } from "../db/ids.js";
-import { auditLog, grants, identities } from "../db/schema.js";
+import { auditLog, grants, groupGrants, groupMembers, identities } from "../db/schema.js";
 
 /**
  * First-admin bootstrap, without a race and without a bootstrap token.
@@ -132,7 +133,7 @@ export async function selfHealBootstrapGrant(ctx: CoreContext): Promise<SelfHeal
         eq(grants.identityId, identityId),
         eq(grants.scopeType, "global"),
         eq(grants.role, "admin"),
-        liveGrant(ctx.now),
+        live(grants.expiresAt, ctx.now),
       ),
     )
     .limit(1);
@@ -182,29 +183,104 @@ export async function selfHealBootstrapGrant(ctx: CoreContext): Promise<SelfHeal
   return { identityId, granted: true };
 }
 
-/** `expires_at IS NULL OR expires_at > now`. Expired is not an admin. */
-function liveGrant(now: number) {
-  return or(isNull(grants.expiresAt), gt(grants.expiresAt, now));
+/**
+ * `expires_at IS NULL OR expires_at > now`. Expired is not an admin.
+ *
+ * Takes the column so the same predicate serves `grants` and `group_grants`. A
+ * second copy spelled against the other table is how one of them ends up
+ * counting expired rows after somebody fixes a bug in the first.
+ */
+function live(column: AnyColumn, now: number) {
+  return or(isNull(column), gt(column, now));
 }
 
-/** How many live global admin grants belong to identities that are not disabled. */
-async function countGlobalAdmins(ctx: CoreContext, excludeGrantId?: string): Promise<number> {
-  const conditions = [
+/**
+ * What a pending deletion is about to remove, so the admin count can be taken as
+ * of AFTER it.
+ *
+ * Four shapes because there are four ways to stop being a global admin without
+ * anybody deleting a `grants` row: the group's grant goes, the whole group goes,
+ * you leave the group, or your own grant goes. A guard that knew only the last
+ * one would let an operator delete the group holding the only global admin grant
+ * and lock the installation out -- through a route whose name does not contain
+ * the word "grant".
+ */
+export interface AdminExclusion {
+  /** A `grants` row about to be deleted. */
+  grantId?: string;
+  /** A `group_grants` row about to be deleted. */
+  groupGrantId?: string;
+  /** A whole group about to be deleted, with its grants and memberships. */
+  groupId?: string;
+  /** One membership about to be removed. */
+  membership?: { groupId: string; identityId: string };
+}
+
+/**
+ * How many DISTINCT, enabled identities hold live global admin -- directly, or
+ * through a group.
+ *
+ * ONE query, via `UNION ALL`, because this runs on every authenticated request:
+ * `assertAdminsConfigured` calls it whenever `BOOTSTRAP_ADMINS` is empty, which
+ * is every properly bootstrapped installation. Two round-trips here would be a
+ * per-request regression paid by every caller to fund a check that almost always
+ * says "yes".
+ *
+ * DISTINCT is not decoration either. One identity can now reach global admin by
+ * several paths at once -- a direct grant and two groups -- and counting rows
+ * would report three administrators where there is one, which is precisely the
+ * arithmetic that makes a lockout guard pass while the last human loses access.
+ */
+async function countGlobalAdmins(ctx: CoreContext, exclude: AdminExclusion = {}): Promise<number> {
+  const directConditions: (SQLWrapper | undefined)[] = [
     eq(grants.scopeType, "global"),
     eq(grants.role, "admin"),
     eq(identities.disabled, false),
-    liveGrant(ctx.now),
+    live(grants.expiresAt, ctx.now),
   ];
 
-  if (excludeGrantId !== undefined) conditions.push(ne(grants.id, excludeGrantId));
+  if (exclude.grantId !== undefined) directConditions.push(ne(grants.id, exclude.grantId));
 
-  const rows = await ctx.db
-    .select({ id: grants.id })
+  const direct = ctx.db
+    .select({ identityId: identities.id })
     .from(grants)
     .innerJoin(identities, eq(grants.identityId, identities.id))
-    .where(and(...conditions));
+    .where(and(...directConditions));
 
-  return rows.length;
+  const groupConditions: (SQLWrapper | undefined)[] = [
+    eq(groupGrants.scopeType, "global"),
+    eq(groupGrants.role, "admin"),
+    eq(identities.disabled, false),
+    live(groupGrants.expiresAt, ctx.now),
+  ];
+
+  if (exclude.groupGrantId !== undefined) {
+    groupConditions.push(ne(groupGrants.id, exclude.groupGrantId));
+  }
+  if (exclude.groupId !== undefined) {
+    groupConditions.push(ne(groupGrants.groupId, exclude.groupId));
+  }
+  if (exclude.membership !== undefined) {
+    // NOT (group = ? AND identity = ?), written as the De Morgan form because
+    // both columns are NOT NULL and `or(ne, ne)` needs no non-null assertion.
+    groupConditions.push(
+      or(
+        ne(groupMembers.groupId, exclude.membership.groupId),
+        ne(groupMembers.identityId, exclude.membership.identityId),
+      ),
+    );
+  }
+
+  const viaGroups = ctx.db
+    .select({ identityId: identities.id })
+    .from(groupGrants)
+    .innerJoin(groupMembers, eq(groupMembers.groupId, groupGrants.groupId))
+    .innerJoin(identities, eq(identities.id, groupMembers.identityId))
+    .where(and(...groupConditions));
+
+  const rows = await unionAll(direct, viaGroups);
+
+  return new Set(rows.map((row) => row.identityId)).size;
 }
 
 /**
@@ -255,9 +331,26 @@ export async function assertNotLastAdmin(ctx: CoreContext, grantId: string): Pro
   if (grant === undefined) return;
   if (grant.scopeType !== "global" || grant.role !== "admin") return;
 
+  await assertNotLastAdminAfter(ctx, { grantId });
+}
+
+/**
+ * The same refusal, for the three ways GROUPS can remove the last administrator.
+ *
+ * Deliberately has NO pre-check of the kind `assertNotLastAdmin` performs above.
+ * The count is taken as of after the exclusion, so a deletion that has nothing
+ * to do with global admin simply does not change it -- the guard passes on the
+ * arithmetic rather than on somebody having correctly enumerated which
+ * deletions are dangerous. That enumeration is exactly the thing that goes stale
+ * when a fourth way to lose a role is added.
+ */
+export async function assertNotLastAdminAfter(
+  ctx: CoreContext,
+  exclusion: AdminExclusion,
+): Promise<void> {
   if (ctx.config.bootstrapAdmins.length > 0) return;
 
-  if ((await countGlobalAdmins(ctx, grantId)) > 0) return;
+  if ((await countGlobalAdmins(ctx, exclusion)) > 0) return;
 
   throw new PrickError("LAST_ADMIN", "This is the last administrator of this installation.", {
     hint: "Grant global admin to another identity first, or set BOOTSTRAP_ADMINS in wrangler.jsonc and redeploy.",

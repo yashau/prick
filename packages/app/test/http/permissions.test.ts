@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { seedEnvironment, seedIdentity, seedProject } from "../auth/fixtures.js";
+import {
+  seedEnvironment,
+  seedGroup,
+  seedGroupMember,
+  seedIdentity,
+  seedProject,
+} from "../auth/fixtures.js";
 import { apiHarness, body, type ApiHarness } from "./harness.js";
 
 /**
@@ -41,7 +47,32 @@ import { apiHarness, body, type ApiHarness } from "./harness.js";
  * (there is no project yet) and the access-graph reads.
  */
 
-/** The actors, one grant each. `nobody` authenticates and holds nothing. */
+/**
+ * The actors, one grant each. `nobody` authenticates and holds nothing.
+ *
+ * ---------------------------------------------------------------------------
+ * THE LAST FOUR COLUMNS ARE THE POINT OF THE GROUPS FEATURE
+ * ---------------------------------------------------------------------------
+ * `group-*` actors hold NO grant of their own. They are in a group, and the
+ * GROUP holds the grant. Their columns are therefore expected to be identical,
+ * cell for cell, to the direct-grant actor of the same role:
+ *
+ *   group-global-admin   == global-admin
+ *   group-project-admin  == project-admin
+ *   group-env-writer     == env-writer
+ *   group-disabled-admin == nobody
+ *
+ * That last equivalence is the one worth staring at. `group-disabled-admin` is a
+ * member of a group holding GLOBAL ADMIN, and is `disabled`. It must be
+ * indistinguishable from an identity nobody has ever granted anything -- the
+ * kill switch outranks every grant at every scope, and adding a second way to
+ * acquire a role must not add a way around it.
+ *
+ * The equality is written out per row rather than computed from the direct
+ * column, for the reason the whole table is written out: a test that derives its
+ * expectation agrees with the code's bugs. Here it would agree with a bug that
+ * broke both paths at once, which is exactly the interesting failure.
+ */
 type ActorName =
   | "nobody"
   | "global-reader"
@@ -52,7 +83,11 @@ type ActorName =
   | "project-admin"
   | "env-reader"
   | "env-writer"
-  | "env-admin";
+  | "env-admin"
+  | "group-global-admin"
+  | "group-project-admin"
+  | "group-env-writer"
+  | "group-disabled-admin";
 
 const ACTORS: ActorName[] = [
   "nobody",
@@ -65,13 +100,32 @@ const ACTORS: ActorName[] = [
   "env-reader",
   "env-writer",
   "env-admin",
+  "group-global-admin",
+  "group-project-admin",
+  "group-env-writer",
+  "group-disabled-admin",
 ];
 
 type Expectations = Record<ActorName, number>;
 
 /** Shorthand for a row, so a table entry fits on a screen. */
 function row(
-  values: [number, number, number, number, number, number, number, number, number, number],
+  values: [
+    number,
+    number,
+    number,
+    number,
+    number,
+    number,
+    number,
+    number,
+    number,
+    number,
+    number,
+    number,
+    number,
+    number,
+  ],
 ): Expectations {
   const out = {} as Expectations;
   ACTORS.forEach((actor, index) => {
@@ -88,6 +142,12 @@ interface Scenario {
   targetIdentityId: string;
   /** A project-scoped reader grant on `acme`, usable as a revoke target. */
   targetGrantId: string;
+  /** A group holding one project-scoped reader grant on `acme`. */
+  targetGroupId: string;
+  /** That group's grant, usable as a revoke target. */
+  targetGroupGrantId: string;
+  /** An identity already IN that group, so a removal has something to remove. */
+  targetMemberId: string;
 }
 
 /**
@@ -121,6 +181,22 @@ async function scenario(actor: ActorName): Promise<Scenario> {
 
   const { grantId: targetGrantId } = await api.grant({
     subject: "revoke-me@example.com",
+    role: "reader",
+    scopeType: "project",
+    projectId,
+  });
+
+  // A group to operate ON, distinct from any group an actor is a member of.
+  // It holds a project-scoped reader grant so that revoking it is a scoped
+  // operation rather than a global one, and it has one member so that a removal
+  // has something to remove.
+  const {
+    identityId: targetMemberId,
+    groupId: targetGroupId,
+    grantId: targetGroupGrantId,
+  } = await api.groupGrant({
+    subject: "in-a-group@example.com",
+    group: "targets",
     role: "reader",
     scopeType: "project",
     projectId,
@@ -190,9 +266,54 @@ async function scenario(actor: ActorName): Promise<Scenario> {
         environmentId,
       });
       break;
+
+    /*
+     * The group-derived half. `groupGrant` is signature-identical to `grant`:
+     * the ONLY difference between these four cases and their direct
+     * counterparts above is which of the two the fixture called.
+     */
+    case "group-global-admin":
+      await api.groupGrant({ subject: subjectOf(actor), role: "admin", scopeType: "global" });
+      break;
+    case "group-project-admin":
+      await api.groupGrant({
+        subject: subjectOf(actor),
+        role: "admin",
+        scopeType: "project",
+        projectId,
+      });
+      break;
+    case "group-env-writer":
+      await api.groupGrant({
+        subject: subjectOf(actor),
+        role: "writer",
+        scopeType: "environment",
+        projectId,
+        environmentId,
+      });
+      break;
+    case "group-disabled-admin":
+      // In a group holding GLOBAL ADMIN, and disabled. Must behave exactly like
+      // `nobody` in every cell of this table.
+      await api.groupGrant({
+        subject: subjectOf(actor),
+        role: "admin",
+        scopeType: "global",
+        disabled: true,
+      });
+      break;
   }
 
-  return { api, projectId, environmentId, targetIdentityId, targetGrantId };
+  return {
+    api,
+    projectId,
+    environmentId,
+    targetIdentityId,
+    targetGrantId,
+    targetGroupId,
+    targetGroupGrantId,
+    targetMemberId,
+  };
 }
 
 function subjectOf(actor: ActorName): string {
@@ -213,7 +334,7 @@ const OPERATIONS: Operation[] = [
     // rather than a refusal -- which is correct: "you have no projects" is not a
     // statement about whether any exist.
     request: () => ({ path: "/api/v1/projects", init: {} }),
-    expect: row([200, 200, 200, 200, 200, 200, 200, 200, 200, 200]),
+    expect: row([200, 200, 200, 200, 200, 200, 200, 200, 200, 200, 200, 200, 200, 200]),
   },
   {
     name: "POST /projects",
@@ -224,7 +345,7 @@ const OPERATIONS: Operation[] = [
       path: "/api/v1/projects",
       init: { method: "POST", ...body({ slug: "new-one", name: "New" }) },
     }),
-    expect: row([403, 403, 201, 201, 403, 403, 403, 403, 403, 403]),
+    expect: row([403, 403, 201, 201, 403, 403, 403, 403, 403, 403, 201, 403, 403, 403]),
   },
   {
     name: "GET /projects/acme",
@@ -232,7 +353,7 @@ const OPERATIONS: Operation[] = [
     // cannot reach an environment except through its project, so an environment
     // grant makes the project visible without conferring any role on it.
     request: () => ({ path: "/api/v1/projects/acme", init: {} }),
-    expect: row([404, 200, 200, 200, 200, 200, 200, 200, 200, 200]),
+    expect: row([404, 200, 200, 200, 200, 200, 200, 200, 200, 200, 200, 200, 200, 404]),
   },
   {
     name: "PATCH /projects/acme",
@@ -240,17 +361,17 @@ const OPERATIONS: Operation[] = [
       path: "/api/v1/projects/acme",
       init: { method: "PATCH", ...body({ name: "Renamed" }) },
     }),
-    expect: row([404, 403, 200, 200, 403, 200, 200, 403, 403, 403]),
+    expect: row([404, 403, 200, 200, 403, 200, 200, 403, 403, 403, 200, 200, 403, 404]),
   },
   {
     name: "DELETE /projects/acme",
     request: () => ({ path: "/api/v1/projects/acme", init: { method: "DELETE" } }),
-    expect: row([404, 403, 403, 204, 403, 403, 204, 403, 403, 403]),
+    expect: row([404, 403, 403, 204, 403, 403, 204, 403, 403, 403, 204, 204, 403, 404]),
   },
   {
     name: "GET /projects/acme/environments",
     request: () => ({ path: "/api/v1/projects/acme/environments", init: {} }),
-    expect: row([404, 200, 200, 200, 200, 200, 200, 200, 200, 200]),
+    expect: row([404, 200, 200, 200, 200, 200, 200, 200, 200, 200, 200, 200, 200, 404]),
   },
   {
     name: "POST /projects/acme/environments",
@@ -258,12 +379,12 @@ const OPERATIONS: Operation[] = [
       path: "/api/v1/projects/acme/environments",
       init: { method: "POST", ...body({ slug: "staging", name: "Staging" }) },
     }),
-    expect: row([404, 403, 201, 201, 403, 201, 201, 403, 403, 403]),
+    expect: row([404, 403, 201, 201, 403, 201, 201, 403, 403, 403, 201, 201, 403, 404]),
   },
   {
     name: "GET environment",
     request: () => ({ path: "/api/v1/p/acme/e/prod", init: {} }),
-    expect: row([404, 200, 200, 200, 200, 200, 200, 200, 200, 200]),
+    expect: row([404, 200, 200, 200, 200, 200, 200, 200, 200, 200, 200, 200, 200, 404]),
   },
   {
     name: "DELETE environment",
@@ -271,12 +392,12 @@ const OPERATIONS: Operation[] = [
     // admin at the environment scope is exactly what this needs, and writer
     // above it is not enough.
     request: () => ({ path: "/api/v1/p/acme/e/prod", init: { method: "DELETE" } }),
-    expect: row([404, 403, 403, 204, 403, 403, 204, 403, 403, 204]),
+    expect: row([404, 403, 403, 204, 403, 403, 204, 403, 403, 204, 204, 204, 403, 404]),
   },
   {
     name: "GET secrets",
     request: () => ({ path: "/api/v1/p/acme/e/prod/secrets", init: {} }),
-    expect: row([404, 200, 200, 200, 200, 200, 200, 200, 200, 200]),
+    expect: row([404, 200, 200, 200, 200, 200, 200, 200, 200, 200, 200, 200, 200, 404]),
   },
   {
     name: "POST secrets:batch",
@@ -284,7 +405,7 @@ const OPERATIONS: Operation[] = [
       path: "/api/v1/p/acme/e/prod/secrets:batch",
       init: { method: "POST", ...body({ mode: "merge", set: { NEW_KEY: "v" } }) },
     }),
-    expect: row([404, 403, 200, 200, 403, 200, 200, 403, 200, 200]),
+    expect: row([404, 403, 200, 200, 403, 200, 200, 403, 200, 200, 200, 200, 200, 404]),
   },
   {
     name: "POST secrets:import",
@@ -295,12 +416,12 @@ const OPERATIONS: Operation[] = [
         ...body({ format: "env", content: "IMPORTED=1\n", mode: "merge", dry_run: false }),
       },
     }),
-    expect: row([404, 403, 200, 200, 403, 200, 200, 403, 200, 200]),
+    expect: row([404, 403, 200, 200, 403, 200, 200, 403, 200, 200, 200, 200, 200, 404]),
   },
   {
     name: "GET secrets:export",
     request: () => ({ path: "/api/v1/p/acme/e/prod/secrets:export", init: {} }),
-    expect: row([404, 200, 200, 200, 200, 200, 200, 200, 200, 200]),
+    expect: row([404, 200, 200, 200, 200, 200, 200, 200, 200, 200, 200, 200, 200, 404]),
   },
   {
     name: "POST secrets:rename",
@@ -308,7 +429,7 @@ const OPERATIONS: Operation[] = [
       path: "/api/v1/p/acme/e/prod/secrets:rename",
       init: { method: "POST", ...body({ from: "API_TOKEN", to: "RENAMED_TOKEN" }) },
     }),
-    expect: row([404, 403, 200, 200, 403, 200, 200, 403, 200, 200]),
+    expect: row([404, 403, 200, 200, 403, 200, 200, 403, 200, 200, 200, 200, 200, 404]),
   },
   {
     name: "POST secrets:rollback",
@@ -316,17 +437,17 @@ const OPERATIONS: Operation[] = [
       path: "/api/v1/p/acme/e/prod/secrets:rollback",
       init: { method: "POST", ...body({ key: "API_TOKEN", to_version: 1 }) },
     }),
-    expect: row([404, 403, 200, 200, 403, 200, 200, 403, 200, 200]),
+    expect: row([404, 403, 200, 200, 403, 200, 200, 403, 200, 200, 200, 200, 200, 404]),
   },
   {
     name: "GET secrets/API_TOKEN (reveal)",
     request: () => ({ path: "/api/v1/p/acme/e/prod/secrets/API_TOKEN", init: {} }),
-    expect: row([404, 200, 200, 200, 200, 200, 200, 200, 200, 200]),
+    expect: row([404, 200, 200, 200, 200, 200, 200, 200, 200, 200, 200, 200, 200, 404]),
   },
   {
     name: "GET secrets/API_TOKEN/versions",
     request: () => ({ path: "/api/v1/p/acme/e/prod/secrets/API_TOKEN/versions", init: {} }),
-    expect: row([404, 200, 200, 200, 200, 200, 200, 200, 200, 200]),
+    expect: row([404, 200, 200, 200, 200, 200, 200, 200, 200, 200, 200, 200, 200, 404]),
   },
   {
     name: "GET /identities",
@@ -334,7 +455,7 @@ const OPERATIONS: Operation[] = [
     // would make delegated administration decorative: a project admin cannot
     // grant access without seeing who there is to grant it to.
     request: () => ({ path: "/api/v1/identities", init: {} }),
-    expect: row([403, 403, 403, 200, 403, 403, 200, 403, 403, 200]),
+    expect: row([403, 403, 403, 200, 403, 403, 200, 403, 403, 200, 200, 200, 403, 403]),
   },
   {
     name: "PATCH /identities/{id}",
@@ -345,12 +466,12 @@ const OPERATIONS: Operation[] = [
       path: `/api/v1/identities/${s.targetIdentityId}`,
       init: { method: "PATCH", ...body({ display_name: "staging deploy" }) },
     }),
-    expect: row([403, 403, 403, 200, 403, 403, 403, 403, 403, 403]),
+    expect: row([403, 403, 403, 200, 403, 403, 403, 403, 403, 403, 200, 403, 403, 403]),
   },
   {
     name: "GET /grants",
     request: () => ({ path: "/api/v1/grants", init: {} }),
-    expect: row([403, 403, 403, 200, 403, 403, 200, 403, 403, 200]),
+    expect: row([403, 403, 403, 200, 403, 403, 200, 403, 403, 200, 200, 200, 403, 403]),
   },
   {
     name: "POST /grants (project scope)",
@@ -370,7 +491,7 @@ const OPERATIONS: Operation[] = [
         }),
       },
     }),
-    expect: row([404, 403, 403, 201, 403, 403, 201, 403, 403, 403]),
+    expect: row([404, 403, 403, 201, 403, 403, 201, 403, 403, 403, 201, 201, 403, 404]),
   },
   {
     name: "DELETE /grants/{id}",
@@ -379,12 +500,131 @@ const OPERATIONS: Operation[] = [
     // checks admin at ITS scope, with no visibility step -- a grant id is an
     // opaque UUIDv7 that nobody guesses, so there is no dictionary to walk.
     request: (s) => ({ path: `/api/v1/grants/${s.targetGrantId}`, init: { method: "DELETE" } }),
-    expect: row([403, 403, 403, 204, 403, 403, 204, 403, 403, 403]),
+    expect: row([403, 403, 403, 204, 403, 403, 204, 403, 403, 403, 204, 204, 403, 403]),
+  },
+  // -------------------------------------------------------------------------
+  // Groups
+  // -------------------------------------------------------------------------
+  {
+    name: "GET /groups",
+    // ANY admin, the same rule as GET /identities and for the same reason: a
+    // project admin cannot grant a role to a group they are not allowed to see.
+    request: () => ({ path: "/api/v1/groups", init: {} }),
+    expect: row([403, 403, 403, 200, 403, 403, 200, 403, 403, 200, 200, 200, 403, 403]),
+  },
+  {
+    name: "POST /groups",
+    // GLOBAL admin. 403 rather than 404 for a grantless actor: a group is not
+    // addressed by this request, so there is no existence to conceal.
+    //
+    // The project admin's 403 is the whole security argument: they may grant to
+    // a group (below) and may not curate one, because a roster they curate plus
+    // a grant they issue is a way to grant themselves access somewhere else.
+    request: () => ({
+      path: "/api/v1/groups",
+      init: { method: "POST", ...body({ slug: "new-group", name: "New" }) },
+    }),
+    expect: row([403, 403, 403, 201, 403, 403, 403, 403, 403, 403, 201, 403, 403, 403]),
+  },
+  {
+    name: "GET /groups/{id}",
+    request: (s) => ({ path: `/api/v1/groups/${s.targetGroupId}`, init: {} }),
+    expect: row([403, 403, 403, 200, 403, 403, 200, 403, 403, 200, 200, 200, 403, 403]),
+  },
+  {
+    name: "PATCH /groups/{id}",
+    // 403 and not 404 for everyone below global admin, because the role check
+    // runs BEFORE the group is looked up -- there is nothing to conceal about a
+    // group whose id the caller had to already know to name.
+    request: (s) => ({
+      path: `/api/v1/groups/${s.targetGroupId}`,
+      init: { method: "PATCH", ...body({ name: "Renamed" }) },
+    }),
+    expect: row([403, 403, 403, 200, 403, 403, 403, 403, 403, 403, 200, 403, 403, 403]),
+  },
+  {
+    name: "DELETE /groups/{id}",
+    request: (s) => ({ path: `/api/v1/groups/${s.targetGroupId}`, init: { method: "DELETE" } }),
+    expect: row([403, 403, 403, 204, 403, 403, 403, 403, 403, 403, 204, 403, 403, 403]),
+  },
+  {
+    name: "GET /groups/{id}/members",
+    request: (s) => ({ path: `/api/v1/groups/${s.targetGroupId}/members`, init: {} }),
+    expect: row([403, 403, 403, 200, 403, 403, 200, 403, 403, 200, 200, 200, 403, 403]),
+  },
+  {
+    name: "POST /groups/{id}/members",
+    // THE ESCALATION SURFACE, and therefore global admin only. A project admin
+    // who could add a member to a group that also holds admin elsewhere could
+    // add themselves and acquire access to a project they cannot even see.
+    request: (s) => ({
+      path: `/api/v1/groups/${s.targetGroupId}/members`,
+      init: { method: "POST", ...body({ identity_id: s.targetIdentityId }) },
+    }),
+    expect: row([403, 403, 403, 201, 403, 403, 403, 403, 403, 403, 201, 403, 403, 403]),
+  },
+  {
+    name: "DELETE /groups/{id}/members/{identityId}",
+    request: (s) => ({
+      path: `/api/v1/groups/${s.targetGroupId}/members/${s.targetMemberId}`,
+      init: { method: "DELETE" },
+    }),
+    expect: row([403, 403, 403, 204, 403, 403, 403, 403, 403, 403, 204, 403, 403, 403]),
+  },
+  {
+    name: "GET /groups/{id}/grants",
+    request: (s) => ({ path: `/api/v1/groups/${s.targetGroupId}/grants`, init: {} }),
+    expect: row([403, 403, 403, 200, 403, 403, 200, 403, 403, 200, 200, 200, 403, 403]),
+  },
+  {
+    name: "POST /groups/{id}/grants (environment scope)",
+    // Admin AT THE SCOPE BEING GRANTED -- identical to POST /grants, including
+    // the 404 for a grantless actor, because the project is resolved (and
+    // refused) before the role is considered.
+    //
+    // ENVIRONMENT scope rather than project, for two reasons: `env-admin`
+    // succeeds here and is 403 on the project-scoped row above, which is the
+    // downward-inheritance rule visible in two cells; and the target group
+    // already holds a PROJECT-scoped grant on `acme`, so a project-scoped
+    // request would be a 409 from the partial unique index rather than a
+    // permission answer.
+    request: (s) => ({
+      path: `/api/v1/groups/${s.targetGroupId}/grants`,
+      init: {
+        method: "POST",
+        ...body({
+          scope_type: "environment",
+          project: "acme",
+          environment: "prod",
+          role: "reader",
+        }),
+      },
+    }),
+    expect: row([404, 403, 403, 201, 403, 403, 201, 403, 403, 201, 201, 201, 403, 404]),
+  },
+  {
+    name: "DELETE /groups/{id}/grants/{grantId}",
+    // 403 rather than 404 for the grantless actor, matching DELETE /grants/{id}:
+    // the grant is looked up by id and admin is checked at ITS scope, with no
+    // visibility step, because a UUIDv7 pair is not a dictionary anyone walks.
+    request: (s) => ({
+      path: `/api/v1/groups/${s.targetGroupId}/grants/${s.targetGroupGrantId}`,
+      init: { method: "DELETE" },
+    }),
+    expect: row([403, 403, 403, 204, 403, 403, 204, 403, 403, 403, 204, 204, 403, 403]),
+  },
+  {
+    name: "GET /identities/{id}/effective-permissions",
+    request: (s) => ({
+      path: `/api/v1/identities/${s.targetIdentityId}/effective-permissions`,
+      init: {},
+    }),
+    expect: row([403, 403, 403, 200, 403, 403, 200, 403, 403, 200, 200, 200, 403, 403]),
   },
   {
     name: "GET /access/unknown-identities",
     request: () => ({ path: "/api/v1/access/unknown-identities", init: {} }),
-    expect: row([403, 403, 403, 200, 403, 403, 200, 403, 403, 200]),
+    expect: row([403, 403, 403, 200, 403, 403, 200, 403, 403, 200, 200, 200, 403, 403]),
   },
   {
     name: "GET /audit",
@@ -403,7 +643,7 @@ const OPERATIONS: Operation[] = [
     // own rows is asserted separately in test/core/audit.test.ts, which can
     // inspect the entries rather than only the status.
     request: () => ({ path: "/api/v1/audit", init: {} }),
-    expect: row([403, 403, 403, 200, 403, 403, 200, 403, 403, 200]),
+    expect: row([403, 403, 403, 200, 403, 403, 200, 403, 403, 200, 200, 200, 403, 403]),
   },
 ];
 
@@ -455,6 +695,107 @@ describe("a disabled identity resolves to nothing", () => {
 
     expect((await api.fetch("/api/v1/projects/acme", { token })).status).toBe(404);
     expect((await api.fetch("/api/v1/identities", { token })).status).toBe(403);
+  });
+});
+
+describe("a role held only through a group", () => {
+  it("is a real role, and disappears the moment the membership does", async () => {
+    /*
+     * THE REVOCATION TEST, and the reason the authorization snapshot is cached
+     * per REQUEST rather than anywhere longer-lived.
+     *
+     * There is no cache to invalidate here and no TTL to wait out: the request
+     * after the removal re-runs the join, finds no membership, and the role is
+     * gone. A snapshot cached across requests would make this test the one that
+     * fails, which is exactly what it is for.
+     */
+    const api = await apiHarness();
+    const projectId = await seedProject(api.db, "acme");
+    await seedEnvironment(api.db, projectId, "prod");
+
+    const { identityId, groupId } = await api.groupGrant({
+      subject: "via-group@example.com",
+      group: "platform",
+      role: "writer",
+      scopeType: "project",
+      projectId,
+    });
+
+    const token = await api.userToken("via-group@example.com");
+
+    // The group's grant is the ONLY thing this identity has.
+    expect(
+      (
+        await api.fetch("/api/v1/p/acme/e/prod/secrets:batch", {
+          method: "POST",
+          token,
+          ...body({ mode: "merge", set: { FROM_GROUP: "1" } }),
+        })
+      ).status,
+    ).toBe(200);
+
+    const removed = await api.fetch(`/api/v1/groups/${groupId}/members/${identityId}`, {
+      method: "DELETE",
+      token: await api.ownerToken(),
+    });
+    expect(removed.status).toBe(204);
+
+    // Not 403: with the membership gone there is no grant anywhere, so the
+    // project is invisible again and invisible is reported as absent.
+    expect((await api.fetch("/api/v1/projects/acme", { token })).status).toBe(404);
+    expect(
+      (
+        await api.fetch("/api/v1/p/acme/e/prod/secrets:batch", {
+          method: "POST",
+          token,
+          ...body({ mode: "merge", set: { FROM_GROUP: "2" } }),
+        })
+      ).status,
+    ).toBe(404);
+  });
+
+  it("confers NOTHING when the group holds no grants", async () => {
+    // The no-implicit-role property, restated for groups. Membership is a list.
+    const api = await apiHarness();
+    await seedProject(api.db, "acme");
+
+    const identityId = await seedIdentity(api.db, {
+      kind: "user",
+      subject: "listed@example.com",
+    });
+    const groupId = await seedGroup(api.db, "everyone");
+    await seedGroupMember(api.db, groupId, identityId);
+
+    const token = await api.userToken("listed@example.com");
+
+    expect((await api.fetch("/api/v1/projects/acme", { token })).status).toBe(404);
+    expect((await api.fetch("/api/v1/identities", { token })).status).toBe(403);
+
+    const { body: projects } = await api.json<unknown[]>("/api/v1/projects", { token });
+    expect(projects).toEqual([]);
+  });
+});
+
+describe("an expired group grant is not a grant", () => {
+  it("stops covering the project the moment it lapses, exactly like a direct one", async () => {
+    const api = await apiHarness();
+    const projectId = await seedProject(api.db, "acme");
+
+    await api.groupGrant({
+      subject: "lapsed-group@example.com",
+      group: "seasonal",
+      role: "admin",
+      scopeType: "project",
+      projectId,
+      // Absolute epoch ms, against the request's clock -- the same comparison
+      // the direct path uses, because it is literally the same column read by
+      // the same branch of the same loop.
+      expiresAt: Date.now() - 1000,
+    });
+
+    const token = await api.userToken("lapsed-group@example.com");
+
+    expect((await api.fetch("/api/v1/projects/acme", { token })).status).toBe(404);
   });
 });
 

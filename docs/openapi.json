@@ -1322,6 +1322,1870 @@
         ]
       }
     },
+    "/api/v1/groups": {
+      "get": {
+        "description": "Visible to **any** admin, at any scope — the same rule as `GET /identities`, and for the same reason: a project admin has to grant a role to a group within their project and cannot pick one from a list they may not see.\n\n`memberCount` and `grantCount` are both meaningful and independently zero. A group with members and no grants confers **nothing** — membership alone is never a permission.",
+        "operationId": "listGroups",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "items": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "description": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "grantCount": {
+                        "maximum": 9007199254740991,
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "id": {
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                        "type": "string"
+                      },
+                      "memberCount": {
+                        "maximum": 9007199254740991,
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "name": {
+                        "type": "string"
+                      },
+                      "slug": {
+                        "maxLength": 64,
+                        "minLength": 1,
+                        "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+                        "type": "string"
+                      },
+                      "updatedAt": {
+                        "maximum": 9007199254740991,
+                        "minimum": 0,
+                        "type": "integer"
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "slug",
+                      "name",
+                      "description",
+                      "memberCount",
+                      "grantCount",
+                      "updatedAt"
+                    ],
+                    "type": "object"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Groups, ordered by slug."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`BAD_REQUEST` — a malformed `If-Match`, or a precondition this API cannot express."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`UNAUTHENTICATED` — no valid Cloudflare Access assertion was presented."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`FORBIDDEN` — authenticated, but no grant covers this scope. The denial is audited."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`NOT_FOUND` — absent **or** invisible, deliberately indistinguishable. Returning 403 for one and 404 for the other would turn this API into an oracle for which slugs are in use."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`VALIDATION_FAILED` — schema rejection, including an unknown field. `issues` carries `{path, message}` and never the submitted value."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`INTERNAL`, `DECRYPT_FAILED`, `UNKNOWN_KID` or `SERVER_MISCONFIGURED`."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`NO_ADMINS_CONFIGURED` or `IDENTITY_PROVIDER_UNAVAILABLE`."
+          }
+        },
+        "summary": "List groups",
+        "tags": [
+          "groups"
+        ]
+      },
+      "post": {
+        "description": "Requires **global** admin.\n\nCreating a group grants nobody anything: there is no role and no scope in the body, and the grant is a separate call requiring admin at the scope being granted. Folding the two together would make writing down “these five people work on payments” the same act as giving them access to it.\n\nGlobal rather than scoped, because a group is a global object whose membership is the escalation surface — see the note on `POST /groups/{id}/members`.",
+        "operationId": "createGroup",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "additionalProperties": false,
+                "properties": {
+                  "description": {
+                    "anyOf": [
+                      {
+                        "maxLength": 1024,
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "name": {
+                    "maxLength": 128,
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "slug": {
+                    "maxLength": 64,
+                    "minLength": 1,
+                    "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "slug",
+                  "name"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "description": "The group to create.",
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "additionalProperties": false,
+                  "properties": {
+                    "description": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "grantCount": {
+                      "maximum": 9007199254740991,
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "id": {
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                      "type": "string"
+                    },
+                    "memberCount": {
+                      "maximum": 9007199254740991,
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "slug": {
+                      "maxLength": 64,
+                      "minLength": 1,
+                      "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+                      "type": "string"
+                    },
+                    "updatedAt": {
+                      "maximum": 9007199254740991,
+                      "minimum": 0,
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "slug",
+                    "name",
+                    "description",
+                    "memberCount",
+                    "grantCount",
+                    "updatedAt"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "The created group."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`BAD_REQUEST` — a malformed `If-Match`, or a precondition this API cannot express."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`UNAUTHENTICATED` — no valid Cloudflare Access assertion was presented."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`FORBIDDEN` — authenticated, but no grant covers this scope. The denial is audited."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`NOT_FOUND` — absent **or** invisible, deliberately indistinguishable. Returning 403 for one and 404 for the other would turn this API into an oracle for which slugs are in use."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`CONFLICT` — that slug is already in use."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`VALIDATION_FAILED` — schema rejection, including an unknown field. `issues` carries `{path, message}` and never the submitted value."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`INTERNAL`, `DECRYPT_FAILED`, `UNKNOWN_KID` or `SERVER_MISCONFIGURED`."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`NO_ADMINS_CONFIGURED` or `IDENTITY_PROVIDER_UNAVAILABLE`."
+          }
+        },
+        "summary": "Create a group",
+        "tags": [
+          "groups"
+        ]
+      }
+    },
+    "/api/v1/groups/{id}": {
+      "delete": {
+        "description": "Requires **global** admin, and refuses if it would remove the last administrator of the installation.\n\nThat guard is not decoration on this route: deleting the group that holds the only global admin grant locks the installation out exactly as thoroughly as revoking the last grant does, through an endpoint whose name does not contain the word “grant”. There is no recovery credential in this design, so it is refused rather than confirmed.\n\nMemberships and grants go with it, by `ON DELETE CASCADE`, in the same transaction.",
+        "operationId": "deleteGroup",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`BAD_REQUEST` — a malformed `If-Match`, or a precondition this API cannot express."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`UNAUTHENTICATED` — no valid Cloudflare Access assertion was presented."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`FORBIDDEN` — authenticated, but no grant covers this scope. The denial is audited."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`NOT_FOUND` — absent **or** invisible, deliberately indistinguishable. Returning 403 for one and 404 for the other would turn this API into an oracle for which slugs are in use."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`LAST_ADMIN` — this group holds the last usable global administrator and `BOOTSTRAP_ADMINS` is empty."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`VALIDATION_FAILED` — schema rejection, including an unknown field. `issues` carries `{path, message}` and never the submitted value."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`INTERNAL`, `DECRYPT_FAILED`, `UNKNOWN_KID` or `SERVER_MISCONFIGURED`."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`NO_ADMINS_CONFIGURED` or `IDENTITY_PROVIDER_UNAVAILABLE`."
+          }
+        },
+        "summary": "Delete a group",
+        "tags": [
+          "groups"
+        ]
+      },
+      "get": {
+        "description": "Visible to any admin, at any scope.",
+        "operationId": "getGroup",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "additionalProperties": false,
+                  "properties": {
+                    "description": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "grantCount": {
+                      "maximum": 9007199254740991,
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "id": {
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                      "type": "string"
+                    },
+                    "memberCount": {
+                      "maximum": 9007199254740991,
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "slug": {
+                      "maxLength": 64,
+                      "minLength": 1,
+                      "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+                      "type": "string"
+                    },
+                    "updatedAt": {
+                      "maximum": 9007199254740991,
+                      "minimum": 0,
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "slug",
+                    "name",
+                    "description",
+                    "memberCount",
+                    "grantCount",
+                    "updatedAt"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "The group."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`BAD_REQUEST` — a malformed `If-Match`, or a precondition this API cannot express."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`UNAUTHENTICATED` — no valid Cloudflare Access assertion was presented."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`FORBIDDEN` — authenticated, but no grant covers this scope. The denial is audited."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`NOT_FOUND` — absent **or** invisible, deliberately indistinguishable. Returning 403 for one and 404 for the other would turn this API into an oracle for which slugs are in use."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`VALIDATION_FAILED` — schema rejection, including an unknown field. `issues` carries `{path, message}` and never the submitted value."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`INTERNAL`, `DECRYPT_FAILED`, `UNKNOWN_KID` or `SERVER_MISCONFIGURED`."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`NO_ADMINS_CONFIGURED` or `IDENTITY_PROVIDER_UNAVAILABLE`."
+          }
+        },
+        "summary": "Get a group",
+        "tags": [
+          "groups"
+        ]
+      },
+      "patch": {
+        "description": "Requires **global** admin.\n\n`slug` cannot be changed. It is how humans and scripts address the group, and a rename that silently repoints an identifier somebody else has written down is a change nobody notices until it matters. Delete and recreate instead — which is loud, and drops the grants with it.",
+        "operationId": "updateGroup",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "additionalProperties": false,
+                "properties": {
+                  "description": {
+                    "anyOf": [
+                      {
+                        "maxLength": 1024,
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "name": {
+                    "maxLength": 128,
+                    "minLength": 1,
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              }
+            }
+          },
+          "description": "The fields to change.",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "additionalProperties": false,
+                  "properties": {
+                    "description": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "grantCount": {
+                      "maximum": 9007199254740991,
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "id": {
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                      "type": "string"
+                    },
+                    "memberCount": {
+                      "maximum": 9007199254740991,
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "slug": {
+                      "maxLength": 64,
+                      "minLength": 1,
+                      "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+                      "type": "string"
+                    },
+                    "updatedAt": {
+                      "maximum": 9007199254740991,
+                      "minimum": 0,
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "slug",
+                    "name",
+                    "description",
+                    "memberCount",
+                    "grantCount",
+                    "updatedAt"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "The updated group."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`BAD_REQUEST` — a malformed `If-Match`, or a precondition this API cannot express."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`UNAUTHENTICATED` — no valid Cloudflare Access assertion was presented."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`FORBIDDEN` — authenticated, but no grant covers this scope. The denial is audited."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`NOT_FOUND` — absent **or** invisible, deliberately indistinguishable. Returning 403 for one and 404 for the other would turn this API into an oracle for which slugs are in use."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`VALIDATION_FAILED` — schema rejection, including an unknown field. `issues` carries `{path, message}` and never the submitted value."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`INTERNAL`, `DECRYPT_FAILED`, `UNKNOWN_KID` or `SERVER_MISCONFIGURED`."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`NO_ADMINS_CONFIGURED` or `IDENTITY_PROVIDER_UNAVAILABLE`."
+          }
+        },
+        "summary": "Rename a group, or change its description",
+        "tags": [
+          "groups"
+        ]
+      }
+    },
+    "/api/v1/groups/{id}/grants": {
+      "get": {
+        "description": "Narrowed per row, exactly like `GET /grants`: a scoped admin sees the grants that touch what they administer and not the rest of the organisation's access graph. Being allowed to open the screen is not being allowed to read every row on it.\n\nExpired grants are excluded — an expired grant is not a grant.",
+        "operationId": "listGroupGrants",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "items": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "environmentSlug": {
+                        "anyOf": [
+                          {
+                            "maxLength": 64,
+                            "minLength": 1,
+                            "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "expiresAt": {
+                        "anyOf": [
+                          {
+                            "maximum": 9007199254740991,
+                            "minimum": 0,
+                            "type": "integer"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "groupId": {
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                        "type": "string"
+                      },
+                      "groupSlug": {
+                        "maxLength": 64,
+                        "minLength": 1,
+                        "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+                        "type": "string"
+                      },
+                      "id": {
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                        "type": "string"
+                      },
+                      "projectSlug": {
+                        "anyOf": [
+                          {
+                            "maxLength": 64,
+                            "minLength": 1,
+                            "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "role": {
+                        "enum": [
+                          "reader",
+                          "writer",
+                          "admin"
+                        ],
+                        "type": "string"
+                      },
+                      "scopeType": {
+                        "enum": [
+                          "global",
+                          "project",
+                          "environment"
+                        ],
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "groupId",
+                      "groupSlug",
+                      "role",
+                      "scopeType",
+                      "projectSlug",
+                      "environmentSlug",
+                      "expiresAt"
+                    ],
+                    "type": "object"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Live grants."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`BAD_REQUEST` — a malformed `If-Match`, or a precondition this API cannot express."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`UNAUTHENTICATED` — no valid Cloudflare Access assertion was presented."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`FORBIDDEN` — authenticated, but no grant covers this scope. The denial is audited."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`NOT_FOUND` — absent **or** invisible, deliberately indistinguishable. Returning 403 for one and 404 for the other would turn this API into an oracle for which slugs are in use."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`VALIDATION_FAILED` — schema rejection, including an unknown field. `issues` carries `{path, message}` and never the submitted value."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`INTERNAL`, `DECRYPT_FAILED`, `UNKNOWN_KID` or `SERVER_MISCONFIGURED`."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`NO_ADMINS_CONFIGURED` or `IDENTITY_PROVIDER_UNAVAILABLE`."
+          }
+        },
+        "summary": "List the grants a group holds",
+        "tags": [
+          "groups"
+        ]
+      },
+      "post": {
+        "description": "Requires **admin at the scope being granted** — the same rule, the same scope resolution and the same check as `POST /grants`. A project admin may grant within their project; only a global admin may grant globally. There is no special case for groups, which is the point: the special case is where privilege escalation lives.\n\nThis is not an escalation route for the granting admin even when they are in the group themselves, because the role they can confer is bounded by the role they already hold at that scope. Adding somebody **else** to the group is the operation that would widen their reach, and that one is global-admin only.\n\nGrants are **purely additive**: effective role is the max over an identity's own grants and its groups', so a group can only raise a role, never lower one. There is no deny rule — removal is what revocation is for.\n\nA duplicate at the same scope is a `409`, not an upsert.",
+        "operationId": "createGroupGrant",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "oneOf": [
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "expires_at": {
+                        "anyOf": [
+                          {
+                            "maximum": 9007199254740991,
+                            "minimum": 0,
+                            "type": "integer"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "default": null
+                      },
+                      "role": {
+                        "enum": [
+                          "reader",
+                          "writer",
+                          "admin"
+                        ],
+                        "type": "string"
+                      },
+                      "scope_type": {
+                        "const": "global",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "scope_type",
+                      "role"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "expires_at": {
+                        "anyOf": [
+                          {
+                            "maximum": 9007199254740991,
+                            "minimum": 0,
+                            "type": "integer"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "default": null
+                      },
+                      "project": {
+                        "maxLength": 64,
+                        "minLength": 1,
+                        "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+                        "type": "string"
+                      },
+                      "role": {
+                        "enum": [
+                          "reader",
+                          "writer",
+                          "admin"
+                        ],
+                        "type": "string"
+                      },
+                      "scope_type": {
+                        "const": "project",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "scope_type",
+                      "project",
+                      "role"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "environment": {
+                        "maxLength": 64,
+                        "minLength": 1,
+                        "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+                        "type": "string"
+                      },
+                      "expires_at": {
+                        "anyOf": [
+                          {
+                            "maximum": 9007199254740991,
+                            "minimum": 0,
+                            "type": "integer"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "default": null
+                      },
+                      "project": {
+                        "maxLength": 64,
+                        "minLength": 1,
+                        "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+                        "type": "string"
+                      },
+                      "role": {
+                        "enum": [
+                          "reader",
+                          "writer",
+                          "admin"
+                        ],
+                        "type": "string"
+                      },
+                      "scope_type": {
+                        "const": "environment",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "scope_type",
+                      "project",
+                      "environment",
+                      "role"
+                    ],
+                    "type": "object"
+                  }
+                ]
+              }
+            }
+          },
+          "description": "The grant to create.",
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "additionalProperties": false,
+                  "properties": {
+                    "environmentSlug": {
+                      "anyOf": [
+                        {
+                          "maxLength": 64,
+                          "minLength": 1,
+                          "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "expiresAt": {
+                      "anyOf": [
+                        {
+                          "maximum": 9007199254740991,
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "groupId": {
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                      "type": "string"
+                    },
+                    "groupSlug": {
+                      "maxLength": 64,
+                      "minLength": 1,
+                      "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+                      "type": "string"
+                    },
+                    "id": {
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                      "type": "string"
+                    },
+                    "projectSlug": {
+                      "anyOf": [
+                        {
+                          "maxLength": 64,
+                          "minLength": 1,
+                          "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "role": {
+                      "enum": [
+                        "reader",
+                        "writer",
+                        "admin"
+                      ],
+                      "type": "string"
+                    },
+                    "scopeType": {
+                      "enum": [
+                        "global",
+                        "project",
+                        "environment"
+                      ],
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "groupId",
+                    "groupSlug",
+                    "role",
+                    "scopeType",
+                    "projectSlug",
+                    "environmentSlug",
+                    "expiresAt"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "The created grant."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`BAD_REQUEST` — a malformed `If-Match`, or a precondition this API cannot express."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`UNAUTHENTICATED` — no valid Cloudflare Access assertion was presented."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`FORBIDDEN` — authenticated, but no grant covers this scope. The denial is audited."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`NOT_FOUND` — absent **or** invisible, deliberately indistinguishable. Returning 403 for one and 404 for the other would turn this API into an oracle for which slugs are in use."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`CONFLICT` — that group already holds a grant at this scope."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`VALIDATION_FAILED` — schema rejection, including an unknown field. `issues` carries `{path, message}` and never the submitted value."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`INTERNAL`, `DECRYPT_FAILED`, `UNKNOWN_KID` or `SERVER_MISCONFIGURED`."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`NO_ADMINS_CONFIGURED` or `IDENTITY_PROVIDER_UNAVAILABLE`."
+          }
+        },
+        "summary": "Grant a role to a group",
+        "tags": [
+          "groups"
+        ]
+      }
+    },
+    "/api/v1/groups/{id}/grants/{grantId}": {
+      "delete": {
+        "description": "Requires **admin at that grant's scope**.\n\nAddressed through the group rather than by grant id alone, so a mismatched pair is a `404` — “no grant by that id in this group” — instead of revoking a grant belonging to a different group because a client paired the wrong two values.\n\nRefuses if it would remove the last administrator of the installation.",
+        "operationId": "revokeGroupGrant",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "grantId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Revoked."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`BAD_REQUEST` — a malformed `If-Match`, or a precondition this API cannot express."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`UNAUTHENTICATED` — no valid Cloudflare Access assertion was presented."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`FORBIDDEN` — authenticated, but no grant covers this scope. The denial is audited."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`NOT_FOUND` — absent **or** invisible, deliberately indistinguishable. Returning 403 for one and 404 for the other would turn this API into an oracle for which slugs are in use."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`LAST_ADMIN` — this is the last usable global administrator and `BOOTSTRAP_ADMINS` is empty."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`VALIDATION_FAILED` — schema rejection, including an unknown field. `issues` carries `{path, message}` and never the submitted value."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`INTERNAL`, `DECRYPT_FAILED`, `UNKNOWN_KID` or `SERVER_MISCONFIGURED`."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`NO_ADMINS_CONFIGURED` or `IDENTITY_PROVIDER_UNAVAILABLE`."
+          }
+        },
+        "summary": "Revoke a grant from a group",
+        "tags": [
+          "groups"
+        ]
+      }
+    },
+    "/api/v1/groups/{id}/members": {
+      "get": {
+        "description": "Visible to any admin, at any scope.\n\nEach row carries the member's `disabled` flag, and it is not cosmetic: a disabled identity holds **nothing**, whatever the group has been granted, because the kill switch outranks every grant at every scope. Without the flag an operator reads a roster of five and believes five people have access.",
+        "operationId": "listGroupMembers",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "items": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "addedAt": {
+                        "maximum": 9007199254740991,
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "addedBy": {
+                        "type": "string"
+                      },
+                      "disabled": {
+                        "type": "boolean"
+                      },
+                      "displayName": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "identityId": {
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                        "type": "string"
+                      },
+                      "kind": {
+                        "enum": [
+                          "user",
+                          "service"
+                        ],
+                        "type": "string"
+                      },
+                      "subject": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "identityId",
+                      "kind",
+                      "subject",
+                      "displayName",
+                      "disabled",
+                      "addedAt",
+                      "addedBy"
+                    ],
+                    "type": "object"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Members, ordered by subject."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`BAD_REQUEST` — a malformed `If-Match`, or a precondition this API cannot express."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`UNAUTHENTICATED` — no valid Cloudflare Access assertion was presented."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`FORBIDDEN` — authenticated, but no grant covers this scope. The denial is audited."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`NOT_FOUND` — absent **or** invisible, deliberately indistinguishable. Returning 403 for one and 404 for the other would turn this API into an oracle for which slugs are in use."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`VALIDATION_FAILED` — schema rejection, including an unknown field. `issues` carries `{path, message}` and never the submitted value."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`INTERNAL`, `DECRYPT_FAILED`, `UNKNOWN_KID` or `SERVER_MISCONFIGURED`."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`NO_ADMINS_CONFIGURED` or `IDENTITY_PROVIDER_UNAVAILABLE`."
+          }
+        },
+        "summary": "List a group's members",
+        "tags": [
+          "groups"
+        ]
+      },
+      "post": {
+        "description": "Requires **global** admin, and this is the rule the whole feature turns on.\n\nThe permissive alternative — \"a project admin may manage the groups they grant into\" — is a privilege escalation. Suppose `platform` holds admin on `payments` and on `billing`. The admin of `billing` may grant to `platform`: their scope, their decision. If they could also edit its membership they could add **themselves**, and walk out with admin on `payments`, a project they have nothing to do with, without anybody granting them anything.\n\nSo the capabilities are split: global authority curates who is on a roster, and each scope's admin decides what that roster may do there.\n\nA duplicate is a `409`, not a silent no-op.",
+        "operationId": "addGroupMember",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "additionalProperties": false,
+                "properties": {
+                  "identity_id": {
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "identity_id"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "description": "The identity to add.",
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "additionalProperties": false,
+                  "properties": {
+                    "addedAt": {
+                      "maximum": 9007199254740991,
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "addedBy": {
+                      "type": "string"
+                    },
+                    "disabled": {
+                      "type": "boolean"
+                    },
+                    "displayName": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "identityId": {
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                      "type": "string"
+                    },
+                    "kind": {
+                      "enum": [
+                        "user",
+                        "service"
+                      ],
+                      "type": "string"
+                    },
+                    "subject": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "identityId",
+                    "kind",
+                    "subject",
+                    "displayName",
+                    "disabled",
+                    "addedAt",
+                    "addedBy"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "The new membership."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`BAD_REQUEST` — a malformed `If-Match`, or a precondition this API cannot express."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`UNAUTHENTICATED` — no valid Cloudflare Access assertion was presented."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`FORBIDDEN` — authenticated, but no grant covers this scope. The denial is audited."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`NOT_FOUND` — absent **or** invisible, deliberately indistinguishable. Returning 403 for one and 404 for the other would turn this API into an oracle for which slugs are in use."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`CONFLICT` — that identity is already in this group."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`VALIDATION_FAILED` — schema rejection, including an unknown field. `issues` carries `{path, message}` and never the submitted value."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`INTERNAL`, `DECRYPT_FAILED`, `UNKNOWN_KID` or `SERVER_MISCONFIGURED`."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`NO_ADMINS_CONFIGURED` or `IDENTITY_PROVIDER_UNAVAILABLE`."
+          }
+        },
+        "summary": "Add an identity to a group",
+        "tags": [
+          "groups"
+        ]
+      }
+    },
+    "/api/v1/groups/{id}/members/{identityId}": {
+      "delete": {
+        "description": "Requires **global** admin.\n\nTakes effect on the **next request**, with nothing to invalidate: the authorization snapshot is cached per request, keyed on the request's own context object, so there is no longer-lived cache for a revocation to be missing from.\n\nRefuses if it would remove the last administrator of the installation.",
+        "operationId": "removeGroupMember",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "identityId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Removed."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`BAD_REQUEST` — a malformed `If-Match`, or a precondition this API cannot express."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`UNAUTHENTICATED` — no valid Cloudflare Access assertion was presented."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`FORBIDDEN` — authenticated, but no grant covers this scope. The denial is audited."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`NOT_FOUND` — absent **or** invisible, deliberately indistinguishable. Returning 403 for one and 404 for the other would turn this API into an oracle for which slugs are in use."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`LAST_ADMIN` — this membership is the last usable global administrator and `BOOTSTRAP_ADMINS` is empty."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`VALIDATION_FAILED` — schema rejection, including an unknown field. `issues` carries `{path, message}` and never the submitted value."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`INTERNAL`, `DECRYPT_FAILED`, `UNKNOWN_KID` or `SERVER_MISCONFIGURED`."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`NO_ADMINS_CONFIGURED` or `IDENTITY_PROVIDER_UNAVAILABLE`."
+          }
+        },
+        "summary": "Remove an identity from a group",
+        "tags": [
+          "groups"
+        ]
+      }
+    },
     "/api/v1/health": {
       "get": {
         "description": "The only unauthenticated route. Answers `200` only once the fail-closed key ring middleware has succeeded, which is what makes `ok` mean something.\n\n**If this returns 200 to an unauthenticated caller, Cloudflare Access is not in front of this hostname.**",
@@ -1760,6 +3624,397 @@
           }
         },
         "summary": "Rename or disable an identity",
+        "tags": [
+          "access"
+        ]
+      }
+    },
+    "/api/v1/identities/{id}/effective-permissions": {
+      "get": {
+        "description": "The question an access review actually asks is not \"what is Bob's role\" but \"why does Bob have production, and what do I remove to stop that\". A response of `\"admin\"` answers the first and leaves the second exactly as hard — and with groups in the model it is genuinely hard, because the answer can be a grant on the environment, a grant on its project, a global grant, any of those held by a group Bob is in, or the `BOOTSTRAP_ADMINS` var, none of which are visible from Bob's own row.\n\nSo each entry carries its `sources`: the rows that confer it, each naming the group it came through when it came through one, with exactly one marked `decisive`. \"Remove this\" is something the response says rather than something the reader derives.\n\n**Which scopes appear.** Only those some grant *names* — never the cross product of every project and environment. A global admin is one entry saying so, not one entry per project.\n\n**Sources include covering grants.** An entry for an environment lists the global and project-scoped grants that reach it, because \"the platform group has admin on the project\" *is* the answer. Listing only exact-scope matches would produce an entry with a role and no explanation.\n\n**A disabled identity** reports `role: null` on every entry, with the sources still listed and nothing decisive. The kill switch outranks every grant, so the honest answer is \"nothing — and here is what re-enabling would restore\".\n\nVisible to any admin, narrowed to the scopes the caller administers. Sources inside a visible entry are **not** narrowed: a project admin who can see that Bob has admin on their project must be able to see that it comes from a global grant on a group, or the entry has a role and no explanation again.",
+        "operationId": "explainIdentityPermissions",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "additionalProperties": false,
+                  "properties": {
+                    "bootstrap": {
+                      "type": "boolean"
+                    },
+                    "groups": {
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "id": {
+                            "format": "uuid",
+                            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                            "type": "string"
+                          },
+                          "name": {
+                            "type": "string"
+                          },
+                          "slug": {
+                            "maxLength": 64,
+                            "minLength": 1,
+                            "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "slug",
+                          "name"
+                        ],
+                        "type": "object"
+                      },
+                      "type": "array"
+                    },
+                    "identity": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "disabled": {
+                          "type": "boolean"
+                        },
+                        "displayName": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "id": {
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                          "type": "string"
+                        },
+                        "kind": {
+                          "enum": [
+                            "user",
+                            "service"
+                          ],
+                          "type": "string"
+                        },
+                        "lastSeenAt": {
+                          "anyOf": [
+                            {
+                              "maximum": 9007199254740991,
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "subject": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "kind",
+                        "subject",
+                        "displayName",
+                        "disabled",
+                        "lastSeenAt"
+                      ],
+                      "type": "object"
+                    },
+                    "scopes": {
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "environmentSlug": {
+                            "anyOf": [
+                              {
+                                "maxLength": 64,
+                                "minLength": 1,
+                                "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+                                "type": "string"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "projectSlug": {
+                            "anyOf": [
+                              {
+                                "maxLength": 64,
+                                "minLength": 1,
+                                "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+                                "type": "string"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "role": {
+                            "anyOf": [
+                              {
+                                "enum": [
+                                  "reader",
+                                  "writer",
+                                  "admin"
+                                ],
+                                "type": "string"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "scopeType": {
+                            "enum": [
+                              "global",
+                              "project",
+                              "environment"
+                            ],
+                            "type": "string"
+                          },
+                          "sources": {
+                            "items": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "decisive": {
+                                  "type": "boolean"
+                                },
+                                "environmentSlug": {
+                                  "anyOf": [
+                                    {
+                                      "maxLength": 64,
+                                      "minLength": 1,
+                                      "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+                                      "type": "string"
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                },
+                                "expiresAt": {
+                                  "anyOf": [
+                                    {
+                                      "maximum": 9007199254740991,
+                                      "minimum": 0,
+                                      "type": "integer"
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                },
+                                "grantId": {
+                                  "anyOf": [
+                                    {
+                                      "format": "uuid",
+                                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                                      "type": "string"
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                },
+                                "group": {
+                                  "anyOf": [
+                                    {
+                                      "additionalProperties": false,
+                                      "properties": {
+                                        "id": {
+                                          "format": "uuid",
+                                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                                          "type": "string"
+                                        },
+                                        "name": {
+                                          "type": "string"
+                                        },
+                                        "slug": {
+                                          "maxLength": 64,
+                                          "minLength": 1,
+                                          "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": [
+                                        "id",
+                                        "slug",
+                                        "name"
+                                      ],
+                                      "type": "object"
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                },
+                                "projectSlug": {
+                                  "anyOf": [
+                                    {
+                                      "maxLength": 64,
+                                      "minLength": 1,
+                                      "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+                                      "type": "string"
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                },
+                                "role": {
+                                  "enum": [
+                                    "reader",
+                                    "writer",
+                                    "admin"
+                                  ],
+                                  "type": "string"
+                                },
+                                "scopeType": {
+                                  "enum": [
+                                    "global",
+                                    "project",
+                                    "environment"
+                                  ],
+                                  "type": "string"
+                                },
+                                "via": {
+                                  "enum": [
+                                    "direct",
+                                    "group",
+                                    "bootstrap"
+                                  ],
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "via",
+                                "grantId",
+                                "role",
+                                "scopeType",
+                                "projectSlug",
+                                "environmentSlug",
+                                "group",
+                                "expiresAt",
+                                "decisive"
+                              ],
+                              "type": "object"
+                            },
+                            "type": "array"
+                          }
+                        },
+                        "required": [
+                          "scopeType",
+                          "projectSlug",
+                          "environmentSlug",
+                          "role",
+                          "sources"
+                        ],
+                        "type": "object"
+                      },
+                      "type": "array"
+                    }
+                  },
+                  "required": [
+                    "identity",
+                    "groups",
+                    "bootstrap",
+                    "scopes"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Every scope this identity holds a role at, and what conferred it."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`BAD_REQUEST` — a malformed `If-Match`, or a precondition this API cannot express."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`UNAUTHENTICATED` — no valid Cloudflare Access assertion was presented."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`FORBIDDEN` — authenticated, but no grant covers this scope. The denial is audited."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`NOT_FOUND` — absent **or** invisible, deliberately indistinguishable. Returning 403 for one and 404 for the other would turn this API into an oracle for which slugs are in use."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`VALIDATION_FAILED` — schema rejection, including an unknown field. `issues` carries `{path, message}` and never the submitted value."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`INTERNAL`, `DECRYPT_FAILED`, `UNKNOWN_KID` or `SERVER_MISCONFIGURED`."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`NO_ADMINS_CONFIGURED` or `IDENTITY_PROVIDER_UNAVAILABLE`."
+          }
+        },
+        "summary": "Why this identity has what it has (\"why does Bob have production?\")",
         "tags": [
           "access"
         ]
@@ -4808,6 +7063,10 @@
     {
       "description": "Identities and grants.",
       "name": "access"
+    },
+    {
+      "description": "Named sets of identities that can hold grants. Purely additive and flat: effective role is the max over an identity's own grants and its groups', there is no deny rule, and a group never contains another group.",
+      "name": "groups"
     },
     {
       "description": "The append-only audit log.",
