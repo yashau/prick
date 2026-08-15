@@ -86,8 +86,9 @@ async fn a_gzipped_response_is_decompressed() {
 
 #[tokio::test]
 async fn an_html_two_hundred_says_the_url_is_not_a_prick_server() {
-    // The exact upstream failure: a 200 whose body is a login page. Parsing
-    // first produces "Unexpected token '<'"; checking first produces this.
+    // The case the ordering exists for: a 200 whose body is a login page.
+    // Parsing first produces "Unexpected token '<'"; checking first produces a
+    // message naming the URL and what is wrong with it.
     let server = MockServer::start().await;
     mount(
         &server,

@@ -99,11 +99,10 @@ export async function listProjects(ctx: CoreContext): Promise<ProjectSummary[]> 
 /**
  * Resolve a project by slug. EXACT match, never a prefix.
  *
- * The upstream defect this avoids was a 12-bit key-prefix lookup that could
- * resolve to a different record than the one asked for. The same class of
- * mistake here would authorize against one project and then operate on another
- * -- and both would look correct in every test that used distinct first
- * characters.
+ * A prefix lookup can resolve to a different record than the one asked for,
+ * which here would mean authorizing against one project and then operating on
+ * another. The failure is invisible in any test whose fixtures happen to differ
+ * in their first characters, which is most of them.
  *
  * Does NOT check visibility: it is the raw row, used by callers that go on to
  * check the scope themselves. Nothing outside `core` should call it.

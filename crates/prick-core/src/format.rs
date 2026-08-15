@@ -302,8 +302,10 @@ mod tests {
 
     #[test]
     fn shell_quoting_neutralises_every_metacharacter() {
-        // The upstream formatter double-quoted and escaped only `"`, leaving
-        // all of these live. Under single quotes none of them are special.
+        // Double quotes would leave every one of these live, because the shell
+        // still interprets `$`, backticks and `\` inside them -- escaping only
+        // `"` is command injection wearing the shape of a formatting bug.
+        // Under single quotes none of them are special.
         let hostile = "$(id) `id` ${HOME} \\ ! & ; | > < * ? ~ #";
         let line = shell_line("SECRET", hostile);
         assert_eq!(line, format!("export SECRET='{hostile}'"));

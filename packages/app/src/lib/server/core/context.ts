@@ -68,9 +68,9 @@ export type Scope =
  * and the `CF_Authorization` cookie is documented as not guaranteed to be
  * passed, so an internal HTTP hop would have to re-solve authentication badly.
  *
- * It is also why authorization is written once. The upstream bug class where
- * one handler checks scope and the neighbouring one forgets cannot occur when
- * both transports enter through the same function.
+ * It is also why authorization is written once. The bug class where one handler
+ * checks scope and the neighbouring one forgets cannot occur when both
+ * transports enter through the same function.
  */
 export interface CoreContext {
   db: Database;

@@ -18,9 +18,10 @@
  * Percent-encoding is applied to every interpolated segment without exception.
  * A slug is constrained to `[a-z0-9-]` and a secret key to a POSIX name, so
  * neither can currently contain a character that needs escaping; encoding them
- * anyway means that stops being a thing this file depends on. (The upstream
- * project this one replaces interpolated path segments raw, and that is the
- * shape of bug that only shows up once a validator is relaxed.)
+ * anyway means that stops being a thing this file depends on. Interpolating a
+ * segment raw is the shape of bug that only shows up once somebody relaxes a
+ * validator, by which point the two decisions are far apart and nobody
+ * connects them.
  */
 
 const enc = encodeURIComponent;

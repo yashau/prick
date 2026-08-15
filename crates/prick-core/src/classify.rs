@@ -274,8 +274,9 @@ mod tests {
 
     #[test]
     fn the_actionable_kinds_all_carry_a_hint() {
-        // These are the ones an operator can actually do something about; a
-        // missing hint here is the upstream bug this taxonomy exists to fix.
+        // These are the ones an operator can actually do something about. A
+        // kind without a hint is the failure this taxonomy exists to prevent:
+        // an accurate error that leaves the reader no better off than silence.
         for kind in [
             ErrorKind::Unauthenticated,
             ErrorKind::Forbidden,

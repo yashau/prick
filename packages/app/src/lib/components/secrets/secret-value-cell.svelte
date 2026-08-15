@@ -121,9 +121,9 @@
   <!--
     A row whose envelope will not open is the loudest thing on the screen.
 
-    NOT a blank cell, NOT a skipped row. Upstream's `catch { /* skip */ }`
-    turned a tamper attempt into a quietly shorter `.env`, which is how a
-    deploy loses DATABASE_URL and nobody finds out until the outage. Here the
+    NOT a blank cell, NOT a skipped row. Swallowing the failure would turn a
+    tamper attempt into a quietly shorter `.env`, which is how a deploy loses
+    DATABASE_URL and nobody finds out until the outage. Here the
     row states what failed and what the two possible causes are, because
     "you removed MASTER_KEY_OLD too early" and "these bytes have been altered"
     need opposite responses.

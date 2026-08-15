@@ -14,9 +14,10 @@
 //!
 //! # The defect this crate is shaped around
 //!
-//! Upstream called `await res.json()` before checking `res.ok`. When the server
-//! was unreachable and a proxy answered with HTML, the JSON decoder failed
-//! first and the user was told `SyntaxError: Unexpected token '<'`.
+//! Parsing a body before checking the status. When the server is unreachable
+//! and a proxy answers with HTML, the JSON decoder fails first and the user is
+//! told `SyntaxError: Unexpected token '<'` -- a message about the wrong layer,
+//! naming nothing they can act on.
 //!
 //! So the order is fixed and enforced by the shape of the code rather than by a
 //! convention: [`client::Client::fetch`] produces a

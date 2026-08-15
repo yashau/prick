@@ -92,11 +92,11 @@ async function readCurrent(ctx: CoreContext, environmentId: string): Promise<Cur
  * has no "verify without decrypting" operation -- the tag check IS the
  * decryption -- so the choice is between attempting it and not knowing.
  *
- * Not knowing is what upstream did. `catch { /* Skip corrupted secrets *\/ }`
- * turned a tampered row into a shorter list, and a shorter list into a `.env`
- * file that deploys production without its `DATABASE_URL`. Here the row comes
- * back marked, the UI renders it red, and an audit row records it with
- * `outcome: 'error'`.
+ * Not knowing is the dangerous option. Swallowing the failure turns a tampered
+ * row into a shorter list, and a shorter list into a `.env` file that deploys
+ * production without its `DATABASE_URL` -- a failure that surfaces as an
+ * outage, hours later, nowhere near its cause. Here the row comes back marked,
+ * the UI renders it red, and an audit row records it with `outcome: 'error'`.
  */
 export async function listSecrets(
   ctx: CoreContext,
@@ -160,10 +160,10 @@ export async function listSecrets(
 /**
  * Decrypt and return ONE value.
  *
- * Fetches exactly the one row. Upstream's `secrets get` downloaded every secret
- * in the environment in order to print one of them -- which meant reading one
- * value decrypted all of them into memory, and audited none of them
- * individually.
+ * Fetches exactly the one row. Fetching the environment and picking from it
+ * would decrypt every value in order to print one, putting secrets in memory
+ * that nobody asked for and making the audit record say "read everything" when
+ * the user read one thing.
  *
  * A decrypt failure FAILS THE REQUEST. It is never downgraded to an empty
  * string, an omitted key, or a `null`, and the audit row is written BEFORE the
@@ -269,8 +269,9 @@ export async function exportSecrets(
       // A LIVE secret whose current version carries no ciphertext is a
       // tombstone being pointed at as current -- structurally impossible from
       // this codebase, and therefore evidence of direct database manipulation.
-      // Skipping it is the exact upstream behaviour this design rejects: the
-      // export would be silently one variable short.
+      // Skipping it is precisely what this design rejects: the export would be
+      // silently one variable short, and nothing downstream could tell that
+      // from an environment that genuinely has one fewer secret.
       throw new PrickError(
         "DECRYPT_FAILED",
         `The current version of "${row.key}" carries no ciphertext.`,

@@ -2,12 +2,12 @@
 //!
 //! # The ordering is the whole point
 //!
-//! The upstream defect this module exists to prevent is one line:
-//! `await res.json()` before checking `res.ok`. When the server is unreachable
-//! and a proxy answers with an HTML error page, the JSON decoder is the first
-//! thing to fail, and the user is told
-//! `SyntaxError: Unexpected token '<'`. That message names nothing that can be
-//! acted on, and it is indistinguishable from a genuine schema mismatch.
+//! The defect this module exists to prevent is one line: parsing the body
+//! before checking the status. When the server is unreachable and a proxy
+//! answers with an HTML error page, the JSON decoder is the first thing to
+//! fail, and the user is told `SyntaxError: Unexpected token '<'`. That message
+//! names nothing that can be acted on, and it is indistinguishable from a
+//! genuine schema mismatch.
 //!
 //! So the order here is fixed, and each step can conclude on its own:
 //!

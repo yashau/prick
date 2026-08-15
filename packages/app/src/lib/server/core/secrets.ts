@@ -402,11 +402,11 @@ function buildStatements(
  * THE write path: full replace (`PUT`) and `:batch` are the same function.
  *
  * They differ by one field (`mode`) and share every other property, which is the
- * point -- upstream had `handleSetSecrets` doing `deleteAllSecrets()` followed by
- * `await upsertSecret()` in a loop, so a failure on the 3rd of 5 rows left the
- * environment holding 2 secrets and no way to find out what the other 3 were.
- * That is 101 round-trips for 100 secrets AND unrecoverable data loss from any
- * one of them failing.
+ * point. The alternative -- delete everything, then insert row by row -- is 101
+ * round-trips for 100 secrets, and a failure on the 3rd of 5 rows leaves the
+ * environment holding 2 secrets with no way to discover what the other 3 were.
+ * Unrecoverable data loss from any single failure, in the middle of the one
+ * operation a secrets manager exists to perform.
  *
  * Here: one read, one batch, all or nothing.
  *

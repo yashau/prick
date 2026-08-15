@@ -10,15 +10,19 @@ import { isBootstrapAdmin } from "./bootstrap.js";
 /**
  * Authorization. One resolution per request, one code path, no exceptions.
  *
- * THERE IS NO GOD MODE. The upstream shortcut this replaces was
- * `if (auth.keyType === 'user') return true`, which meant every human
- * credential bypassed every scope check in the system. A global admin here is
- * an ordinary `grants` row with `scope_type = 'global'`: same query, same audit
- * trail, revocable. Nothing below branches on `actor.kind`.
+ * THERE IS NO GOD MODE, and the hazard is worth stating rather than assuming.
+ * A shortcut of the form `if (actor.kind === 'user') return true` -- for any
+ * identity kind at all -- means the scope check has stopped being the thing that
+ * decides, and every grant written afterwards is decoration: the row says
+ * `reader`, the answer is `true`, and nothing in the system disagrees out loud.
+ * So a global admin here is an ordinary `grants` row with
+ * `scope_type = 'global'` -- same query, same audit trail, revocable by the same
+ * DELETE as any other. Nothing below branches on `actor.kind`.
  *
- * Effective role = MAX over all matching, non-expired grants, resolved ONCE and
- * cached against the request context. A 200-secret operation must perform one
- * authorization query, not two hundred.
+ * Effective role = MAX over all matching, non-expired grants -- the identity's
+ * OWN and those of every group it belongs to -- resolved ONCE and cached against
+ * the request context. A 200-secret operation must perform one authorization
+ * query, not two hundred, and adding groups must not make it two.
  */
 
 export interface AuthorizationSnapshot {
