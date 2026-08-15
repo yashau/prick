@@ -1,0 +1,152 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+
+  "name": "prick",
+  "compatibility_date": "2026-08-01",
+  "compatibility_flags": ["nodejs_compat"],
+
+  // Built by `vite build` via @sveltejs/adapter-cloudflare. Both the Worker
+  // entry and the static assets live in the same output directory.
+  "main": ".svelte-kit/cloudflare/_worker.js",
+
+  // ===========================================================================
+  // NON-NEGOTIABLE. DO NOT FLIP EITHER OF THESE TO true.
+  //
+  // Cloudflare Access is attached to a hostname, not to a Worker. A
+  // *.workers.dev hostname -- or a per-version preview URL -- that Access is
+  // not in front of serves this Worker with NO authentication at all. That is
+  // not a weakened authorization model, it is the complete absence of one:
+  // every project, every environment, every reveal endpoint, open to the
+  // internet.
+  //
+  // The whole authorization design assumes a verified Access JWT is present.
+  // These two lines are what makes that assumption true. CI greps the resolved
+  // config for both.
+  // ===========================================================================
+  "workers_dev": false,
+  "preview_urls": false,
+
+  // The custom hostname Access is configured against. Uncomment and set it
+  // before the first real deploy -- with workers_dev disabled and no route,
+  // `wrangler deploy` has nowhere to put the Worker.
+  //
+  // "routes": [
+  //   { "pattern": "prick.example.com", "custom_domain": true }
+  // ],
+
+  // ---------------------------------------------------------------------------
+  // Static assets.
+  //
+  // Served directly by the assets runtime WITHOUT invoking the Worker, which is
+  // exactly why `static/_headers` exists: no Hono middleware can reach these
+  // responses. `not_found_handling` is left at its default ("none") so a miss
+  // falls through to the Worker and SvelteKit renders the route.
+  // ---------------------------------------------------------------------------
+  "assets": {
+    "directory": ".svelte-kit/cloudflare",
+    "binding": "ASSETS",
+  },
+
+  // ---------------------------------------------------------------------------
+  // D1.
+  //
+  // `database_id` is a placeholder: create the database with
+  //   wrangler d1 create prick
+  // and paste the returned id here. It is not a secret.
+  //
+  // Migrations are applied SEPARATELY from `wrangler deploy`, in that order,
+  // with a window between them -- which is why the migration policy is
+  // expand/contract only and why release N never ships code together with
+  // destructive DDL.
+  // ---------------------------------------------------------------------------
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "prick",
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "drizzle/migrations",
+    },
+  ],
+
+  "observability": {
+    "enabled": true,
+    // Sample nothing away. This Worker's request volume is an admin console's,
+    // not a CDN's, and a dropped log line is a missing answer to "who read that
+    // secret" -- the audit log is in D1, but the trace that explains a 500 is
+    // only here.
+    "head_sampling_rate": 1,
+  },
+
+  // ---------------------------------------------------------------------------
+  // MASTER_KEY is a plain Worker SECRET, not a var and not in this file:
+  //
+  //   wrangler secret put MASTER_KEY        # base64 of exactly 32 random bytes
+  //
+  // Generate it with:  openssl rand -base64 32
+  //
+  // It is validated at config-parse time: base64-decodes to exactly 32 bytes or
+  // the Worker fails closed on the first request. There is no "short key works
+  // anyway" path.
+  //
+  // ROTATION: set MASTER_KEY to the new value and MASTER_KEY_OLD to the
+  // previous one, then deploy. New writes use the new key immediately, old rows
+  // still decrypt, and POST /api/v1/admin/rekey re-encrypts incrementally.
+  // Removing MASTER_KEY_OLD before the settings screen reports zero rows on the
+  // retired kid is the one irreversible mistake in this design.
+  //
+  // SECRETS STORE is deliberately NOT used. Its advantages -- one secret shared
+  // across many Workers, central rotation -- do not apply to a single
+  // self-hosted Worker, and putting an open-beta control plane in front of the
+  // only root of trust of a secrets manager is a poor trade. The seam exists in
+  // code (`loadMasterMaterial()` prefers a bound store and falls back), so
+  // switching when it reaches GA is a config-only change:
+  //
+  // "secrets_store_secrets": [
+  //   {
+  //     "binding": "MASTER_KEY_STORE",
+  //     "store_id": "<store-id>",
+  //     "secret_name": "MASTER_KEY"
+  //   }
+  // ],
+  // ---------------------------------------------------------------------------
+
+  "vars": {
+    // Cloudflare Access team name -- the <team> in
+    // https://<team>.cloudflareaccess.com. Used to build the issuer and the
+    // JWKS URL, both asserted by exact equality.
+    "ACCESS_TEAM": "your-team",
+
+    // The Access application's AUD tag (Zero Trust > Access > Applications >
+    // Overview). Note the `aud` claim is an ARRAY, so the verifier asserts
+    // `.includes(ACCESS_AUD)` rather than equality.
+    "ACCESS_AUD": "",
+
+    // Comma-separated emails that are treated as global admins while no global
+    // admin grant exists. Evaluated live, not seeded, so there is no
+    // bootstrap-token window. The real root of trust is already "who can run
+    // `wrangler deploy`" -- that person can read MASTER_KEY and decrypt
+    // everything regardless -- so anchoring bootstrap to the same authority
+    // adds no exposure. On the first authenticated request it self-heals into a
+    // real, auditable, revocable grant.
+    "BOOTSTRAP_ADMINS": "",
+
+    // Access-on-Workers (`ctx.access`) shipped 2026-08-14 and is not yet in the
+    // config reference. It is used as a defence-in-depth ASSERTION only. Keep
+    // this "false" until it is documented and confirmed not to swallow
+    // service-token requests -- our own JWT verification stays load-bearing.
+    "REQUIRE_CTX_ACCESS": "false",
+
+    // Byte ceilings. Enforced server-side; the shared schemas carry the same
+    // defaults so the UI can refuse before a request is made.
+    "SECRET_MAX_BYTES": "65536",
+
+    // Hard cap on secrets per environment. A full-environment replace must fit
+    // in ONE D1 batch() -- splitting it would forfeit atomicity -- and batch()
+    // has a documented 30 s ceiling. Anything larger is rejected with 413.
+    // THIS NUMBER IS DERIVED FROM AN UNDOCUMENTED LIMIT: load-test a 500-key
+    // replace before trusting it, and lower it rather than split the batch.
+    "ENV_MAX_SECRETS": "500",
+
+    "BODY_MAX_BYTES": "1048576",
+  },
+}

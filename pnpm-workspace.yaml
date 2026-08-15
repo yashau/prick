@@ -1,0 +1,107 @@
+# =============================================================================
+# pnpm workspace + the ENTIRE JavaScript supply-chain policy.
+#
+# READ THIS BEFORE MOVING ANYTHING OUT OF THIS FILE:
+#
+# pnpm 11 no longer reads pnpm settings from `.npmrc` or from the `pnpm` field
+# of `package.json`. Settings placed there are not an error and produce no
+# warning -- they are silently inert. Every security control below therefore
+# lives here and nowhere else. `.npmrc` in this repo is auth/registry only.
+# =============================================================================
+
+packages:
+  - packages/app
+  - packages/shared
+  - packages/npm/prick
+  - e2e
+
+# -----------------------------------------------------------------------------
+# Cooldown on newly published versions.
+#
+# 4320 minutes = 3 days. Essentially every npm account-takeover / malicious
+# release of the last two years was detected and unpublished inside 72 hours,
+# so refusing to resolve anything younger than that converts the overwhelming
+# majority of those incidents into a non-event.
+#
+# The exclusion is REQUIRED, not a convenience: the release pipeline publishes
+# the nine `@yashau/prick*` packages and then runs a smoke test that installs
+# them from the registry. Without the exclusion that install could not resolve
+# what the same job published minutes earlier, and the release would fail.
+# -----------------------------------------------------------------------------
+minimumReleaseAge: 4320
+minimumReleaseAgeExclude:
+  - '@yashau/prick'
+  - '@yashau/prick-*'
+
+# -----------------------------------------------------------------------------
+# Refuse non-registry dependency specs (git://, github:, http(s) tarballs,
+# file:, link:) anywhere in the transitive graph. A git dependency is a moving
+# target that no lockfile integrity hash pins and that no registry audit sees;
+# for a secrets manager it is disqualifying. Direct workspace: links are
+# unaffected.
+# -----------------------------------------------------------------------------
+blockExoticSubdeps: true
+
+# -----------------------------------------------------------------------------
+# Install-time code execution.
+#
+#   dangerouslyAllowAllBuilds: false -> no dependency runs preinstall /
+#     install / postinstall / prepare unless it is named below.
+#   allowBuilds                      -> the allowlist. Every entry is an
+#     EXPLICIT true or false; there is no "unset means allowed".
+#   strictDepBuilds: true            -> and if a dependency HAS such a script
+#     and is not allowed, the install FAILS rather than printing an "ignored
+#     build scripts" note that nobody reads. Adding a dependency that wants to
+#     run code becomes a deliberate, reviewed act.
+#
+# NOTE: the allowlist key is `allowBuilds`, NOT `onlyBuiltDependencies`.
+# pnpm 11 still ACCEPTS `onlyBuiltDependencies` as a known field -- it neither
+# errors nor warns -- but the build gate no longer consults it, so an allowlist
+# written that way is silently inert and every build is refused. Verified
+# empirically against pnpm 11.21.0: with `onlyBuiltDependencies: [esbuild,
+# workerd]` and nothing else, the install fails with ERR_PNPM_IGNORED_BUILDS
+# naming those exact packages.
+#
+# Every entry below is a build tool, never a runtime dependency of the Worker.
+#   esbuild  bundler; its postinstall selects the platform binary.
+#   workerd  the Workers runtime used by miniflare in tests and `wrangler dev`.
+# -----------------------------------------------------------------------------
+dangerouslyAllowAllBuilds: false
+strictDepBuilds: true
+allowBuilds:
+  esbuild: true
+  workerd: true
+
+# -----------------------------------------------------------------------------
+# The eight per-platform CLI packages are optionalDependencies of the published
+# parent `@yashau/prick`. They are BUILT AT RELEASE TIME into dist/npm/ and do
+# not exist on the registry during development, so pnpm must not try to resolve
+# them here. End users installing from npm are unaffected -- this setting is
+# local to this workspace.
+# -----------------------------------------------------------------------------
+ignoredOptionalDependencies:
+  - '@yashau/prick-*'
+
+# -----------------------------------------------------------------------------
+# One version of the toolchain, workspace-wide.
+#
+# Referenced from package.json as `"typescript": "catalog:"`. Two packages
+# cannot drift onto different vitest majors, and a bump is a one-line diff here
+# instead of five.
+#
+# typescript is deliberately held at 5.9.x: @sveltejs/kit and svelte-check
+# declare `typescript: ^5.3.3 || ^6.0.0` as a peer, so TypeScript 7 (the native
+# port, current `latest`) is outside the supported range for this stack.
+# -----------------------------------------------------------------------------
+#
+# vite-plus (CLI: `vp`) is pinned here as well as installed by mise. Pinning it
+# in the workspace keeps `pnpm run lint` / `fmt` working on a clone that has not
+# run `mise install` yet, and guarantees the two agree on a version. It vendors
+# vitest 4.1.10 exactly, which is why the vitest pin above must match it.
+catalog:
+  '@cloudflare/vitest-pool-workers': 0.21.1
+  typescript: 5.9.3
+  vite: 8.2.1
+  vite-plus: 0.2.9
+  vitest: 4.1.10
+  wrangler: 4.121.0

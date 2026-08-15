@@ -1,0 +1,32 @@
+# =============================================================================
+# Headers for responses served DIRECTLY by the Workers assets runtime.
+#
+# LOCATION: this file lives at the PACKAGE ROOT, not in `static/`.
+# @sveltejs/adapter-cloudflare reads `_headers` from the project root, copies it
+# into the build output, and APPENDS its own immutable-asset caching block. It
+# hard-errors if it finds a `_headers` in the assets directory instead, so
+# putting it in `static/` is not a matter of preference.
+#
+# Why this file has to exist at all:
+#
+#   1. Static assets are returned WITHOUT invoking the Worker. Nothing in
+#      hooks.server.ts and no `hono/secure-headers` middleware ever runs for
+#      them, so those layers cannot protect these responses.
+#
+#   2. SvelteKit emits its CSP as a <meta> tag on PRERENDERED pages, and
+#      `frame-ancestors` is specified to be IGNORED when delivered via meta.
+#      Clickjacking protection therefore has to arrive as a real header, from
+#      here.
+#
+# Do NOT add a /_app/immutable/* rule below -- the adapter appends one.
+# =============================================================================
+
+/*
+  X-Content-Type-Options: nosniff
+  X-Frame-Options: DENY
+  Referrer-Policy: no-referrer
+  Cross-Origin-Opener-Policy: same-origin
+  Cross-Origin-Resource-Policy: same-origin
+  Strict-Transport-Security: max-age=63072000; includeSubDomains; preload
+  Permissions-Policy: accelerometer=(), autoplay=(), browsing-topics=(), camera=(), display-capture=(), geolocation=(), gyroscope=(), interest-cohort=(), magnetometer=(), microphone=(), midi=(), payment=(), publickey-credentials-get=(), screen-wake-lock=(), serial=(), usb=(), xr-spatial-tracking=()
+  Content-Security-Policy: default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'

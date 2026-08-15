@@ -1,0 +1,50 @@
+{
+  "name": "@yashau/prick",
+  "version": "0.0.0-dev",
+  "description": "Command-line client for a self-hosted secrets manager running on Cloudflare Workers and D1.",
+  "keywords": [
+    "cli",
+    "cloudflare",
+    "d1",
+    "dotenv",
+    "secrets",
+    "secrets-manager",
+    "workers"
+  ],
+  "homepage": "https://github.com/yashau/prick",
+  "bugs": {
+    "url": "https://github.com/yashau/prick/issues"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/yashau/prick.git",
+    "directory": "packages/npm/prick"
+  },
+  "bin": {
+    "prk": "bin/prk.js"
+  },
+  "files": [
+    "bin/"
+  ],
+  "type": "commonjs",
+  "publishConfig": {
+    "access": "public"
+  },
+  "dependencies": {
+    "detect-libc": "^2.1.2"
+  },
+  "optionalDependencies": {
+    "@yashau/prick-darwin-arm64": "0.0.0-dev",
+    "@yashau/prick-darwin-x64": "0.0.0-dev",
+    "@yashau/prick-linux-arm64-gnu": "0.0.0-dev",
+    "@yashau/prick-linux-arm64-musl": "0.0.0-dev",
+    "@yashau/prick-linux-x64-gnu": "0.0.0-dev",
+    "@yashau/prick-linux-x64-musl": "0.0.0-dev",
+    "@yashau/prick-win32-arm64-msvc": "0.0.0-dev",
+    "@yashau/prick-win32-x64-msvc": "0.0.0-dev"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

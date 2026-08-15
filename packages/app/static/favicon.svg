@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="prick">
+  <rect width="32" height="32" rx="7" fill="#111827" />
+  <path
+    d="M11 22V10h5.2a4.2 4.2 0 0 1 0 8.4H14"
+    fill="none"
+    stroke="#f3f4f6"
+    stroke-width="2.6"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+</svg>

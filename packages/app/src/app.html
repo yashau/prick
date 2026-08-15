@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="referrer" content="no-referrer" />
+    <!-- This is an authenticated admin console. It must never be indexed, and
+         no referrer may ever carry a project or environment slug off-site. -->
+    <meta name="robots" content="noindex, nofollow, noarchive" />
+    <link rel="icon" href="%sveltekit.assets%/favicon.svg" />
+    %sveltekit.head%
+  </head>
+  <body data-sveltekit-preload-data="hover">
+    <div style="display: contents">%sveltekit.body%</div>
+  </body>
+</html>

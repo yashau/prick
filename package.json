@@ -1,0 +1,28 @@
+{
+  "name": "prick-workspace",
+  "version": "0.0.0-dev",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "pnpm --filter @prick/app run dev",
+    "build": "pnpm --filter @prick/app run build",
+    "typecheck": "pnpm -r run typecheck",
+    "check": "vp check",
+    "lint": "vp lint",
+    "fmt": "vp fmt",
+    "fmt:check": "vp fmt --check",
+    "test": "pnpm -r run test",
+    "e2e": "pnpm --filter @prick/e2e run test",
+    "cf-typegen": "pnpm --filter @prick/app run cf-typegen",
+    "deploy:dry-run": "pnpm --filter @prick/app run deploy:dry-run"
+  },
+  "devDependencies": {
+    "@types/node": "^26.2.0",
+    "typescript": "catalog:",
+    "vite-plus": "catalog:"
+  },
+  "engines": {
+    "node": ">=26"
+  },
+  "packageManager": "pnpm@11.21.0"
+}
