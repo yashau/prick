@@ -41,13 +41,18 @@
 
   const byId = $derived(new Map(identities.map((identity) => [identity.id, identity])));
 
+  /**
+   * The subject is joined onto the grant row server-side, so it is present even
+   * when the identity list is narrower than the grant list -- which it can be:
+   * the two are gated separately, and a row whose identity is missing here
+   * would otherwise render as a bare uuid.
+   */
   function subjectOf(grant: GrantRecord): string {
-    return byId.get(grant.identityId)?.subject ?? grant.identityId;
+    return grant.subject;
   }
 
   function nameOf(grant: GrantRecord): string {
-    const identity = byId.get(grant.identityId);
-    return identity?.displayName ?? identity?.subject ?? grant.identityId;
+    return byId.get(grant.identityId)?.displayName ?? grant.subject;
   }
 
   function scopeLabel(grant: GrantRecord): string {

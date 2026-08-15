@@ -46,6 +46,47 @@ export const OUTCOME_LABELS: Record<string, string> = {
   error: "Error",
 };
 
+/**
+ * id -> slug, for the two ids an audit row carries.
+ *
+ * The server sends `projectId` and `environmentId` and NOTHING ELSE, which is
+ * the right shape for an append-only log: a denormalised slug would be a name
+ * frozen at write time, and delete-then-recreate can point that name at a
+ * different id. So the resolution happens HERE, at render time, against the
+ * lists the screen has already loaded -- `/audit` has the project list, and
+ * `/p/[project]` has that project's environments.
+ */
+export interface ScopeNames {
+  projects?: Record<string, string>;
+  environments?: Record<string, string>;
+}
+
+/**
+ * `project/environment`, or as much of it as can be resolved.
+ *
+ * FALLS BACK TO THE ID, never to nothing. A row whose project has since been
+ * deleted still happened, and hiding its scope would quietly turn the most
+ * interesting rows in the log -- the ones about things that no longer exist --
+ * into rows that look install-wide.
+ *
+ * A denial recorded at environment scope carries `environment_id` and a NULL
+ * `project_id` (there is no project on that scope to record), so the
+ * environment half stands alone rather than being rendered as a suffix of a
+ * project that is not there.
+ */
+export function scopeLabel(entry: AuditEntryView, names: ScopeNames = {}): string | null {
+  const project =
+    entry.projectId === null ? null : (names.projects?.[entry.projectId] ?? entry.projectId);
+  const environment =
+    entry.environmentId === null
+      ? null
+      : (names.environments?.[entry.environmentId] ?? entry.environmentId);
+
+  if (project === null) return environment;
+  if (environment === null) return project;
+  return `${project}/${environment}`;
+}
+
 type Detail = Record<string, unknown>;
 
 function asDetail(value: unknown): Detail | null {

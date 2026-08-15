@@ -1,10 +1,10 @@
 /**
  * The error every screen renders.
  *
- * Kept in its own module so that `api.ts` and `fixtures.ts` can both throw it
- * without an import cycle: `api.ts` picks a backend at module scope, so it
- * imports `fixtures.ts` for real rather than for types, and `fixtures.ts`
- * importing `ApiError` back out of `api.ts` would close the loop.
+ * Kept in its own module rather than in `api.ts` so that a component can narrow
+ * a throwable without importing the whole client -- and so that the server
+ * loads, which never construct one, do not drag `api.ts` into their graph to
+ * catch one.
  */
 
 export interface ApiErrorIssue {

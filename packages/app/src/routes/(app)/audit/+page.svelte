@@ -16,7 +16,7 @@
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
   import type { AuditEntryView } from '$lib/client/api';
-  import { ACTIONS, actionLabel } from '$lib/client/audit';
+  import { ACTIONS, actionLabel, scopeLabel } from '$lib/client/audit';
   import { absoluteTime } from '$lib/client/format';
   import AuditActorCell from '$lib/components/audit/audit-actor-cell.svelte';
   import AuditRowActions from '$lib/components/audit/audit-row-actions.svelte';
@@ -110,7 +110,8 @@
     {
       accessorKey: 'action',
       header: ({ column }) => renderComponent(SortHeader, { column, label: 'What happened' }),
-      cell: ({ row }) => renderComponent(AuditSummaryCell, { entry: row.original })
+      cell: ({ row }) =>
+        renderComponent(AuditSummaryCell, { entry: row.original, scopes: data.scopes })
     },
     {
       accessorKey: 'outcome',
@@ -155,6 +156,16 @@
   const detailJson = $derived(
     detail ? JSON.stringify(detail.detail ?? {}, null, 2) : ''
   );
+
+  /**
+   * The scope of the row open in the sheet.
+   *
+   * Resolved from `data.scopes`, which the load built from the project list and
+   * the environments of the projects this page's rows name. Anything it cannot
+   * resolve renders as the raw id rather than disappearing -- a row about a
+   * project that has since been deleted still happened.
+   */
+  const detailScope = $derived(detail ? scopeLabel(detail, data.scopes) : null);
 </script>
 
 <svelte:head>
@@ -345,11 +356,9 @@
             <Badge variant="outline">{detail.actorKind}</Badge>
           </dd>
 
-          {#if detail.projectSlug}
+          {#if detailScope}
             <dt class="text-muted-foreground">Scope</dt>
-            <dd class="font-mono text-xs">
-              {detail.projectSlug}{detail.environmentSlug ? `/${detail.environmentSlug}` : ''}
-            </dd>
+            <dd class="font-mono text-xs break-all">{detailScope}</dd>
           {/if}
 
           {#if detail.targetKey}

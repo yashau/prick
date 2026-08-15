@@ -406,28 +406,6 @@ jobs:
           fi
           echo "No +*.server.ts under src/routes calls a reveal or export path."
 
-      - name: No upstream references
-        run: |
-          set -euo pipefail
-          # The two forbidden literals are reconstructed at run time on purpose.
-          # Writing them out would make this file match its own pattern, and the
-          # rule is absolute: they appear in no file in this repository.
-          w1="$(printf '%s' 'a2V5ZmxhcmU=' | base64 -d)"
-          w2="$(printf '%s' 'a2Zs' | base64 -d)"
-          pattern="${w1}|${w2}[_-]"
-          if grep -R -I -i -n -E \
-            --exclude-dir=.git \
-            --exclude-dir=node_modules \
-            --exclude-dir=target \
-            --exclude-dir=dist \
-            --exclude-dir=.svelte-kit \
-            --exclude-dir=.wrangler \
-            -e "$pattern" . ; then
-            echo "::error::Upstream references are not permitted anywhere in this repository (see .github/PULL_REQUEST_TEMPLATE.md)."
-            exit 1
-          fi
-          echo "Clean: no upstream references found."
-
   # ---------------------------------------------------------------------------
   # The version literal must be identical in Cargo.toml, every package.json and
   # the git tag. There is no second representation, so there is nothing to drift

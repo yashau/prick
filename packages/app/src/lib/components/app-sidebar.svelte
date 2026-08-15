@@ -8,8 +8,7 @@
   import UsersIcon from '@lucide/svelte/icons/users';
 
   import { page } from '$app/state';
-  import type { ProjectSummary } from '$lib/client/api';
-  import type { Viewer } from '$lib/client/fixtures';
+  import type { ProjectSummary, Viewer } from '$lib/client/api';
   import ProjectSwitcher from '$lib/components/project-switcher.svelte';
   import * as Avatar from '$lib/components/ui/avatar/index.js';
   import { Badge } from '$lib/components/ui/badge/index.js';
@@ -30,14 +29,30 @@
   const currentProject = $derived((page.params.project as string | undefined) ?? null);
   const project = $derived(projects.find((entry) => entry.slug === currentProject) ?? null);
 
+  /**
+   * The SUBJECT is the only name there is.
+   *
+   * `identities.display_name` exists and is worth having, but nothing lets an
+   * actor read its own identity row: `/whoami` does not return it, and every
+   * `core` function that would is gated on admin. So the shell shows the
+   * address or the service token's common name rather than a blank where a
+   * friendly name would go.
+   */
   const initials = $derived(
-    (viewer.displayName ?? viewer.subject)
+    viewer.subject
       .split(/[\s@.]+/)
       .filter(Boolean)
       .slice(0, 2)
       .map((part) => part[0]?.toUpperCase() ?? '')
       .join('')
   );
+
+  /**
+   * `role` is the GLOBAL role and is `null` for a project-scoped admin, who is
+   * emphatically not role-less. Naming the scope is what keeps the badge from
+   * reading as "you have nothing".
+   */
+  const roleLabel = $derived(viewer.role ?? 'scoped');
 
   function isActive(href: string, exact = false): boolean {
     return exact ? page.url.pathname === href : page.url.pathname.startsWith(href);
@@ -172,11 +187,15 @@
             <Avatar.Fallback class="rounded-lg">{initials}</Avatar.Fallback>
           </Avatar.Root>
           <div class="grid flex-1 text-left text-sm leading-tight">
-            <span class="truncate font-medium">{viewer.displayName ?? viewer.subject}</span>
-            <span class="text-muted-foreground truncate text-xs">{viewer.subject}</span>
+            <span class="truncate font-medium">{viewer.subject}</span>
+            <span class="text-muted-foreground truncate text-xs">
+              {viewer.role === null ? 'No install-wide role' : `${viewer.role} everywhere`}
+            </span>
           </div>
-          <Badge variant="outline" class="ml-auto">
-            {viewer.role}
+          <Badge variant="outline" class="ml-auto" title={viewer.role === null
+            ? 'No global grant. Any access you have is scoped to a project or an environment.'
+            : `Global ${viewer.role}`}>
+            {roleLabel}
             {#if viewer.kind === 'service'}
               <KeyRoundIcon class="size-3" aria-hidden="true" />
               <span class="sr-only">service token</span>

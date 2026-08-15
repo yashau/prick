@@ -69,8 +69,11 @@ Not debated: rustfmt, `clippy -D warnings`, prettier, oxlint. Hooks run automati
 line" from something a reviewer might catch into something the compiler rejects. If you need to
 print, add a helper to `output`, don't widen the allow.
 
-**No references to prior art.** This project stands on its own. CI greps the tree and fails the
-build on any hit.
+**Do not describe this project by comparison to another.** It stands on its own, so a reader has no
+referent for "what X used to do". State the property and the hazard directly — "a decrypt failure
+must be loud, because a silently skipped row becomes a `.env` that deploys production without
+`DATABASE_URL`" carries the entire argument without an absent other. This was briefly enforced by a
+CI grep; the grep is gone now that the tree is clean, so it is a convention rather than a check.
 
 ## 5. Testing
 

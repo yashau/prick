@@ -1,18 +1,20 @@
 import { CreateProjectBody } from "@prick/shared";
 import { fail } from "@sveltejs/kit";
 
-import { ApiError } from "$lib/client/errors";
-import { fixtureApi } from "$lib/client/fixtures";
 import { fieldErrors } from "$lib/client/forms";
+import { createProject, deleteProject, listProjects } from "$lib/server/core";
 
+import { refuse, refuseAction } from "../transport";
 import type { Actions, PageServerLoad } from "./$types";
 
 /**
  * Projects: list, create, delete.
  *
  * SERVER-RENDERED. Names, slugs and counts only -- there is no value anywhere
- * on this screen, which is why it is allowed to be. CI greps every
- * `+*.server.ts` for `revealSecret|exportSecrets|decrypt` and fails on a hit.
+ * on this screen, which is why it is allowed to be. `core.listProjects` is
+ * called IN-PROCESS with the same `CoreContext` the Hono routes build; there is
+ * no HTTP hop to `/api/v1` and therefore no second place authorization is
+ * decided.
  *
  * FORM ACTIONS ARE USED HERE, and that is safe for exactly the reason it is
  * forbidden in the secrets subtree: SvelteKit serialises an action's return
@@ -20,18 +22,18 @@ import type { Actions, PageServerLoad } from "./$types";
  * value in the payload would defeat `ssr = false` entirely, which is why
  * secret writes go through a client `fetch` instead and there is no action
  * anywhere under `p/[project]/[env]`.
- *
- * FIXTURE SEAM -- becomes `core.listProjects(ctx)` / `core.createProject(...)`
- * called IN-PROCESS. See the note in `(app)/+layout.server.ts`.
  */
 
-export const load: PageServerLoad = async () => {
-  const projects = await fixtureApi.listProjects();
-  return { projects };
+export const load: PageServerLoad = async ({ locals }) => {
+  try {
+    return { projects: await listProjects(locals.ctx) };
+  } catch (cause) {
+    refuse(locals.ctx, cause);
+  }
 };
 
 export const actions: Actions = {
-  create: async ({ request }) => {
+  create: async ({ locals, request }) => {
     const form = await request.formData();
 
     const description = String(form.get("description") ?? "").trim();
@@ -49,21 +51,14 @@ export const actions: Actions = {
     }
 
     try {
-      const project = await fixtureApi.createProject(parsed.data);
+      const project = await createProject(locals.ctx, parsed.data);
       return { action: "create" as const, created: project.slug };
-    } catch (error) {
-      if (error instanceof ApiError) {
-        return fail(error.status || 500, {
-          action: "create" as const,
-          errors: { form: error.message },
-          requestId: error.requestId,
-        });
-      }
-      throw error;
+    } catch (cause) {
+      return refuseAction("create" as const, locals.ctx, cause);
     }
   },
 
-  delete: async ({ request }) => {
+  delete: async ({ locals, request }) => {
     const form = await request.formData();
     const slug = String(form.get("slug") ?? "");
 
@@ -78,17 +73,10 @@ export const actions: Actions = {
     }
 
     try {
-      await fixtureApi.deleteProject(slug);
+      await deleteProject(locals.ctx, slug);
       return { action: "delete" as const, deleted: slug };
-    } catch (error) {
-      if (error instanceof ApiError) {
-        return fail(error.status || 500, {
-          action: "delete" as const,
-          errors: { form: error.message },
-          requestId: error.requestId,
-        });
-      }
-      throw error;
+    } catch (cause) {
+      return refuseAction("delete" as const, locals.ctx, cause);
     }
   },
 };

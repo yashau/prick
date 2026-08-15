@@ -1,4 +1,15 @@
 <!doctype html>
+<!--
+  The opening tag on the next line is REWRITTEN AT RUNTIME by hooks.server.ts,
+  which matches it verbatim and adds the theme class and colour scheme from the
+  `prick_theme` cookie. Editing it means editing `HTML_OPEN` in that file to
+  match; if the two disagree the rewrite silently stops happening and the dark
+  palette goes back to arriving one frame late.
+
+  (Deliberately not written out here. A comment quoting the tag it documents is
+  a comment the rewrite matches FIRST -- which is exactly what happened the
+  first time this was written.)
+-->
 <html lang="en">
   <head>
     <meta charset="utf-8" />

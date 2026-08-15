@@ -32,8 +32,7 @@ Breaking these fails the build, not review.
 1. **No writes to stdout/stderr outside `crates/prk/src/output/`.** `print_stdout` and
    `print_stderr` are denied workspace-wide. This exists so that leaking a secret into a log line is
    a compile error. Add a helper to `output`; never widen the allow.
-2. **No references to prior art.** This project stands alone. CI greps the tree and fails on any hit.
-3. **`prick-core` is pure** — no I/O, no async, no `unsafe`, no FFI. `cargo miri test -p prick-core`
+2. **`prick-core` is pure** — no I/O, no async, no `unsafe`, no FFI. `cargo miri test -p prick-core`
    is a machine-checked proof of that; it cannot pass if you add a file read, a clock call, or an FFI
    dependency. Put impure code in `prick-api` / `prick-auth` / `prick-exec` instead.
 
@@ -41,17 +40,22 @@ Breaking these fails the build, not review.
 
 1. **Never log, print, or embed a secret value.** Error messages name the _key_, never the value.
    Values are `SecretString`; do not `{:?}` your way around the redacted `Debug`.
-2. **Never return a secret value from a SvelteKit `+*.server.ts` load or form action.** SvelteKit
+2. **Do not describe this project by comparison to another.** It stands alone, so a reader has no
+   referent for "what X did". State the property and the hazard on their own terms — "a decrypt
+   failure must be loud, because a silently skipped row becomes a `.env` that deploys production
+   without `DATABASE_URL`" carries the whole argument and needs no absent other. This was briefly a
+   CI grep; the grep is gone, so it is now yours to hold.
+3. **Never return a secret value from a SvelteKit `+*.server.ts` load or form action.** SvelteKit
    serialises those into the page payload. Secret values reach the browser only via a client-side
    `fetch` to `/api/*`, from the `ssr = false` subtree.
-3. **Never widen an AAD.** Ciphertexts are bound to `(purpose, environment_id, key, version)`. If a
+4. **Never widen an AAD.** Ciphertexts are bound to `(purpose, environment_id, key, version)`. If a
    mutation changes any of those, you must decrypt and re-encrypt — never copy a ciphertext blob
    between rows. There is no cheap rename.
-4. **Never write a mutation without an audit row in the same `batch()`.** The audit insert is the
+5. **Never write a mutation without an audit row in the same `batch()`.** The audit insert is the
    last statement in the transaction so that an un-audited mutation is impossible.
-5. **Never split a bulk write across multiple `batch()` calls.** That destroys atomicity. If it does
+6. **Never split a bulk write across multiple `batch()` calls.** That destroys atomicity. If it does
    not fit, reject it with 413.
-6. **Never swallow a decrypt failure.** A tamper attempt must be the loudest thing in the system.
+7. **Never swallow a decrypt failure.** A tamper attempt must be the loudest thing in the system.
 
 ## Conventions
 

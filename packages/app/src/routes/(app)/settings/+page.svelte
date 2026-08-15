@@ -23,8 +23,18 @@
 
   let rekeying = $state(false);
 
+  /**
+   * `null` means the SERVER does not implement the key ring yet, not that the
+   * ring is empty. The distinction is the whole reason this is nullable: an
+   * empty ring rendered as "nothing outstanding" would show a green
+   * "safe to remove MASTER_KEY_OLD" on an install nobody has counted the rows
+   * of, and removing that key while any row still references a retired kid is
+   * the one irreversible mistake this design leaves available.
+   */
+  const keyring = $derived(data.keyring);
+
   const outstanding = $derived(
-    data.keyring.entries
+    (keyring?.entries ?? [])
       .filter((entry) => entry.status !== 'active')
       .reduce((total, entry) => total + entry.rowsRemaining, 0)
   );
@@ -50,14 +60,31 @@
   never be decrypted again, by anyone, ever. So the UI has to be what tells
   you, and it only goes green at zero.
 -->
-{#if data.keyring.safeToRemoveOldKey}
+{#if keyring === null}
+  <!--
+    NOT an error, and deliberately not silence either. `core.getKeyringStatus`
+    is a stub in this build and `GET /api/v1/admin/keyring` answers 501, so
+    there is no row count to reason about. Saying nothing would leave the
+    screen looking like a healthy install with an empty ring.
+  -->
+  <Alert.Root variant="destructive">
+    <TriangleAlertIcon aria-hidden="true" />
+    <Alert.Title>Key ring status is unavailable in this build</Alert.Title>
+    <Alert.Description>
+      The server has not implemented the row counts behind this panel yet, so nothing here can
+      tell you whether <code class="font-mono text-xs">MASTER_KEY_OLD</code> is still needed.
+      Treat it as still needed: removing it while any row references a retired key id makes those
+      values permanently undecryptable, and there is no recovery path.
+    </Alert.Description>
+  </Alert.Root>
+{:else if keyring.safeToRemoveOldKey}
   <Alert.Root>
     <CircleCheckIcon aria-hidden="true" />
     <Alert.Title>Safe to remove MASTER_KEY_OLD</Alert.Title>
     <Alert.Description>
       Every stored value is sealed under the active key id
-      <code class="font-mono text-xs">{data.keyring.activeKid}</code>. Removing the previous key
-      from the Worker's secrets now loses nothing.
+      <code class="font-mono text-xs">{keyring.activeKid}</code>. Removing the previous key from
+      the Worker's secrets now loses nothing.
     </Alert.Description>
   </Alert.Root>
 {:else}
@@ -88,6 +115,14 @@
     </Card.Header>
 
     <Card.Content>
+      {#if keyring === null}
+        <p class="text-muted-foreground text-sm">
+          Not available: <code class="font-mono text-xs">GET /api/v1/admin/keyring</code> answers
+          <code class="font-mono text-xs">501 NOT_IMPLEMENTED</code> in this build. The key ids
+          themselves are not secret — they are stored in every envelope in the clear — so this
+          table will show all of them once the server counts the rows.
+        </p>
+      {:else}
       <Table.Root>
         <Table.Caption class="sr-only">Key ids known to this install.</Table.Caption>
         <Table.Header>
@@ -99,7 +134,7 @@
           </Table.Row>
         </Table.Header>
         <Table.Body>
-          {#each data.keyring.entries as entry (entry.kid)}
+          {#each keyring.entries as entry (entry.kid)}
             <Table.Row>
               <Table.Cell class="font-mono text-xs">{entry.kid}</Table.Cell>
               <Table.Cell>
@@ -133,6 +168,7 @@
           {/each}
         </Table.Body>
       </Table.Root>
+      {/if}
     </Card.Content>
   </Card.Root>
 
@@ -156,7 +192,9 @@
           : `${outstanding} rows still on a retired key`}
       />
       <p class="text-sm">
-        {#if outstanding === 0}
+        {#if keyring === null}
+          Unknown — the server does not report row counts in this build.
+        {:else if outstanding === 0}
           Nothing outstanding.
         {:else}
           {pluralise(outstanding, 'row')} on a retired key, out of {total.toLocaleString()}.
@@ -187,7 +225,12 @@
         }}
       >
         <input type="hidden" name="limit" value="100" />
-        <Button type="submit" disabled={rekeying || outstanding === 0}>
+        <!--
+          Disabled while the status is unknown as well as when nothing is
+          outstanding. `POST /api/v1/admin/rekey` answers 501 in this build, so
+          the button would only ever produce an error toast.
+        -->
+        <Button type="submit" disabled={rekeying || keyring === null || outstanding === 0}>
           {#if rekeying}<Spinner class="size-3" />{/if}
           {rekeying ? 'Rekeying…' : 'Run one page now'}
         </Button>
@@ -208,7 +251,7 @@
     </Card.Description>
   </Card.Header>
   <Card.Content>
-    {#if data.viewer.bootstrapAdmin}
+    {#if data.viewer.bootstrap}
       <Alert.Root>
         <TriangleAlertIcon aria-hidden="true" />
         <Alert.Title>Your access is still implicit</Alert.Title>

@@ -6,7 +6,7 @@
   import TriangleAlertIcon from '@lucide/svelte/icons/triangle-alert';
   import { toast } from 'svelte-sonner';
 
-  import { api, type ImportPreview } from '$lib/client/api';
+  import { api, type ImportResult } from '$lib/client/api';
   import { ApiError } from '$lib/client/errors';
   import { pluralise } from '$lib/client/format';
   import type { SecretsController } from '$lib/client/secrets.svelte.js';
@@ -39,7 +39,7 @@
   let format = $state<'env' | 'json'>('env');
   let replace = $state(false);
   let content = $state('');
-  let preview = $state<ImportPreview | null>(null);
+  let preview = $state<ImportResult | null>(null);
   let running = $state(false);
   let failure = $state<ApiError | null>(null);
 
@@ -81,7 +81,14 @@
         expected_rev: controller.rev
       });
 
-      if (dryRun) {
+      /*
+       * `applied` comes from the SERVER, and the check is against it rather
+       * than against the `dryRun` we asked for. They agree, and the point is
+       * that a disagreement would be visible: a response claiming it applied a
+       * diff we requested as a preview is the one failure this dialog exists to
+       * make impossible to miss.
+       */
+      if (!result.applied) {
         preview = result;
         previewedContent = content;
         return;
@@ -225,7 +232,15 @@
             <MinusIcon aria-hidden="true" />
             {preview.removed.length} removed
           </Badge>
-          <Badge variant="outline">{preview.unchanged.length} unchanged</Badge>
+          <!--
+            There is no "unchanged" count, and one must not be reconstructed
+            here from the table's row list. `changed` means "this key already
+            existed and is being rewritten" — NOT "the value differs" — because
+            telling those apart would mean decrypting every existing value to
+            compare, which is a silent full-environment reveal performed by the
+            screen whose whole purpose is to avoid one. A count derived from key
+            names would read as if the server had made that comparison.
+          -->
           {#if stale}
             <Badge variant="destructive">Contents changed — preview again</Badge>
           {/if}
@@ -250,9 +265,18 @@
           <Alert.Root variant="destructive">
             <TriangleAlertIcon aria-hidden="true" />
             <Alert.Title>{pluralise(preview.warnings.length, 'line')} skipped</Alert.Title>
+            <!--
+              Keyed on line AND key: one line can produce more than one warning,
+              and a duplicate `{#each}` key is a runtime crash rather than a
+              rendering glitch. The key name is shown when the parser found one,
+              because "line 41" alone is useless against a file the operator
+              pasted rather than opened.
+            -->
             <Alert.Description class="text-xs">
-              {#each preview.warnings as warning (warning.line)}
-                <span class="block">Line {warning.line}: {warning.message}</span>
+              {#each preview.warnings as warning (`${warning.line}:${warning.key}`)}
+                <span class="block">
+                  Line {warning.line}{warning.key ? ` (${warning.key})` : ''}: {warning.message}
+                </span>
               {/each}
             </Alert.Description>
           </Alert.Root>

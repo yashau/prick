@@ -1,10 +1,10 @@
 import { UpdateProjectBody } from "@prick/shared";
 import { fail } from "@sveltejs/kit";
 
-import { ApiError } from "$lib/client/errors";
-import { fixtureApi } from "$lib/client/fixtures";
 import { fieldErrors } from "$lib/client/forms";
+import { getProjectBySlug, listEnvironments, updateProject } from "$lib/server/core";
 
+import { refuse, refuseAction } from "../../../transport";
 import type { Actions, PageServerLoad } from "./$types";
 
 /**
@@ -15,19 +15,25 @@ import type { Actions, PageServerLoad } from "./$types";
  * and a rename would silently break all of them. Renaming a display name is a
  * cosmetic change; renaming a slug is a migration.
  *
- * FIXTURE SEAM -- becomes `core.getProjectBySlug` / `core.updateProject`.
+ * `core.updateProject` requires writer AT THE PROJECT and re-reads the row it
+ * wrote, so the value this screen renders after a save is the stored one rather
+ * than the submitted one.
  */
-export const load: PageServerLoad = async ({ params }) => {
-  const [project, environments] = await Promise.all([
-    fixtureApi.getProject(params.project),
-    fixtureApi.listEnvironments(params.project),
-  ]);
+export const load: PageServerLoad = async ({ locals, params }) => {
+  try {
+    const [project, environments] = await Promise.all([
+      getProjectBySlug(locals.ctx, params.project),
+      listEnvironments(locals.ctx, params.project),
+    ]);
 
-  return { project, environments };
+    return { project, environments };
+  } catch (cause) {
+    refuse(locals.ctx, cause);
+  }
 };
 
 export const actions: Actions = {
-  update: async ({ params, request }) => {
+  update: async ({ locals, params, request }) => {
     const form = await request.formData();
     const description = String(form.get("description") ?? "").trim();
 
@@ -41,16 +47,10 @@ export const actions: Actions = {
     }
 
     try {
-      await fixtureApi.updateProject(params.project, parsed.data);
+      await updateProject(locals.ctx, params.project, parsed.data);
       return { action: "update" as const, ok: true };
     } catch (cause) {
-      if (cause instanceof ApiError) {
-        return fail(cause.status || 500, {
-          action: "update" as const,
-          errors: { form: cause.message },
-        });
-      }
-      throw cause;
+      return refuseAction("update" as const, locals.ctx, cause);
     }
   },
 };

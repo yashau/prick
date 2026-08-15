@@ -1,8 +1,7 @@
-import { fail } from "@sveltejs/kit";
+import type { KeyringStatus } from "$lib/client/api";
+import { getKeyringStatus, rekeyPage, toPrickError } from "$lib/server/core";
 
-import { ApiError } from "$lib/client/errors";
-import { fixtureApi, fixtureViewer } from "$lib/client/fixtures";
-
+import { refuse, refuseAction, viewer } from "../transport";
 import type { Actions, PageServerLoad } from "./$types";
 
 /**
@@ -13,15 +12,49 @@ import type { Actions, PageServerLoad } from "./$types";
  * the clear, precisely so that an operator can tell "this row predates the
  * rotation" from "this row has been tampered with".
  *
- * FIXTURE SEAM -- becomes `core.getKeyringStatus(ctx)` / `core.rekeyPage(ctx)`.
+ * ---------------------------------------------------------------------------
+ * THE KEYRING HALF OF THIS SCREEN IS NOT IMPLEMENTED SERVER-SIDE
+ * ---------------------------------------------------------------------------
+ * `core.getKeyringStatus` and `core.rekeyPage` are stubs that throw
+ * `NOT_IMPLEMENTED`, and `GET /api/v1/admin/keyring` answers 501 for the same
+ * reason. That is a real gap, not a wiring mistake, and it is surfaced rather
+ * than hidden: a `NOT_IMPLEMENTED` collapses to `keyring: null` and the page
+ * says so.
+ *
+ * WHY NOT LET IT FAIL THE PAGE. The bootstrap card below is a security guard --
+ * it is how an operator learns that this install has an administrator no screen
+ * can revoke -- and it needs nothing from the key ring. Taking the whole screen
+ * down over an unimplemented panel would hide the warning behind the missing
+ * feature.
+ *
+ * WHY NOT FAKE IT. A "safe to remove MASTER_KEY_OLD" indicator invented by the
+ * UI would be the one irreversible mistake this design leaves available: those
+ * values can never be decrypted again, by anyone. The indicator only means
+ * something if the server counted the rows, so until it does, there is no
+ * indicator.
+ *
+ * Every other failure still takes the page down. `keyring: null` means "this
+ * build does not implement it", and it must not come to mean "something went
+ * wrong and we carried on".
  */
-export const load: PageServerLoad = async () => {
-  const keyring = await fixtureApi.getKeyringStatus();
-  return { keyring, viewer: fixtureViewer };
+export const load: PageServerLoad = async ({ locals }) => {
+  let keyring: KeyringStatus | null = null;
+
+  try {
+    keyring = await getKeyringStatus(locals.ctx);
+  } catch (cause) {
+    if (toPrickError(cause).code !== "NOT_IMPLEMENTED") refuse(locals.ctx, cause);
+  }
+
+  try {
+    return { keyring, viewer: await viewer(locals.ctx) };
+  } catch (cause) {
+    refuse(locals.ctx, cause);
+  }
 };
 
 export const actions: Actions = {
-  rekey: async ({ request }) => {
+  rekey: async ({ locals, request }) => {
     const form = await request.formData();
     const limit = Number(form.get("limit") ?? 100);
 
@@ -29,16 +62,10 @@ export const actions: Actions = {
       // One bounded page per invocation. The full rekey is driven by a cron
       // trigger; this button exists so an operator can push it along and watch
       // the count fall rather than waiting on a schedule they cannot see.
-      const result = await fixtureApi.rekeyPage(Number.isFinite(limit) ? limit : 100);
+      const result = await rekeyPage(locals.ctx, Number.isFinite(limit) ? limit : 100);
       return { action: "rekey" as const, ...result };
     } catch (cause) {
-      if (cause instanceof ApiError) {
-        return fail(cause.status || 500, {
-          action: "rekey" as const,
-          errors: { form: cause.message },
-        });
-      }
-      throw cause;
+      return refuseAction("rekey" as const, locals.ctx, cause);
     }
   },
 };

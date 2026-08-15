@@ -1,10 +1,18 @@
 import { CreateGrantBody } from "@prick/shared";
 import { fail } from "@sveltejs/kit";
 
-import { ApiError } from "$lib/client/errors";
-import { fixtureApi } from "$lib/client/fixtures";
 import { fieldErrors } from "$lib/client/forms";
+import {
+  createGrant,
+  getProjectBySlug,
+  listEnvironments,
+  listGrants,
+  listIdentities,
+  listProjects,
+  revokeGrant,
+} from "$lib/server/core";
 
+import { refuse, refuseAction } from "../../../transport";
 import type { Actions, PageServerLoad } from "./$types";
 
 /**
@@ -15,33 +23,40 @@ import type { Actions, PageServerLoad } from "./$types";
  * differs: a project admin manages their own project's access and should not
  * have to scan a table containing every other project to do it.
  *
- * FIXTURE SEAM -- becomes `core.listGrants(ctx)` scoped by the project.
+ * THE FILTERING BELOW IS PRESENTATION, NOT AUTHORIZATION. `core.listGrants`
+ * has already narrowed the rows to what this actor administers; the `.filter`
+ * calls only decide which of those rows belong on THIS screen. Nothing here
+ * widens the set, and nothing here may be relied on to narrow it.
  */
-export const load: PageServerLoad = async ({ params }) => {
-  const [project, environments, grants, identities, projects] = await Promise.all([
-    fixtureApi.getProject(params.project),
-    fixtureApi.listEnvironments(params.project),
-    fixtureApi.listGrants(),
-    fixtureApi.listIdentities(),
-    fixtureApi.listProjects(),
-  ]);
+export const load: PageServerLoad = async ({ locals, params }) => {
+  try {
+    const [project, environments, grants, identities, projects] = await Promise.all([
+      getProjectBySlug(locals.ctx, params.project),
+      listEnvironments(locals.ctx, params.project),
+      listGrants(locals.ctx),
+      listIdentities(locals.ctx),
+      listProjects(locals.ctx),
+    ]);
 
-  return {
-    project,
-    environments,
-    identities,
-    projects,
-    grants: grants.filter((grant) => grant.projectSlug === params.project),
-    /**
-     * Shown as context, not as something manageable here: a global grant
-     * confers access to this project but is not this project's to revoke.
-     */
-    globalGrants: grants.filter((grant) => grant.scopeType === "global"),
-  };
+    return {
+      project,
+      environments,
+      identities,
+      projects,
+      grants: grants.filter((grant) => grant.projectSlug === params.project),
+      /**
+       * Shown as context, not as something manageable here: a global grant
+       * confers access to this project but is not this project's to revoke.
+       */
+      globalGrants: grants.filter((grant) => grant.scopeType === "global"),
+    };
+  } catch (cause) {
+    refuse(locals.ctx, cause);
+  }
 };
 
 export const actions: Actions = {
-  createGrant: async ({ params, request }) => {
+  createGrant: async ({ locals, params, request }) => {
     const form = await request.formData();
     const scopeType = String(form.get("scope_type") ?? "project");
     const expiresRaw = String(form.get("expires_at") ?? "").trim();
@@ -74,39 +89,20 @@ export const actions: Actions = {
     }
 
     try {
-      await fixtureApi.createGrant({
-        identity_id: parsed.data.identity_id,
-        role: parsed.data.role,
-        scope_type: parsed.data.scope_type,
-        ...("project" in parsed.data ? { project: parsed.data.project } : {}),
-        ...("environment" in parsed.data ? { environment: parsed.data.environment } : {}),
-        expires_at: parsed.data.expires_at,
-      });
+      await createGrant(locals.ctx, parsed.data);
       return { action: "createGrant" as const, ok: true };
     } catch (cause) {
-      if (cause instanceof ApiError) {
-        return fail(cause.status || 500, {
-          action: "createGrant" as const,
-          errors: { form: cause.hint ? `${cause.message} ${cause.hint}` : cause.message },
-        });
-      }
-      throw cause;
+      return refuseAction("createGrant" as const, locals.ctx, cause);
     }
   },
 
-  revokeGrant: async ({ request }) => {
+  revokeGrant: async ({ locals, request }) => {
     const form = await request.formData();
     try {
-      await fixtureApi.revokeGrant(String(form.get("grant_id") ?? ""));
+      await revokeGrant(locals.ctx, String(form.get("grant_id") ?? ""));
       return { action: "revokeGrant" as const, ok: true };
     } catch (cause) {
-      if (cause instanceof ApiError) {
-        return fail(cause.status || 500, {
-          action: "revokeGrant" as const,
-          errors: { form: cause.hint ? `${cause.message} ${cause.hint}` : cause.message },
-        });
-      }
-      throw cause;
+      return refuseAction("revokeGrant" as const, locals.ctx, cause);
     }
   },
 };

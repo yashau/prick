@@ -18,6 +18,14 @@
     { value: 'system', label: 'System', icon: MonitorIcon }
   ] as const;
 
+  /**
+   * The PREFERENCE, not the resolved mode -- so "System" is the row that shows
+   * as selected for a user who chose it, rather than whichever of light/dark
+   * their OS happens to be reporting. The trigger icon reflects the resolved
+   * mode instead (it keys off the `dark` class), which is the right split: the
+   * menu answers "what did I choose" and the button answers "what am I
+   * looking at".
+   */
   const current = $derived(userPrefersMode.current);
 </script>
 
@@ -37,16 +45,26 @@
   <DropdownMenu.Content align="end">
     <DropdownMenu.Group>
       <DropdownMenu.GroupHeading>Theme</DropdownMenu.GroupHeading>
-      {#each options as option (option.value)}
-        {@const Icon = option.icon}
-        <DropdownMenu.CheckboxItem
-          checked={current === option.value}
-          onCheckedChange={() => setMode(option.value)}
-        >
-          <Icon class="mr-2 size-4" aria-hidden="true" />
-          {option.label}
-        </DropdownMenu.CheckboxItem>
-      {/each}
+      <!--
+        A RADIO group, not three checkboxes. The three options are mutually
+        exclusive, and `menuitemcheckbox` announces each one as an independent
+        on/off — so a screen reader user hears "Light, not checked. Dark,
+        checked. System, not checked." as three unrelated facts rather than one
+        choice with three positions. `menuitemradio` is the same click and the
+        correct sentence.
+      -->
+      <DropdownMenu.RadioGroup
+        value={current}
+        onValueChange={(value) => setMode(value as (typeof options)[number]['value'])}
+      >
+        {#each options as option (option.value)}
+          {@const Icon = option.icon}
+          <DropdownMenu.RadioItem value={option.value}>
+            <Icon class="mr-2 size-4" aria-hidden="true" />
+            {option.label}
+          </DropdownMenu.RadioItem>
+        {/each}
+      </DropdownMenu.RadioGroup>
     </DropdownMenu.Group>
   </DropdownMenu.Content>
 </DropdownMenu.Root>

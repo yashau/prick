@@ -1,10 +1,19 @@
 import { CreateGrantBody } from "@prick/shared";
 import { fail } from "@sveltejs/kit";
 
-import { ApiError } from "$lib/client/errors";
-import { fixtureApi, fixtureResolveIdentity } from "$lib/client/fixtures";
 import { fieldErrors } from "$lib/client/forms";
+import {
+  createGrant,
+  listGrants,
+  listIdentities,
+  listProjects,
+  listUnknownIdentities,
+  revokeGrant,
+  updateIdentity,
+  type IdentityRecord,
+} from "$lib/server/core";
 
+import { refuse, refuseAction } from "../transport";
 import type { Actions, PageServerLoad } from "./$types";
 
 /**
@@ -12,18 +21,25 @@ import type { Actions, PageServerLoad } from "./$types";
  *
  * SERVER-RENDERED. Subjects, roles and scopes -- no values anywhere.
  *
- * FIXTURE SEAM -- becomes `core.listIdentities(ctx)`, `core.listGrants(ctx)`
- * and `core.listUnknownIdentities(ctx)`, all IN-PROCESS.
+ * All four calls are IN-PROCESS and share one `CoreContext`. Each gates on
+ * admin-at-any-scope and then narrows PER ROW to what this actor administers,
+ * so a project admin sees their project's access graph and not the
+ * organisation's. That narrowing is `core`'s, not this load's: filtering here
+ * would be a second authorization decision written in a transport.
  */
-export const load: PageServerLoad = async () => {
-  const [identities, grants, unknown, projects] = await Promise.all([
-    fixtureApi.listIdentities(),
-    fixtureApi.listGrants(),
-    fixtureApi.listUnknownIdentities(),
-    fixtureApi.listProjects(),
-  ]);
+export const load: PageServerLoad = async ({ locals }) => {
+  try {
+    const [identities, grants, unknown, projects] = await Promise.all([
+      listIdentities(locals.ctx),
+      listGrants(locals.ctx),
+      listUnknownIdentities(locals.ctx),
+      listProjects(locals.ctx),
+    ]);
 
-  return { identities, grants, unknown, projects };
+    return { identities, grants, unknown, projects };
+  } catch (cause) {
+    refuse(locals.ctx, cause);
+  }
 };
 
 /**
@@ -61,18 +77,41 @@ function grantBodyFrom(form: FormData) {
   return { ...base, scope_type: "global" };
 }
 
+/**
+ * Turn a SUBJECT into the `identity_id` a grant needs.
+ *
+ * The "seen but not granted" flow posts a subject, because a service token's
+ * `common_name` is the only handle an operator can see and asking them to
+ * transcribe an opaque hex string into an id field is how the wrong token gets
+ * granted. That list is read out of the AUDIT LOG, which records subjects
+ * rather than identity rows, so the pairing has to happen somewhere.
+ *
+ * It happens against `listIdentities`, which is exactly the join the API
+ * documents for this ("match it to `GET /identities` on `subject`"), and it
+ * always finds a row: every authenticated request upserts its subject's
+ * identity before anything else touches the database, so a subject that was
+ * denied has been recorded by definition.
+ *
+ * It deliberately does NOT create one. An id that resolves to nothing is a
+ * `NOT_FOUND` from `createGrant` -- the honest answer -- whereas inventing a
+ * row here would let a typo in a posted subject manufacture an identity that
+ * has never authenticated and then grant it access.
+ */
+function identityIdFor(identities: readonly IdentityRecord[], subject: string): string {
+  return identities.find((identity) => identity.subject === subject)?.id ?? "";
+}
+
 export const actions: Actions = {
-  createGrant: async ({ request }) => {
+  createGrant: async ({ locals, request }) => {
     const form = await request.formData();
 
-    // The "seen but not granted" flow posts a SUBJECT: a service token's
-    // `common_name` is the only handle an operator can see, and asking them to
-    // transcribe an opaque hex string into an id field is how the wrong token
-    // gets granted.
     const subject = String(form.get("subject") ?? "").trim();
     if (subject !== "" && String(form.get("identity_id") ?? "") === "") {
-      const kind = String(form.get("kind") ?? "service") === "user" ? "user" : "service";
-      form.set("identity_id", fixtureResolveIdentity(subject, kind));
+      try {
+        form.set("identity_id", identityIdFor(await listIdentities(locals.ctx), subject));
+      } catch (cause) {
+        return refuseAction("createGrant" as const, locals.ctx, cause);
+      }
     }
 
     const parsed = CreateGrantBody.safeParse(grantBodyFrom(form));
@@ -84,65 +123,38 @@ export const actions: Actions = {
     }
 
     try {
-      await fixtureApi.createGrant({
-        identity_id: parsed.data.identity_id,
-        role: parsed.data.role,
-        scope_type: parsed.data.scope_type,
-        ...("project" in parsed.data ? { project: parsed.data.project } : {}),
-        ...("environment" in parsed.data ? { environment: parsed.data.environment } : {}),
-        expires_at: parsed.data.expires_at,
-      });
+      await createGrant(locals.ctx, parsed.data);
       return { action: "createGrant" as const, ok: true };
     } catch (cause) {
-      if (cause instanceof ApiError) {
-        return fail(cause.status || 500, {
-          action: "createGrant" as const,
-          errors: { form: cause.hint ? `${cause.message} ${cause.hint}` : cause.message },
-          requestId: cause.requestId,
-        });
-      }
-      throw cause;
+      return refuseAction("createGrant" as const, locals.ctx, cause);
     }
   },
 
-  revokeGrant: async ({ request }) => {
+  revokeGrant: async ({ locals, request }) => {
     const form = await request.formData();
 
     try {
-      await fixtureApi.revokeGrant(String(form.get("grant_id") ?? ""));
+      await revokeGrant(locals.ctx, String(form.get("grant_id") ?? ""));
       return { action: "revokeGrant" as const, ok: true };
     } catch (cause) {
-      if (cause instanceof ApiError) {
-        // LAST_ADMIN is the one refusal here that must be readable rather than
-        // generic: removing the final global admin while BOOTSTRAP_ADMINS is
-        // empty locks everyone out permanently, by design.
-        return fail(cause.status || 500, {
-          action: "revokeGrant" as const,
-          errors: { form: cause.hint ? `${cause.message} ${cause.hint}` : cause.message },
-          requestId: cause.requestId,
-        });
-      }
-      throw cause;
+      // LAST_ADMIN is the one refusal here that must be readable rather than
+      // generic: removing the final global admin while BOOTSTRAP_ADMINS is
+      // empty locks everyone out permanently, by design. `refuseAction` appends
+      // the hint for exactly this reason.
+      return refuseAction("revokeGrant" as const, locals.ctx, cause);
     }
   },
 
-  updateIdentity: async ({ request }) => {
+  updateIdentity: async ({ locals, request }) => {
     const form = await request.formData();
 
     try {
-      await fixtureApi.updateIdentity(String(form.get("identity_id") ?? ""), {
+      await updateIdentity(locals.ctx, String(form.get("identity_id") ?? ""), {
         disabled: form.get("disabled") === "true",
       });
       return { action: "updateIdentity" as const, ok: true };
     } catch (cause) {
-      if (cause instanceof ApiError) {
-        return fail(cause.status || 500, {
-          action: "updateIdentity" as const,
-          errors: { form: cause.message },
-          requestId: cause.requestId,
-        });
-      }
-      throw cause;
+      return refuseAction("updateIdentity" as const, locals.ctx, cause);
     }
   },
 };
