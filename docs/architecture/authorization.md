@@ -8,8 +8,8 @@ sidebar:
 Authentication answers "who is this". Authorization answers "may they do this".
 Cloudflare Access owns the first; prick owns the second, from its own tables.
 
-Source: `packages/app/src/lib/server/auth/`. This layer is implemented and tested.
-The routes that would call it are not mounted yet.
+Source: `packages/app/src/lib/server/auth/`. This layer is implemented and tested,
+and every route on the API enters through it.
 
 ## From token to actor
 
@@ -40,11 +40,38 @@ that explains nothing. That is an explicit negative test, not a footnote.
 
 ## Resolution
 
-The actor's identity row and every grant attached to it are loaded in **one
-query**, a left join, so that an identity with no grants still produces a
-snapshot. That case is the normal one for a service token pointed at the Worker
-for the first time, and it has to produce a snapshot so the denial can be audited
-and the subject can appear in the "seen but not granted" list.
+The actor's identity row, every grant attached to it, and every grant held by a
+group it belongs to are loaded in **one query**. The direct half is a left join, so
+that an identity with no grants still produces a snapshot: that case is the normal
+one for a service token pointed at the Worker for the first time, and it has to
+produce a snapshot so the denial can be audited and the subject can appear in the
+"seen but not granted" list. The group half uses **inner** joins, because a group
+with no grants must contribute nothing — membership is a list, not a permission,
+and an inner join is how that is said in SQL rather than in a conditional somebody
+could later "simplify".
+
+### Why the group half is a `UNION ALL` and not two more joins
+
+Hanging `LEFT JOIN group_members LEFT JOIN group_grants` off the same row source
+would also be one round trip and would also be correct — maximum over roles is
+idempotent, so duplicates change nothing. What it would not be is **bounded**: the
+join produces the cross product of the two branches, so an identity with 12 direct
+grants in 4 groups holding 9 grants each returns 432 rows to compute a handful of
+roles from. That cost grows multiplicatively with something operators are
+encouraged to do more of.
+
+`UNION ALL` returns `direct + group` rows instead of `direct × group`, and it is
+still exactly one prepared statement — which the authorization suite asserts by
+counting `prepare()` calls through a binding proxy, the same way the write path
+asserts that a bulk write is one `batch()`. **Adding groups did not add a query.**
+
+The three role maps in the snapshot are the maximum over the identity's own grants
+and its groups', merged before the snapshot type exists. That is deliberate rather
+than lazy: nothing downstream — `resolveEffectiveRole`, the visible-project query,
+the audit view — should have to remember "and also check the groups", because the
+one that forgets is the one that becomes a privilege bug. Provenance is a separate
+question with its own query behind it, asked only by the screen that exists to
+answer it (`GET /identities/{id}/effective-permissions`).
 
 The snapshot is memoised per request in a `WeakMap` keyed by the context object —
 not stored as a field on the context, so it cannot outlive the request and cannot
@@ -58,14 +85,21 @@ hundred.
 ### The algorithm
 
 1. If the identity is **disabled**, resolve to nothing. Full stop.
-2. Compute the effective global role: the maximum of any global grant and, if the
-   subject is named in `BOOTSTRAP_ADMINS`, `admin`.
+2. Compute the effective global role: the maximum of any global grant — the
+   identity's own or one held by a group it is in — and, if the subject is named
+   in `BOOTSTRAP_ADMINS`, `admin`.
 3. For a project scope, take the maximum of the global role and any grant on that
    project.
 4. For an environment scope, take the maximum of the global role, any grant on
    the environment's project, and any grant on the environment itself.
 
 Grants inherit **downwards only**. An environment admin is not a project admin.
+
+Group grants are **purely additive**: they enter the same maximum as everything
+else, so a group can only ever raise a role and never lower one. There is no deny
+variant. A deny rule that silently overrode an explicit grant would make the access
+graph unreadable in exactly the situation — an incident, at 3am — where somebody
+has to be able to read it. Removal is what revocation is for.
 
 Expiry is compared against the request's injected clock rather than
 `Date.now()`, so a grant cannot be live for one check and expired for the next
@@ -89,6 +123,12 @@ system, and it reads as an optimisation on the way in.
 
 `assertCan` writes an audit row with `outcome: 'denied'` **before** it throws.
 The action is recorded as `authz.<scope-type>.<required-role>`.
+
+One other path writes a denial: the audit log's own `?project=` filter, when the
+slug names a project the caller may not audit. That row is recorded as
+`access.denied`. Both carry `outcome: 'denied'`, which is what
+`GET /access/unknown-identities` reads, so filtering on the outcome rather than on
+the action is the reliable way to find refusals.
 
 That is what populates the "seen but not granted" screen, and it is the only way
 an operator ever learns that a particular service token exists — `common_name` is
@@ -162,6 +202,24 @@ kill switch worthless exactly when it is being used in anger.
 
 Recovery from disabling your only bootstrap admin is a `wrangler d1 execute`,
 which is available to the same person who can edit the var.
+
+## Groups split two capabilities that look like one
+
+Curating a group's **membership** requires global admin. Deciding what a group may
+do **at a scope** requires admin at that scope, resolved by the same code as
+granting an identity.
+
+That split is the whole security argument for the feature. Suppose `platform`
+holds admin on `payments` and on `billing`. The admin of `billing` may grant to
+`platform` — their scope, their decision. If they could also edit its membership
+they could add **themselves**, and walk out with admin on `payments`, a project
+they have nothing to do with, without anybody granting them anything. The two
+capabilities are individually reasonable and jointly a way to grant yourself
+access.
+
+Granting to a group you are already in is not an escalation, because the role you
+can confer is bounded by the role you already hold at that scope. Adding somebody
+_else_ is the operation that widens reach, and that one is global-admin only.
 
 ## Next
 

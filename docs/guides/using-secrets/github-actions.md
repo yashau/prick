@@ -10,10 +10,11 @@ CI authenticates with an Access **service token**, not with `prk login`. Read
 [Authentication](/guides/authentication#setting-up-a-service-token-for-ci) first.
 :::
 
-:::caution[Not implemented]
-The CLI is not published and the commands below exit with `NOT_IMPLEMENTED`.
-There is no `prick` GitHub Action; one is planned as a separate repository and
-does not exist yet. Do not write a workflow that depends on either today.
+:::caution[Nothing here can run until a release is cut]
+Both routes below install `@yashau/prick` from npm, and no release has been cut,
+so the package does not exist yet. The action is real — it lives in this
+repository at `action/`, with its own test suite (`mise run test:action`) — but it
+installs the published CLI, so it cannot work before the first release either.
 :::
 
 ## Two secrets in GitHub, none in the workflow
@@ -21,12 +22,63 @@ does not exist yet. Do not write a workflow that depends on either today.
 The only thing your repository stores is the service token. Everything else lives
 in prick.
 
-1. Create a service token under **Zero Trust → Access → Service Auth**.
-2. Add it to the Access policy for your prick hostname.
+1. Create a service token under **Zero Trust → Access → Service auth → Service
+   Tokens**. The client secret is shown once; the client id ends in `.access`.
+2. Add it to the Access policy for your prick hostname — an **include** rule of
+   type **Service Auth**, with the policy's action set to **Service Auth** rather
+   than Allow. A policy listing only human identities rejects the token at the
+   edge, before prick ever sees the request.
 3. Store the pair as GitHub Actions secrets, e.g. `PRICK_CLIENT_ID` and
    `PRICK_CLIENT_SECRET`.
 
-## The workflow
+## The action
+
+```yaml title=".github/workflows/deploy.yml"
+- uses: yashau/prick/action@v2026.815.0
+  with:
+    url: ${{ secrets.PRICK_URL }}
+    client-id: ${{ secrets.PRICK_CLIENT_ID }}
+    client-secret: ${{ secrets.PRICK_CLIENT_SECRET }}
+    project: api
+    environment: production
+
+- run: ./deploy.sh # DATABASE_URL, STRIPE_SECRET_KEY, … are all just there
+```
+
+| Input                | Required | Default              | Meaning                                                                              |
+| -------------------- | -------- | -------------------- | ------------------------------------------------------------------------------------ |
+| `url`                | yes      | —                    | Base URL of the server. Must be `https`: the service token is a request header       |
+| `client-id`          | yes      | —                    | Access service token client id, the one ending in `.access`                          |
+| `client-secret`      | yes      | —                    | Access service token client secret                                                   |
+| `project`            | yes      | —                    | Project to read. Matched exactly, case-sensitively                                   |
+| `environment`        | no       | `production`         | Environment to read. Matched exactly, case-sensitively                               |
+| `keys`               | no       | _(all)_              | Allowlist of secret names, newline- or comma-separated                               |
+| `prefix`             | no       | _(none)_             | Prepended to every variable name, e.g. `APP_`                                        |
+| `export-to`          | no       | `env`                | `env` appends to `$GITHUB_ENV`; `outputs` sets one JSON output. Prefer `env`         |
+| `version`            | no       | _(the action's ref)_ | Version of `@yashau/prick` to install                                                |
+| `mask`               | no       | `true`               | Register values with the log masker. **Setting this to `false` prints your secrets** |
+| `allow-unsafe-names` | no       | `false`              | Permit `PATH`, `NODE_OPTIONS`, `LD_*`, `GITHUB_*` and friends                        |
+
+Two outputs: `keys`, the newline-separated variable names that were injected after
+any prefix — names only, so it is safe to print — and `secrets`, a JSON object set
+only under `export-to: outputs`.
+
+Naming `keys` is worth doing. A job that asks for two variables cannot leak the
+other thirty, and a name that is **not** in the environment fails the step rather
+than starting the job without it.
+
+`allow-unsafe-names` defaults to `false` for the same reason `prk run` refuses
+those names, only more so: a value written to `$GITHUB_ENV` applies to every later
+step in the job, so a secret store that can set `PATH` controls the whole job.
+
+It is a **composite** action rather than a bundled JavaScript one. A JavaScript
+action has to commit its own `dist/` — a build artefact no reviewer reads and that
+nothing can prove was built from the sources beside it. For the thing holding
+access to every secret in an environment, that is exactly the wrong shape. The
+`version` input defaults to the action's own ref when that ref is a release tag, so
+the action and the CLI cannot drift.
+
+## Or drive the CLI yourself
 
 ```yaml title=".github/workflows/deploy.yml"
 name: Deploy

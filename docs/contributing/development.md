@@ -47,11 +47,17 @@ miniflare.
 
 ```
 crates/     Rust workspace. The binary is `prk`.
-packages/   pnpm workspace. Worker + SvelteKit UI + shared schemas.
+packages/   pnpm workspace: app, shared, docs, mcp, npm/prick.
+action/     The composite GitHub Action.
 scripts/    Node ESM helpers. Not bash — they must run on Windows.
 xtask/      Completion and man page generation.
 e2e/        Playwright.
 ```
+
+`packages/docs` is a renderer, not a copy of the documentation: the Markdown it
+builds lives in the repository-root `docs/` directory and is read **in place** by
+Astro's content loader. There is deliberately no symlink and no prebuild copy step,
+so "the docs" has exactly one meaning.
 
 The two workspaces never overlap: Cargo members are `crates/*`, pnpm packages are
 `packages/*`.
@@ -63,18 +69,21 @@ for a Windows contributor. Node is guaranteed present because mise installed it.
 
 `mise tasks` lists everything. The ones you will use:
 
-| Task                 | Does                                                               |
-| -------------------- | ------------------------------------------------------------------ |
-| `mise run dev`       | Worker + UI dev server                                             |
-| `mise run fmt`       | Format everything in place                                         |
-| `mise run lint`      | clippy, `vp lint`, svelte-check, actionlint, zizmor, pinact, typos |
-| `mise run typecheck` | TypeScript across the workspace                                    |
-| `mise run test`      | Rust, doc, Worker and script test suites                           |
-| `mise run miri`      | The purity proof for `prick-core`                                  |
-| `mise run e2e`       | Playwright                                                         |
-| `mise run build`     | CLI and Worker bundle                                              |
-| `mise run deny`      | Licences, bans, advisories, the git-source ban                     |
-| `mise run ci`        | **Exact mirror of CI.** Run before opening a pull request          |
+| Task                     | Does                                                                          |
+| ------------------------ | ----------------------------------------------------------------------------- |
+| `mise run dev`           | Worker + UI dev server                                                        |
+| `mise run fmt`           | Format everything in place                                                    |
+| `mise run lint`          | clippy, `vp lint`, svelte-check, actionlint, zizmor, pinact, typos, file size |
+| `mise run typecheck`     | TypeScript across the workspace                                               |
+| `mise run test`          | Rust, doc, Worker, script, action and MCP suites                              |
+| `mise run openapi`       | Regenerate `docs/openapi.json` from the Hono router                           |
+| `mise run openapi:check` | Fail if `docs/openapi.json` is stale                                          |
+| `mise run miri`          | The purity proof for `prick-core`                                             |
+| `mise run e2e`           | Playwright                                                                    |
+| `mise run build`         | CLI and Worker bundle                                                         |
+| `mise run docs:dev`      | The documentation site, with hot reload                                       |
+| `mise run deny`          | Licences, bans, advisories, the git-source ban                                |
+| `mise run ci`            | **Exact mirror of CI.** Run before opening a pull request                     |
 
 `depends` fans out in parallel, and `sources`/`outputs` give content-hash
 skipping, so a repeat run is cheap.
@@ -120,8 +129,15 @@ call, or a dependency with a C shim. Impure code belongs in `prick-api`,
 ### Deployment guard
 
 `workers_dev` and `preview_urls` must be explicitly `false` in the wrangler
-config. CI greps the resolved configuration and blocks the deploy workflow
-otherwise.
+config. The `guard` job in `.github/workflows/deploy.yml` greps for both and
+blocks the preview and production jobs otherwise. It needs no secrets.
+
+:::caution[It only runs on a deploy]
+`deploy.yml` is `workflow_dispatch` only, and `ci.yml` does not run the guard
+independently today. So the assertion fires when somebody deploys, not on every
+push. Do not rely on a green pull request to tell you those two settings are still
+`false`.
+:::
 
 ## Rules you have to hold yourself
 

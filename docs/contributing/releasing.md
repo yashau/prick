@@ -28,7 +28,16 @@ neither runs on a push to `main`.
 The two prefixes count `N` independently, so cutting docs three times in a day
 does not make the next CLI release `.3`. `v*` and `docs-v*` cannot cross: a tag
 glob is anchored at the start of the ref name, and `docs-v2026.815.0` does not
-begin with `v`.
+begin with `v`. That is asserted in `scripts/version.test.mjs` rather than
+assumed.
+
+The ten npm packages are the eight per-platform binaries, the `@yashau/prick`
+launcher, and the MCP server — all at the same version, all cut by the same tag.
+
+:::note[`release:*` was renamed to `cli:*`]
+"Release" stopped having an unambiguous subject once the documentation site had a
+release line of its own. `mise tasks` lists the current names.
+:::
 
 ## Versioning
 
@@ -282,28 +291,47 @@ After that no token exists to leak, and provenance is automatic — drop
 
 ## Deploying the Worker
 
-Deployment is a separate workflow from the release, and it is not tied to a
-version.
+`deploy.yml` is a separate workflow from the release, is not tied to a version,
+and is **manual only**.
 
-| Event                                 | What happens                                              |
-| ------------------------------------- | --------------------------------------------------------- |
-| Push to `main`                        | Guard, migrations, production deploy                      |
-| Pull request from the same repository | Guard, migrations, `versions upload` with a preview alias |
-| Pull request from a fork              | Guard only                                                |
+```yaml
+on:
+  workflow_dispatch:
+    inputs:
+      environment: # production | preview, default preview
+```
 
-The **guard** job runs for every event, needs no secrets, and blocks both deploy
-jobs. It asserts that `workers_dev` and `preview_urls` are explicitly `false` in
-the wrangler config. A hostname Access is not attached to is a complete bypass of
-the authentication model, so it is checked mechanically before anything reaches
-Cloudflare.
+There is no push trigger and no pull-request trigger. That is deliberate, and it
+follows from what prick is: **self-hosted**. What matters is that a reader's own
+`wrangler deploy` works, not that this repository keeps an instance running. An
+automatic production deploy would gate every merge on Cloudflare credentials the
+project does not need, and would make a red X on `main` mean "the maintainer's
+instance is unhappy" rather than "the code is broken".
+
+Preview is dispatch-only for a second, sharper reason: doing it on pull requests
+safely would mean `pull_request_target`, which runs with full access to secrets
+while checking out attacker-controlled code. There is no version of that which is
+safe here, so the feature is absent rather than guarded. A dispatched preview uses
+the commit SHA as its alias, which is the only identifier a manual run has.
+
+| Job          | Runs when                        | Does                                                     |
+| ------------ | -------------------------------- | -------------------------------------------------------- |
+| `guard`      | Always, and blocks the other two | Asserts `workers_dev: false` and `preview_urls: false`   |
+| `preview`    | `environment == 'preview'`       | Migrations, then `versions upload --preview-alias sha-…` |
+| `production` | `environment == 'production'`    | Migrations, then `wrangler deploy`                       |
+
+The **guard** needs no secrets. A hostname Access is not attached to is a complete
+bypass of the authentication model, so it is checked mechanically before anything
+reaches Cloudflare — and because it is the part worth running on every change, CI
+runs it independently, with no secrets and no dispatch.
 
 Migrations run **before** the deploy in both jobs, which is what makes "old code,
 new schema" the only state that exists in the window between the two steps. That
-is also why the migration policy is expand/contract only.
+is also why the migration policy is expand/contract only. A preview version shares
+the production database, so the ordering matters there too.
 
-Production deploys serialise and are never cancelled: interrupting one between
-`d1 migrations apply` and `deploy` leaves the schema ahead of the code. Preview
-deploys may supersede each other freely.
+Deploys serialise per environment and are **never cancelled**: interrupting one
+between `d1 migrations apply` and `deploy` leaves the schema ahead of the code.
 
 Toolchain caching is disabled entirely in the deploy workflow, in **both**
 directions. Disabling only the save would still let a lower-privilege workflow

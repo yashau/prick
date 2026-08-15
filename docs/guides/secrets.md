@@ -10,14 +10,6 @@ Every command here needs an authenticated machine. Start with
 [Authentication](/guides/authentication).
 :::
 
-:::caution[Not implemented]
-The secrets domain layer is a set of stubs
-(`packages/app/src/lib/server/core/secrets.ts` — every function throws
-`NOT_IMPLEMENTED`), no secrets route is mounted, and the CLI commands are
-argument definitions only. The interface below is fixed and the constraints are
-real; the behaviour is not there yet.
-:::
-
 Every command on this page operates on one environment, so it needs a project
 and an environment. Give them as flags or as `PRK_PROJECT` / `PRK_ENV`.
 

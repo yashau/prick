@@ -14,7 +14,7 @@ process at runtime — portably, and without ever touching disk.
   our own invention.
 
 ```bash
-npm install -g @yashau/prick     # or grab a binary from Releases
+npm install -g @yashau/prick     # once a release is cut; until then: mise run build:rust
 
 prk login https://secrets.example.com
 prk secrets set DATABASE_URL --project api --env production   # prompts, masked
@@ -51,12 +51,26 @@ A few decisions worth knowing before you adopt it:
 - **Nothing mutates without an audit row**, because the audit insert is the last statement _inside_
   the same transaction. If the audit write fails, the data write fails.
 - **`MASTER_KEY` is the whole ballgame.** Lose it and the data is unrecoverable; a D1 export without
-  it is just ciphertext. Rotation is supported and incremental — the UI tells you when it is safe to
-  drop the retired key.
+  it is just ciphertext. Rotation is designed to be incremental, with the UI computing when it is
+  safe to drop the retired key — but the job that does the re-encryption is **not implemented yet**,
+  so a rotation cannot currently be finished.
 
 ## Status
 
-Early. The architecture is settled and documented; the implementation is in progress.
+Not production ready, but no longer a skeleton. The crypto, the Access
+verification and the authorization layer are implemented and tested; the domain
+layer — projects, environments, secrets, identities, grants, groups and the audit
+query — is written, and the whole HTTP API is mounted on top of it. `prk` logs in,
+stores its token, sends service-token headers and runs every subcommand.
+
+Two things are still missing, and the documentation says so where it matters:
+
+- **The rekey job.** `GET /api/v1/admin/keyring` and `POST /api/v1/admin/rekey`
+  are mounted but answer `501`, so a rotation can be started and not finished.
+- **The web UI's data.** Every screen exists, but its server loads still read
+  fixture data rather than the domain layer.
+
+No release has been cut, so nothing is published to npm yet.
 
 ## Development
 

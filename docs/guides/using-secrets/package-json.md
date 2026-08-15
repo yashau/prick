@@ -10,11 +10,6 @@ Every command here needs an authenticated machine. Start with
 [Authentication](/guides/authentication).
 :::
 
-:::caution[Not implemented]
-`prk run` is an argument definition in this build. The patterns below are the
-intended usage.
-:::
-
 ## Wrap the command, not the script
 
 The simplest arrangement leaves `package.json` alone:

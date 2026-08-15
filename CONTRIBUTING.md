@@ -27,24 +27,35 @@ No Cloudflare account is needed for local development — the Worker runs agains
 
 ```
 crates/     Rust workspace. Binary is `prk`.
-packages/   pnpm workspace. Worker + SvelteKit UI.
+packages/   pnpm workspace: app (Worker + UI), shared, docs, mcp, npm/prick.
+action/     The composite GitHub Action.
 scripts/    Node ESM helpers (not bash — they must run on Windows).
+e2e/        Playwright.
+xtask/      Shell completions and man page generation.
 ```
 
 The two workspaces never overlap: Cargo members are `crates/*`, pnpm packages are `packages/*`.
+
+The documentation Markdown lives at the repository root in `docs/` and is read **in place** by
+`packages/docs`. There is no copy step and no symlink, so "the docs" has exactly one meaning.
 
 ## 3. Everyday commands
 
 `mise tasks` lists everything. The ones you will use:
 
-| Task            | Does                                             |
-| --------------- | ------------------------------------------------ |
-| `mise run dev`  | Worker + UI dev server                           |
-| `mise run test` | Rust + Worker tests                              |
-| `mise run lint` | clippy, oxlint, svelte-check, actionlint, typos  |
-| `mise run fmt`  | format everything in place                       |
-| `mise run e2e`  | Playwright                                       |
-| `mise run ci`   | **exact mirror of CI** — run before opening a PR |
+| Task                     | Does                                                                          |
+| ------------------------ | ----------------------------------------------------------------------------- |
+| `mise run dev`           | Worker + UI dev server                                                        |
+| `mise run test`          | Rust, doc, Worker, script, action and MCP suites                              |
+| `mise run lint`          | clippy, `vp lint`, svelte-check, actionlint, zizmor, pinact, typos, file size |
+| `mise run fmt`           | format everything in place                                                    |
+| `mise run openapi:check` | fail if `docs/openapi.json` is stale                                          |
+| `mise run docs:dev`      | the documentation site, with hot reload                                       |
+| `mise run e2e`           | Playwright                                                                    |
+| `mise run ci`            | **exact mirror of CI** — run before opening a PR                              |
+
+`docs/openapi.json` is generated from the Hono router by `mise run openapi`. Never hand-edit it; if
+you changed a route, regenerate it in the same commit.
 
 ## 4. Code style
 
@@ -63,13 +74,15 @@ build on any hit.
 
 ## 5. Testing
 
-- **Rust** — `cargo-nextest`. Pure logic lives in `prick-core`.
+- **Rust** — `cargo-nextest`. Pure logic lives in `prick-core`. Doc tests need their own pass
+  (`test:doc`) because nextest cannot run them.
 - **miri** — runs against `prick-core` only. It cannot execute network calls, `Command`/`exec`, or
   FFI, so most of the CLI is out of reach. Its job here is _enforcement, not discovery_: a green miri
   run is a machine-checked proof that `prick-core` is genuinely pure — it cannot pass if someone adds
   a file read, a clock call, or an FFI dependency. Keep it that way.
 - **Worker** — vitest with `@cloudflare/vitest-pool-workers`, against real D1 in miniflare, offline.
-- **E2E** — Playwright against a locally built Worker.
+- **E2E** — Playwright against a locally built Worker, with its own Access harness.
+- **Scripts, the action and the MCP server** — `node:test`. They run under plain Node, not workerd.
 
 If you add `unsafe`, it belongs in `prick-exec`, it needs a `// SAFETY:` comment, and it needs
 integration tests — miri cannot check it.

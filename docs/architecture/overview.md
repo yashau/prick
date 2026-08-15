@@ -56,19 +56,28 @@ crates/
 packages/
   app/          THE deployed Worker: Hono API + SvelteKit UI
   shared/       zod schemas shared by the Worker and the UI
+  docs/         Astro + Starlight renderer for the root docs/ Markdown
+  mcp/          the MCP server, published alongside the CLI
   npm/prick/    the published @yashau/prick launcher
+action/         the composite GitHub Action
 scripts/        Node ESM helpers (version stamping, npm assembly, release)
 e2e/            Playwright
 xtask/          shell completions and man page generation
 ```
+
+The documentation site is a **separate Worker** from the application: public, no
+secrets, no access control. That is why a typo in a Markdown file cannot trigger a
+production deploy of the secrets manager, and a schema migration cannot be blocked
+behind a docs build.
 
 Cargo members are `crates/*`; pnpm packages are `packages/*`. Neither glob
 crosses.
 
 ## Data model
 
-Eight tables: `projects`, `environments`, `secrets`, `secret_versions`,
-`identities`, `grants`, `audit_log`, `keyring_state`.
+Eleven tables: `projects`, `environments`, `secrets`, `secret_versions`,
+`identities`, `grants`, `groups`, `group_members`, `group_grants`, `audit_log`,
+`keyring_state`.
 
 Conventions that hold throughout `packages/app/src/lib/server/db/schema.ts`:
 
@@ -98,7 +107,8 @@ index over `(identity_id, scope_type, project_id, environment_id)`. SQLite
 follows the standard in treating `NULL`s as distinct for uniqueness, so in a
 composite index two global grants — both `(id, 'global', NULL, NULL)` — would not
 collide. The constraint would look correct, pass every casual test, and silently
-permit unlimited duplicate global admin grants.
+permit unlimited duplicate global admin grants. `group_grants` carries the same
+shape, keyed on the group rather than the identity.
 
 **There is no foreign key on `secret_versions.key`.** History is keyed by
 `(environment_id, key)` rather than by `secrets.id`, so deleting a key and
@@ -163,25 +173,39 @@ a primary key violation that aborts the whole batch, when it does not. Mapped to
 Screens with no secret values in them — projects, environments, access, audit —
 use server-side rendering and server loads.
 
-The **secrets subtree only** sets `ssr = false`. It is client-rendered, and
+The **secrets subtree only** sets `ssr = false`
+(`src/routes/(app)/p/[project]/[env]/+layout.ts`). It is client-rendered, and
 values are fetched from `/api/v1` in the browser. No server render means no
 serialised page payload, which means there is nothing there to leak. Form actions
 are used for projects, environments and grants only, never for anything that
 returns a value, because SvelteKit serialises an action's return into page data.
 
-This is enforced by a build-time check rather than by convention.
+:::caution[That rule is convention today]
+The intent is a build-time grep over every `+*.server.ts` for
+`revealSecret|exportSecrets|decrypt`. **No such check exists yet** — neither in
+`.github/workflows/ci.yml` nor in the Worker test suite. Until it lands, the rule
+holds because people hold it.
+:::
+
+:::caution[The UI reads fixture data]
+Every screen exists and renders, but each server load calls `fixtureApi` from
+`src/lib/client/fixtures.ts` rather than the domain layer. Each one carries a
+`FIXTURE SEAM` comment naming the `core` call that replaces it — in-process, never
+`event.fetch('/api/v1/…')`, because that hop cannot forward
+`CF-Access-JWT-Assertion` and would re-solve authorization a second, worse time.
+:::
 
 ## Status
 
-| Layer                                           | State                              |
-| ----------------------------------------------- | ---------------------------------- |
-| Crypto (`crypto/`)                              | Implemented                        |
-| Access verification and authorization (`auth/`) | Implemented                        |
-| Projects, environments, audit helpers (`core/`) | Implemented                        |
-| Secrets, identities, keyring (`core/`)          | Stubs that throw `NOT_IMPLEMENTED` |
-| Hono routes                                     | `GET /api/v1/health` only          |
-| SvelteKit UI                                    | Route skeleton                     |
-| CLI                                             | `version` and `completions` only   |
+| Layer                                                                | State                                              |
+| -------------------------------------------------------------------- | -------------------------------------------------- |
+| Crypto (`crypto/`)                                                   | Implemented                                        |
+| Access verification and authorization, incl. groups (`auth/`)        | Implemented                                        |
+| Projects, environments, secrets, identities, groups, audit (`core/`) | Implemented                                        |
+| Key ring status and rekey (`core/keyring.ts`)                        | Stubs that throw `NOT_IMPLEMENTED`                 |
+| Hono routes                                                          | Fully mounted, including the two that answer `501` |
+| SvelteKit UI                                                         | Complete screens, still reading fixture data       |
+| CLI                                                                  | Every command wired                                |
 
 ## Next
 

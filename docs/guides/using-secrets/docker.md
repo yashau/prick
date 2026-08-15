@@ -10,11 +10,6 @@ Every command here needs an authenticated machine. Start with
 [Authentication](/guides/authentication).
 :::
 
-:::caution[Not implemented]
-`prk run` and `prk secrets download` are argument definitions in this build. The
-patterns below are the intended usage.
-:::
-
 ## The thing that trips everyone up
 
 A container does **not** inherit the environment of the process that started

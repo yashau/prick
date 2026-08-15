@@ -10,14 +10,16 @@ sidebar:
 it never talks to the Cloudflare API, and it needs no Cloudflare credentials
 beyond your Access session.
 
-:::caution[Implementation status]
-The interface below is complete and is the single source of truth — the binary
-parses with it, `xtask` generates completions and man pages from it, and this
-page is written against it (`crates/prk/src/cli.rs`).
+:::note[Where this page comes from]
+`crates/prk/src/cli.rs` is the single source of truth for the interface — the
+binary parses with it, `xtask` generates completions and man pages from it, and
+this page is written against it. There is no second description to drift.
 
-The **behaviour** is not complete. Only `prk version` and `prk completions` do
-work. Every other command exits with `NOT_IMPLEMENTED` and exit code 1 — a real
-error with a real exit code, not a stub that prints and returns success.
+Every command listed below is wired: it resolves a credential, builds a request
+and talks to your Worker. The API surface it calls is still landing, so if a
+subcommand answers `404` or `422` against a current deployment, compare it against
+[`docs/openapi.json`](https://github.com/yashau/prick/blob/main/docs/openapi.json),
+which is generated from the router and is authoritative for the HTTP side.
 :::
 
 ```
@@ -31,18 +33,39 @@ Running `prk` with no arguments prints help and exits 2.
 Every flag in this table is global: `prk --json secrets list` and
 `prk secrets list --json` are the same command.
 
-| Flag         | Short | Value                     | Default | Environment   |
-| ------------ | ----- | ------------------------- | ------- | ------------- |
-| `--json`     |       |                           | off     |               |
-| `--color`    |       | `auto`, `always`, `never` | `auto`  |               |
-| `--quiet`    | `-q`  |                           | off     |               |
-| `--verbose`  | `-v`  | repeatable                | off     |               |
-| `--no-input` |       |                           | off     |               |
-| `--yes`      | `-y`  |                           | off     |               |
-| `--api-url`  |       | `<URL>`                   |         | `PRK_API_URL` |
-| `--project`  | `-P`  | `<PROJECT>`               |         | `PRK_PROJECT` |
-| `--env`      | `-E`  | `<ENVIRONMENT>`           |         | `PRK_ENV`     |
-| `--timeout`  |       | `<SECONDS>`               | `30`    |               |
+| Flag                          | Short | Value                     | Default | Environment                |
+| ----------------------------- | ----- | ------------------------- | ------- | -------------------------- |
+| `--json`                      |       |                           | off     |                            |
+| `--color`                     |       | `auto`, `always`, `never` | `auto`  |                            |
+| `--quiet`                     | `-q`  |                           | off     |                            |
+| `--verbose`                   | `-v`  | repeatable                | off     |                            |
+| `--no-input`                  |       |                           | off     |                            |
+| `--yes`                       | `-y`  |                           | off     |                            |
+| `--api-url`                   |       | `<URL>`                   |         | `PRK_API_URL`              |
+| `--access-client-id`          |       | `<ID>`                    |         | `PRK_ACCESS_CLIENT_ID`     |
+| `--access-client-secret`      |       | `<SECRET>`                |         | `PRK_ACCESS_CLIENT_SECRET` |
+| `--access-client-secret-file` |       | `<FILE>`, or `-`          |         |                            |
+| `--project`                   | `-P`  | `<PROJECT>`               |         | `PRK_PROJECT`              |
+| `--env`                       | `-E`  | `<ENVIRONMENT>`           |         | `PRK_ENV`                  |
+| `--timeout`                   |       | `<SECONDS>`               | `30`    |                            |
+
+:::danger[`--access-client-secret` is visible to other processes]
+A value passed there appears in `ps` output for every user on the machine and in
+your shell history. That is a property of how arguments are passed, and nothing the
+program does can remove it. Prefer `PRK_ACCESS_CLIENT_SECRET`, or
+`--access-client-secret-file`, on any machine you do not exclusively control.
+
+`--access-client-secret-file` reads the secret from a file, or from stdin when the
+path is `-`, and strips one trailing newline so a file written by `echo` works. An
+empty file is an error rather than an empty credential — the CI failure mode is a
+secret that never got injected, and authenticating as nobody produces a `403` that
+reads like a permissions problem.
+
+A file **takes precedence** over both the flag and the environment variable, and it
+refuses to fall back to `CF_ACCESS_CLIENT_ID` for the id half. Authenticating as
+somebody other than the identity whose secret was just read off disk is the failure
+mode that rule designs out.
+:::
 
 Notes:
 
@@ -67,17 +90,23 @@ Notes:
 | `PRK_ACCESS_CLIENT_ID`     | `CF_ACCESS_CLIENT_ID`     | Access service token client id     |
 | `PRK_ACCESS_CLIENT_SECRET` | `CF_ACCESS_CLIENT_SECRET` | Access service token client secret |
 
-The first three are wired through the argument parser today. The service-token
-pair is defined in `crates/prick-auth/src/credential.rs` — including the
-precedence order and the `CF-Access-Client-Id` / `CF-Access-Client-Secret`
-header spellings — but the HTTP client that would send them is not written yet.
+Precedence for the service token is resolved in
+`crates/prick-auth/src/credential.rs`: `--access-client-secret-file` first, then
+the flags, then `PRK_ACCESS_*`, then `CF_ACCESS_*`. **Both halves must come from
+the same place** — a `PRK_` id paired with a `CF_` secret is not a credential.
+
+The pair is sent as the `CF-Access-Client-Id` and `CF-Access-Client-Secret`
+request headers by `crates/prick-api/src/client.rs`.
+
+`PRK_API_URL` is only needed when you have not run `prk login`, which records the
+server it signed in to.
 
 ## Commands
 
 ### `prk login`
 
 ```
-prk login <URL> [--storage <BACKEND>]
+prk login <URL> [--storage <BACKEND>] [--no-browser]
 ```
 
 Authenticate against a prick server.
@@ -86,14 +115,27 @@ Authenticate against a prick server.
 | -------- | ---------------------- |
 | `<URL>`  | Base URL of the server |
 
-| Flag        | Values            | Default |
-| ----------- | ----------------- | ------- |
-| `--storage` | `file`, `keyring` | `file`  |
+| Flag           | Values            | Default |
+| -------------- | ----------------- | ------- |
+| `--storage`    | `file`, `keyring` | `file`  |
+| `--no-browser` |                   | off     |
 
 `file` writes a token file with mode `0600`, in a directory created with mode
-`0700`. `keyring` uses the OS keyring and is opt-in: it breaks over SSH and in CI
-where there is no session to unlock it, and on macOS the Keychain ACL binds to
-the binary's code signature, so every update re-prompts.
+`0700`. The write is atomic — temporary file, then rename — and the mode is set at
+creation, so there is no window in which a token file exists world-readable.
+`keyring` uses the OS keyring and is opt-in: it breaks over SSH and in CI where
+there is no session to unlock it, and on macOS the Keychain ACL binds to the
+binary's code signature, so every update re-prompts.
+
+`--no-browser` prints the authorization URL instead of opening one, for a machine
+with no display. The loopback listener still receives the redirect. It is also
+applied automatically when no browser is available.
+
+`prk login` records which server it signed in to, so later commands need neither
+`--api-url` nor `PRK_API_URL`. It warns loudly — even under `--json`, which
+suppresses every other diagnostic — if `/health` answered `200` to an
+unauthenticated probe, because that means Cloudflare Access is not in front of the
+hostname.
 
 ### `prk logout`
 
@@ -118,12 +160,31 @@ subject it prints is what an administrator needs in order to grant you anything.
 prk doctor
 ```
 
-Check connectivity, credentials and configuration. It is specified to continue
-past failures rather than stopping at the first, and to report, in order: the
-resolved API URL and where it came from, DNS and TCP reachability, the TLS
-handshake, `/health` and whether the responder is actually a prick server, which
-credential was found and when it expires (never the credential itself), the token
-file's permissions, and whether the binary is being invoked through the npm shim.
+Check connectivity, credentials and configuration. **Every check runs**; the exit
+code is decided at the end. A command that reported the first failure and exited
+would hide "your token file is world-readable" behind however long it takes to fix
+"cannot reach the server".
+
+| Check           | Reports                                                                                 |
+| --------------- | --------------------------------------------------------------------------------------- |
+| `server url`    | The resolved URL, and whether it came from a flag/variable or from the stored login     |
+| `token storage` | Whether the token file exists and whether it is owner-only. Never its contents          |
+| `access`        | The unauthenticated probe: Access with managed OAuth, Access without it, or **nothing** |
+| `reachability`  | Fails when the probe could not complete at all                                          |
+| `identity`      | The subject and kind `/whoami` resolved                                                 |
+| `credentials`   | Warns when no credential could be resolved                                              |
+| `installation`  | Whether the binary is being run through the npm shim rather than natively               |
+
+The probe runs **before** any credential is sent, because it is the only thing that
+can tell an unprotected server from a protected one. An unprotected server is a
+`FAIL`, not a warning.
+
+Each line is marked `ok`, `warn`, `FAIL` or `skip` — ASCII rather than symbols,
+because this output gets pasted into issue trackers. Only `FAIL` makes the command
+exit non-zero; a warning does not, since `prk doctor` is run to find out what is
+wrong and exiting non-zero for "you installed this through npm" would make it
+useless in a health check. Under `--json` it emits
+`{ "ok": …, "checks": [{ "name", "status", "detail" }] }`.
 
 ### `prk projects`
 
@@ -177,6 +238,14 @@ lets `--stdin` and an interactive prompt coexist.
 `list` returns names and metadata, never values. `get` fetches one secret rather
 than downloading the environment to print one line of it.
 
+A row whose ciphertext will not decrypt is listed as `UNREADABLE` rather than
+dropped, and a trailing warning says not to deploy from that environment until it
+is resolved. A listing that is quietly one row shorter is how a deploy goes out
+without `DATABASE_URL`.
+
+`history` currently prints the server's JSON verbatim whether or not `--json` was
+given — it has no table rendering yet.
+
 ### `prk run`
 
 ```
@@ -221,7 +290,12 @@ prk access revoke <SUBJECT> [--scope <SCOPE>]
 itself contain colons.
 
 `--denied` lists identities that were refused and have no grant. That is how a
-service token introduces itself.
+service token introduces itself; without it, `prk access identities` lists every
+subject the server has ever seen authenticate.
+
+`list` and `identities` currently print the server's JSON verbatim whether or not
+`--json` was given. There is no `prk` subcommand for groups yet — manage those
+through the API or the web UI.
 
 ### `prk completions`
 
@@ -344,7 +418,6 @@ Codes raised by the client itself rather than by a response:
 | `INVALID_DOTENV`         | 11   | A `.env` document could not be parsed unambiguously                                  |
 | `INVALID_SCOPE`          | 11   | A scope string could not be parsed                                                   |
 | `UNSAFE_ENVIRONMENT`     | 11   | A secret's name is one the loader interprets, and `--allow-unsafe-env` was not given |
-| `NOT_IMPLEMENTED`        | 1    | The command exists in the interface but has no implementation yet                    |
 
 "Retryable" means retrying the identical request could plausibly succeed. It is
 deliberately conservative: a write that may have partially applied is not listed,

@@ -8,12 +8,10 @@ sidebar:
 This takes you from an empty Cloudflare account to a deployed, Access-protected
 Worker.
 
-:::caution[Where this stops]
-Deployment works. Signing in and reading or writing secrets does not: `prk login`
-and every secrets command are argument definitions only in this build, and the
-Worker mounts no route other than `GET /api/v1/health`. Steps 1–9 are real.
-Steps 10–11 describe the intended flow and are marked where they will fail
-today.
+:::caution[One step will not work yet]
+Every step here is real, with one exception: no release has been cut, so
+`npm install -g @yashau/prick` in step 10 has nothing to install. Build the
+binary from this repository instead — step 10 says how.
 :::
 
 ## What you need
@@ -162,7 +160,7 @@ manager is the failure this design exists to prevent.
 When authenticated, that endpoint answers:
 
 ```json
-{ "status": "ok", "version": "0.0.0-dev" }
+{ "service": "prick", "status": "ok", "version": "0.0.0-dev" }
 ```
 
 The version reads `0.0.0-dev` in-tree; releases stamp the real value at build
@@ -186,12 +184,21 @@ binary locally instead with `mise run build:rust`; it lands at
 prk login https://prick.example.com
 ```
 
-:::caution[Not implemented]
-`prk login` currently exits with `NOT_IMPLEMENTED`. The intended handshake —
-probe, discover, register, PKCE, browser round trip, store — is described in
-[Authentication](/guides/authentication), along with the service-token path for
-CI.
-:::
+`prk login` probes `/api/v1/health`, discovers the authorization server, registers
+a client for a loopback redirect, runs the PKCE handshake in your browser and
+stores the resulting token in a file with mode `0600`. The whole handshake, and
+the service-token path CI uses instead, is described in
+[Authentication](/guides/authentication).
+
+Then confirm the server agrees about who you are:
+
+```bash
+prk whoami
+```
+
+If `BOOTSTRAP_ADMINS` names your address, that first authenticated request also
+converts the implicit admin into a real, revocable grant — see
+[Access control](/guides/access-control#the-first-administrator).
 
 ## Next
 

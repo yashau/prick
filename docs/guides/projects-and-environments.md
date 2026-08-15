@@ -44,13 +44,6 @@ prk projects rename api "API service"
 prk projects rm api
 ```
 
-:::caution[Not implemented]
-The domain layer behind projects and environments is written
-(`packages/app/src/lib/server/core/projects.ts`,
-`.../environments.ts`), but no HTTP route is mounted and no CLI command is
-wired. Every command on this page exits with `NOT_IMPLEMENTED` today.
-:::
-
 `prk projects rm` deletes the project **and everything in it**. Foreign keys are
 enforced by D1, so `ON DELETE CASCADE` actually fires: environments, secrets,
 version history and any grants scoped to them go with it. There is no

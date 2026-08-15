@@ -26,11 +26,9 @@ prk secrets download --format env --output .env --project api --env production
 writes a file, mode `0600`. Use this only when the consumer genuinely needs a
 file — Docker's `--env-file`, for instance — and delete it afterwards.
 
-:::caution[Not implemented]
-`prk run` is an argument definition today. `crates/prick-exec` has the guard
-implemented and the launch path specified, but nothing spawns a process yet.
-Everything below describes the interface as it is defined in the source.
-:::
+`prk run` fetches the environment through `GET …/secrets:export`, runs every name
+past the guard in `crates/prick-core/src/keyname.rs`, and hands the captured argv
+to `crates/prick-exec`. It is implemented end to end.
 
 ## How `prk run` runs things
 

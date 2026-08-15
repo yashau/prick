@@ -9,8 +9,7 @@ sidebar:
 mise run test
 ```
 
-That runs four suites: Rust unit and integration tests, Rust doc tests, the
-Worker suite, and the `scripts/*.mjs` suite. Playwright is separate.
+That fans out to six suites. Playwright and miri are separate.
 
 | Suite          | Runner                                        | Task                    |
 | -------------- | --------------------------------------------- | ----------------------- |
@@ -18,10 +17,26 @@ Worker suite, and the `scripts/*.mjs` suite. Playwright is separate.
 | Rust doc tests | `cargo test --doc`                            | `mise run test:doc`     |
 | Worker         | Vitest with `@cloudflare/vitest-pool-workers` | `mise run test:js`      |
 | Repo scripts   | `node --test`                                 | `mise run test:scripts` |
+| GitHub Action  | `node --test`                                 | `mise run test:action`  |
+| MCP server     | `node --test`                                 | `mise run test:mcp`     |
 | End-to-end     | Playwright                                    | `mise run e2e`          |
 | Purity proof   | `cargo miri nextest`                          | `mise run miri`         |
 
-Doc tests get their own pass because nextest cannot run them.
+Doc tests get their own pass because nextest cannot run them. The action and the
+MCP server run under plain Node rather than workerd, so they use `node:test`
+rather than the Worker pool.
+
+## The OpenAPI document cannot go stale
+
+```bash
+mise run openapi        # regenerate docs/openapi.json from the router
+mise run openapi:check  # fail if it is stale
+```
+
+`openapi:check` runs in CI, and `packages/app/test/http/openapi.test.ts`
+deep-compares the committed document against what the router actually serves. The
+task exists separately so a stale document fails with one obvious message rather
+than inside a suite.
 
 ## The Worker suite
 
@@ -101,36 +116,58 @@ someone adds a file read, a clock call or an FFI dependency.
 The nightly toolchain it uses is date-pinned. A rolling nightly makes the job
 flaky on unrelated pull requests.
 
-## Writing tests for the write path
+## The write-path suite
 
-Write these **first**, before the code:
+`packages/app/test/core/secrets-atomicity.test.ts` is the specification for the
+properties the write path exists to have. These all exist and must keep passing:
 
-- **The partial-write regression test.** Seed 5 secrets, issue a full replace
-  whose third row fails, and assert the environment still holds exactly the
-  original 5 at the original revision, with no audit row. This is the test that
-  proves the batch is a real transaction.
-- **The version race.** Two concurrent writers on one key: one `200`, one `409`,
-  and no gap in the version history.
-- **The `expected_rev` abort.** A mismatch is `412` and the environment is
-  byte-for-byte unchanged.
-- **Every cell of the permission matrix**, plus expired grants, disabled
-  identities and `NO_ADMINS_CONFIGURED`.
-- **Rekey correctness.** A two-key ring, every value still decrypts, and no
-  version changed.
+- **The partial-write regression test.** Seed 5 secrets, issue a full replace whose
+  third row fails, and assert the environment still holds exactly the original 5 at
+  the original revision, **with no audit row** — and that the original values still
+  reveal afterwards. This is the test that proves the batch is a real transaction.
+- **One `batch()`, whatever the size.** Exactly one `batch()` for a 40-key write
+  despite chunking, and still one at 250 keys where chunking produces about 45
+  statements. Asserted by counting through a binding proxy, not by inspection.
+- **Both branches of the optimistic guard.** A matching `expected_rev` applies and
+  the guard is a no-op rather than an insert; a stale one aborts with
+  `PRECONDITION_FAILED` and changes nothing.
+- **Per-key version races.** Retry once and win, leaving **no gap** in the version
+  history; give up with `VERSION_CONFLICT` after losing twice, having written
+  nothing.
+- **The size cap**, counted against the **resulting** environment rather than the
+  request, refusing rather than splitting the batch.
+
+`packages/app/test/http/permissions.test.ts` drives the permission matrix per
+operation per actor, and adds the cases that are easy to get wrong: a disabled
+identity outranking a global admin grant, a role held **only** through a group,
+a group holding no grants conferring nothing, an expired group grant lapsing
+exactly like a direct one, and a service token going through the identical code
+path.
+
+Still to write, when the domain functions exist: **rekey correctness** — a two-key
+ring, every value still decrypts, and no version changed.
 
 ## CLI tests
 
-- `assert_cmd` for the exit-code table.
-- Assert stderr is **byte-empty** on a `--json` success, and stdout byte-empty on
-  a `--json` failure.
-- Assert no secret value appears in stderr on any error path.
-- `trycmd` snapshots for `--help`.
-- `wiremock` for the error matrix and the OAuth handshake.
-- Property tests for the output format round-trips, with `shell` output verified
-  by actually evaluating it under `dash`, `bash`, `zsh` and `busybox sh`.
-- `prk run` integration: exit codes, argv preserved exactly, non-UTF-8 argv,
-  `SIGTERM` → 143, `SIGINT` → 130, `prk run -- yes | head -1` terminates, and
-  `npm.cmd --version` on Windows.
+Each crate carries its own integration tests under `crates/*/tests/`:
+
+| Crate        | Covers                                                            |
+| ------------ | ----------------------------------------------------------------- |
+| `prick-api`  | `ops.rs`, `responses.rs` — the error matrix and header behaviour  |
+| `prick-auth` | `login.rs` — the OAuth handshake                                  |
+| `prick-exec` | `launch.rs`, `unix_exec.rs`, `windows_batch.rs` — the launch path |
+
+Unit tests live beside the code in `crates/prk/src/`, including the assertions
+that a client secret never survives `Debug` formatting and that `--help` cannot
+print an environment variable's value.
+
+What the CLI suite must keep covering as it grows: the exit-code table; stderr
+**byte-empty** on a `--json` success and stdout byte-empty on a `--json` failure;
+no secret value on any error path; the output-format round-trips, with `shell`
+output verified by actually evaluating it under `dash`, `bash`, `zsh` and
+`busybox sh`; and `prk run` integration — argv preserved exactly, non-UTF-8 argv,
+`SIGTERM` → 143, `SIGINT` → 130, `prk run -- yes | head -1` terminating, and
+`npm.cmd --version` on Windows.
 
 That `yes | head -1` case is not decoration. Rust sets `SIGPIPE` to `SIG_IGN` at
 startup, and without resetting it to `SIG_DFL` before `exec` the pipeline hangs
@@ -138,18 +175,19 @@ forever.
 
 ## End-to-end
 
-Playwright against a locally built Worker. The security-relevant assertions:
+Playwright against a locally built Worker, with its own Access harness under
+`e2e/harness/`. The specs:
 
-- A secret's value is **absent from the DOM** until Reveal is clicked and a
-  request completes.
-- Auto-mask fires.
-- The `.env` import dry-run diff, and an export that round-trips.
-- The audit log contains `secret.reveal` and `secret.import` with the right
-  actor.
-- Revoke a grant, reload, get a `403`.
-- `frame-ancestors 'none'` and `Cache-Control: no-store` are present on the
-  responses that need them.
-- A keyboard-only walkthrough, and an accessibility scan in both themes.
+| Spec                    | Asserts                                                             |
+| ----------------------- | ------------------------------------------------------------------- |
+| `secrets-table.spec.ts` | A value is absent from the DOM until Reveal completes; auto-mask    |
+| `ssr-boundary.spec.ts`  | No value appears in a server-rendered page payload                  |
+| `import-export.spec.ts` | The `.env` dry-run diff, and an export that round-trips             |
+| `access.spec.ts`        | Grants and revocation from the UI                                   |
+| `api-flow.spec.ts`      | The API path the client-rendered subtree uses                       |
+| `headers.spec.ts`       | `frame-ancestors 'none'` and `Cache-Control: no-store` where needed |
+| `keyboard.spec.ts`      | A keyboard-only walkthrough                                         |
+| `accessibility.spec.ts` | An accessibility scan                                               |
 
 ## Before you open a pull request
 

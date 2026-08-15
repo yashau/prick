@@ -10,12 +10,20 @@ hold, it is listed here rather than left for you to discover.
 
 ## What is being protected
 
-Secret **values**. Nothing else on the following list is confidential:
+Secret **values**. Nothing else on the following list is encrypted:
 
 - Secret key names.
 - Project and environment names, slugs and descriptions.
 - Identity subjects: email addresses and service token common names.
+- Group slugs, names and memberships.
 - Grants, and the entire audit log.
+
+"Not encrypted" is not the same as "readable by anyone who asks". Every one of
+those is still behind the grant table at request time: listing identities, groups
+and grants needs an admin grant at some scope, and reading the audit log is
+narrowed to the scopes you administer. What the list means is that anyone holding
+the **database** — a D1 export, a Cloudflare account compromise — reads all of it
+in the clear, `MASTER_KEY` or no `MASTER_KEY`.
 
 ## Who is trusted
 
@@ -171,9 +179,13 @@ allowance.
 - **A misconfigured Access application.** If Access is not attached to the
   hostname, the entire authorization model is bypassed — every project, every
   environment, every reveal endpoint, open to the internet. `workers_dev` and
-  `preview_urls` are forced to `false` and CI asserts both, but an Access
-  application with an over-broad policy is not something prick can detect. Verify
-  it yourself, as in the [Quickstart](/getting-started/quickstart).
+  `preview_urls` are set to `false` and the deploy workflow's guard job asserts
+  both before either deploy job runs — though that workflow is manual-only, so the
+  assertion fires at deploy time rather than on every push. An Access application
+  with an over-broad policy is not something prick can detect at all. Verify it
+  yourself, as in the [Quickstart](/getting-started/quickstart), and note that
+  `prk login` and `prk doctor` both fail loudly if `/health` answers `200`
+  unauthenticated.
 - **A compromised developer machine.** The token file is mode `0600`, which stops
   other users, not malware running as you.
 - **Denial of service.** There are size and count limits, but no rate limiting is
@@ -188,17 +200,25 @@ allowance.
 
 ## Known gaps in the current build
 
-Because most of the product is not implemented, several protections described
-above exist as code that nothing calls yet:
+Most of the protections above are now exercised on live paths: the API surface is
+mounted, the CLI authenticates and injects, and the reveal audit, the `no-store`
+headers and the loud decrypt failure all run on real requests. What is still
+missing:
 
-- No secrets route is mounted, so the reveal audit, the `no-store` cache headers
-  and the loud decrypt failure are not exercised on a live path.
-- The rekey job does not exist, so a rotation cannot be completed and a retired
-  key cannot safely be removed.
-- The CLI does not authenticate, so the token file and the service-token headers
-  are specification rather than behaviour.
-- The UI is a route skeleton, so the client-render-only rule is not yet load
-  bearing.
+- **The rekey job does not exist.** `getKeyringStatus` and `rekeyPage` are stubs
+  and their routes answer `501`, so a rotation cannot be completed and a retired
+  key cannot safely be removed. See [Key rotation](/guides/key-rotation).
+- **The UI reads fixture data.** Every screen renders, but its server loads call an
+  in-memory fixture rather than the domain layer, so the client-render-only rule is
+  not yet load bearing on real values.
+- **The "no secret in a server load" rule is convention, not a check.** The
+  intended build-time grep over every `+*.server.ts` for
+  `revealSecret|exportSecrets|decrypt` does not exist yet.
+- **`ENV_MAX_SECRETS` has not been load-tested.** 500 is derived from an
+  undocumented per-batch statement limit against a documented 30-second ceiling.
+- **No release has been cut**, so nothing is published, and the npm provenance and
+  trusted-publishing story described in
+  [Releasing](/contributing/releasing) is procedure rather than history.
 
 Do not run this as a production secrets manager yet.
 

@@ -20,8 +20,11 @@ import { validate } from "../validate.js";
  * subset.
  *
  * A filter naming a project that does not exist -- or that this actor cannot see
- * -- yields an EMPTY PAGE rather than a 404, which is the same existence-oracle
- * rule the rest of the API follows from the other direction.
+ * -- answers 404, exactly as a resource-addressed route would, and for the same
+ * reason: absent and invisible must be indistinguishable. It is deliberately
+ * NOT an empty page. An empty page is a wrong answer that looks like a right
+ * one, and somebody auditing an incident who mistypes a slug would read "no
+ * events" and stop looking.
  */
 export function auditRoutes(): Hono<ApiEnv> {
   const app = new Hono<ApiEnv>();

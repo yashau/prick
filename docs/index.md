@@ -22,19 +22,23 @@ plaintext, on purpose — see [Threat model](/architecture/threat-model).
 
 ## Project status
 
-The architecture is settled and the security-critical layers are written. Large
-parts of the product are not implemented yet, and this documentation says so at
-the point where it matters rather than describing intent as fact.
+The architecture is settled, the security-critical layers are written, and the
+API surface is mounted. Two things are still missing, and this documentation says
+so at the point where it matters rather than describing intent as fact.
 
-| Area                                                          | State                                                                |
-| ------------------------------------------------------------- | -------------------------------------------------------------------- |
-| Crypto: envelope, AAD, keyring                                | Implemented                                                          |
-| Access JWT verification, claims, authorization, bootstrap     | Implemented                                                          |
-| Projects and environments (domain layer)                      | Implemented                                                          |
-| Secrets, identities/grants, audit query, rekey (domain layer) | Not implemented                                                      |
-| HTTP API                                                      | Only `GET /api/v1/health` is mounted                                 |
-| CLI                                                           | Interface complete; only `prk version` and `prk completions` do work |
-| Web UI                                                        | Route skeleton only                                                  |
+| Area                                                                      | State                                                                                        |
+| ------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| Crypto: envelope, AAD, key ring                                           | Implemented                                                                                  |
+| Access JWT verification, claims, authorization, bootstrap                 | Implemented                                                                                  |
+| Domain layer: projects, environments, secrets, identities, grants, groups | Implemented                                                                                  |
+| Domain layer: audit query, including per-scope narrowing                  | Implemented                                                                                  |
+| Domain layer: key ring status and the rekey job                           | **Not implemented.** Both functions are stubs; their routes answer `501`                     |
+| HTTP API                                                                  | Fully mounted. `docs/openapi.json` is generated from the router, and CI fails if it is stale |
+| `prk` CLI                                                                 | Login, token storage, service tokens and every subcommand are wired                          |
+| Web UI                                                                    | Every screen exists, but its server loads still read **fixture data**                        |
+
+No release has been cut, so `@yashau/prick` is not on npm yet — build the binary
+locally with `mise run build:rust`.
 
 ## Start here
 

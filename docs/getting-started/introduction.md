@@ -52,15 +52,24 @@ authorization is prick's.
 ## What is built today
 
 The security-critical layers exist and are tested: the encryption envelope and
-its additional authenticated data, Access JWT verification, grant resolution and
-the bootstrap path, plus the projects and environments domain logic.
+its additional authenticated data, Access JWT verification, grant resolution
+(including groups) and the bootstrap path. The domain layer is written —
+projects, environments, secrets, identities, grants, groups and the audit query
+— and the whole HTTP surface is mounted on top of it. The `prk` CLI logs in,
+stores its token, sends service-token headers and runs every subcommand.
 
-What is not built yet: the secrets domain logic, the identities and grants
-domain logic, the rekey job, every HTTP route except `/api/v1/health`, most of
-the CLI, and the UI beyond a route skeleton.
+Two gaps remain, and both are marked where they apply:
 
-Each page in this documentation marks the gap where it applies. Nothing here
-describes behaviour that does not exist without saying so.
+- **The rekey job does not exist.** `getKeyringStatus` and `rekeyPage` in
+  `packages/app/src/lib/server/core/keyring.ts` are stubs, so
+  `GET /api/v1/admin/keyring` and `POST /api/v1/admin/rekey` answer `501`. A
+  rotation can be started but not finished. See
+  [Key rotation](/guides/key-rotation).
+- **The web UI reads fixture data.** Every screen exists and renders, but its
+  SvelteKit server loads still call an in-memory fixture rather than the domain
+  layer. The seam is marked in each `+page.server.ts`.
+
+Nothing here describes behaviour that does not exist without saying so.
 
 ## Next
 

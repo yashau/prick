@@ -15,16 +15,26 @@ Rotation replaces the master key without downtime and without a bulk migration
 window. Two keys are loaded at once: the new one, which everything is written
 under, and the retired one, which old rows are still read under.
 
-:::caution[Partly implemented]
+:::caution[The rekey job is still not implemented]
 The key ring, the two-key derivation and the validation are implemented
-(`packages/app/src/lib/server/crypto/keyring.ts`). The re-encryption job is not:
-`getKeyringStatus` and `rekeyPage` are stubs, `POST /api/v1/admin/rekey` is not
-mounted, no cron trigger is configured, and the settings screen does not exist.
+(`packages/app/src/lib/server/crypto/keyring.ts`), and the two admin routes are
+mounted. The **domain functions behind them are not**: `getKeyringStatus` and
+`rekeyPage` in `packages/app/src/lib/server/core/keyring.ts` are stubs, so
+`GET /api/v1/admin/keyring` and `POST /api/v1/admin/rekey` answer
+`501 NOT_IMPLEMENTED` to every authenticated caller. No cron trigger is configured
+in `packages/app/wrangler.jsonc`, and the settings screen renders against fixture
+data rather than the real ring.
 
-So in this build you can _start_ a rotation and old rows keep working — but
-there is no way to finish one, and therefore no point at which it is safe to
-remove `MASTER_KEY_OLD`. Do not remove it.
+Ordinary writes **do** migrate rows — the secrets write path is implemented, and
+every write produces a new version under the active key. What is missing is the
+sweep for rows nobody touches, and therefore any trustworthy point at which it is
+safe to remove `MASTER_KEY_OLD`. Do not remove it.
 :::
+
+The routes are mounted ahead of the implementation on purpose. `501` is a truthful
+answer a client can branch on, whereas a `404` from an unmounted route is
+indistinguishable from a typo — and fixing the paths now means the settings screen
+and the cron trigger are written against the surface they will keep.
 
 ## The rule
 
@@ -89,13 +99,13 @@ prk secrets set DATABASE_URL --project api --env production
 ```
 
 Any write to a secret produces a new version under the active key, so ordinary
-traffic migrates rows on its own. The dedicated job does the rest a page at a
-time, so no single request has to re-encrypt a large database.
+traffic migrates rows on its own. The dedicated job is meant to do the rest a page
+at a time, so no single request has to re-encrypt a large database.
 
-:::caution[Not implemented]
-The rekey job and its endpoint do not exist yet. Ordinary writes do migrate
-individual rows once the secrets write path is implemented, but there is
-currently no mechanism to sweep the ones nobody touches.
+:::caution[The sweep is not implemented]
+`POST /api/v1/admin/rekey` is mounted but answers `501`, so there is currently no
+mechanism to migrate the rows nobody touches. Ordinary writes are the only thing
+moving rows onto the new key today.
 :::
 
 ### 6. Wait for zero, then remove the retired key
@@ -103,7 +113,14 @@ currently no mechanism to sweep the ones nobody touches.
 `keyring_state` holds one row per key id ever observed, with a `rows_remaining`
 count. It is **recomputed** by the rekey job rather than maintained as a running
 counter, because a "safe to remove" indicator derived from a number that drifted
-is worse than no indicator at all.
+is worse than no indicator at all. `safeToRemoveOldKey` goes true only when every
+non-active key id reports zero.
+
+:::danger[There is no way to reach zero in this build]
+`GET /api/v1/admin/keyring` answers `501`, so nothing computes that count today.
+Treat this step as unreachable for now rather than as a check that happens to be
+passing.
+:::
 
 Only when the retired key id reports zero rows may you remove it:
 

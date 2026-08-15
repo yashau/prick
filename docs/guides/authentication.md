@@ -32,14 +32,7 @@ password to leak, because identity comes entirely from a verified Access JWT.
 prk login https://prick.example.com
 ```
 
-:::caution[Not implemented]
-`prk login` is an argument definition in this build and exits with
-`NOT_IMPLEMENTED`. The flow below is what the code is being written to do —
-`crates/prick-auth/src/oauth.rs` carries the specification — but no socket is
-opened yet.
-:::
-
-The intended handshake:
+The handshake, implemented in `crates/prick-auth/`:
 
 1. **Probe `/api/v1/health`.** Three outcomes, all handled:
    - `401` with a `WWW-Authenticate` header pointing at discovery — normal,
@@ -59,7 +52,14 @@ The intended handshake:
    compare `state` in constant time.
 6. Exchange the code and store the tokens.
 
-Refresh is meant to be transparent, so the short Access session is invisible.
+Refresh is transparent: a token within a minute of expiring is renewed before the
+request goes out and the renewal is written back, so the short Access session is
+invisible and the next invocation does not repeat the work.
+
+On a machine with no browser, add `--no-browser` and `prk` prints the
+authorization URL instead of opening one. The loopback listener still receives
+the redirect, provided the port is reachable — which it is over a forwarding SSH
+session.
 
 ### Where the token is stored
 
@@ -76,10 +76,14 @@ The keyring is not the default deliberately. Over SSH there is no session keyrin
 to talk to, and on macOS the Keychain ACL binds to the binary's code signature,
 so every update re-prompts — which is unusable from inside `prk run`.
 
-:::caution[Not implemented]
-The token store is a skeleton: the backends and the file mode are fixed in
-`crates/prick-auth/src/store.rs`, but nothing is written to disk yet.
-:::
+The file is written **atomically** — to a temporary file, then renamed — and
+created with `create_new` at mode `0600` on Unix, so there is no window in which
+a token file exists world-readable. The directory is created at `0700`. On
+Windows the DACL is replaced with a single entry for the current user. Source:
+`crates/prick-auth/src/store.rs`.
+
+`prk login` also records which server it signed in to, so later commands need
+neither `--api-url` nor `PRK_API_URL`.
 
 ### Signing out
 
@@ -87,7 +91,8 @@ The token store is a skeleton: the backends and the file mode are fixed in
 prk logout
 ```
 
-Discards stored credentials. Also not implemented yet.
+Discards stored credentials. Idempotent: the state it establishes is "no
+credentials", and running it twice does not make that less true.
 
 ### Checking who the server thinks you are
 
@@ -95,9 +100,10 @@ Discards stored credentials. Also not implemented yet.
 prk whoami
 ```
 
-Not implemented yet. When it is, this is the command to run when you get a
-`403`: it prints the subject the server resolved, which is what an administrator
-needs in order to grant you anything.
+This is the command to run when you get a `403`: it prints the subject the server
+resolved, which is what an administrator needs in order to grant you anything. It
+also prints your **global** role, or nothing at all — a project-scoped admin has
+no global role and is still an admin of that project.
 
 ## 2. Environment variables
 
@@ -125,11 +131,30 @@ export PRK_ACCESS_CLIENT_ID="<client id>.access"
 export PRK_ACCESS_CLIENT_SECRET="<client secret>"
 ```
 
-:::caution[Defined, not yet consumed]
-These names and the header spellings are fixed in
-`crates/prick-auth/src/credential.rs` and covered by tests. The HTTP client that
-attaches them is still a skeleton, so setting them has no effect in this build.
-:::
+The names are resolved in `crates/prick-auth/src/credential.rs` and the headers
+are attached by `crates/prick-api/src/client.rs` on every request.
+
+**Both halves must come from the same place.** A `PRK_ACCESS_CLIENT_ID` paired
+with a `CF_ACCESS_CLIENT_SECRET` is not a credential — mixing them is how a job
+authenticates as an identity nobody intended.
+
+#### Keeping the secret out of `ps`
+
+```bash
+prk secrets list --access-client-id "<id>.access" --access-client-secret-file /run/token
+```
+
+`--access-client-secret` exists for pipelines that have nothing else, but a value
+passed there appears in `ps` output for every user on the machine and in your
+shell history. That is a property of how arguments are passed, not something the
+program can undo. `--access-client-secret-file` reads the secret from a file — or
+from stdin when the path is `-` — and strips one trailing newline, so a file
+written by `echo` works.
+
+A file is treated as an explicit act: it takes precedence over both the flag and
+`PRK_ACCESS_CLIENT_SECRET`, and it **refuses to fall back** to the `CF_*` pair for
+the client id. Authenticating as somebody other than the identity whose secret was
+just read off disk is the failure mode that rule designs out.
 
 ### Everything else
 
@@ -139,12 +164,12 @@ attaches them is still a skeleton, so setting them has no effect in this build.
 | `PRK_PROJECT` | `-P`, `--project` | Project to operate on     |
 | `PRK_ENV`     | `-E`, `--env`     | Environment to operate on |
 
-These three are wired through clap today, so they parse and resolve correctly
-even though the commands that would use them do not run yet.
-
 ```bash
 export PRK_API_URL=https://prick.example.com
 ```
+
+`PRK_API_URL` is only needed when you have not run `prk login`, which records the
+server it signed in to.
 
 ## 3. Flags
 

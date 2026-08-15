@@ -10,11 +10,6 @@ Every command here needs an authenticated machine. Start with
 [Authentication](/guides/authentication).
 :::
 
-:::caution[Not implemented]
-`prk run` is an argument definition in this build. The patterns below are the
-intended usage.
-:::
-
 Two entirely separate things share a word here. Keep them apart:
 
 - **Your own Worker's** secrets in production are Cloudflare Worker secrets,

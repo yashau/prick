@@ -10,18 +10,24 @@ The Worker serves a JSON API under `/api/*` and the SvelteKit admin UI
 everywhere else. Both call the same in-process domain layer, so authorization is
 written once rather than once per transport.
 
-An interactive reference is served by the Worker itself:
+:::tip[The generated document is the source of truth]
+This page summarises the surface and explains the contracts that cut across it.
+For the exact shape of any single endpoint — every parameter, every schema, every
+documented status — read the generated document instead. It is produced from the
+router itself, so it cannot describe a route that does not exist.
 
 | Path                   | What                                                |
 | ---------------------- | --------------------------------------------------- |
-| `/api/v1/docs`         | Scalar reference viewer                             |
+| `/api/v1/docs`         | Scalar reference viewer, on your own deployment     |
 | `/api/v1/openapi.json` | The OpenAPI 3.1 document, generated from the router |
 
-The same document is committed at [`docs/openapi.json`](https://github.com/yashau/prick/blob/main/docs/openapi.json)
-and CI fails if it does not match the code, so the API surface shows up in a pull
-request diff even when the change that produced it is three files away.
+The same document is committed at [`docs/openapi.json`](https://github.com/yashau/prick/blob/main/docs/openapi.json).
+`mise run openapi` regenerates it, `mise run openapi:check` fails if it is stale,
+and that check runs in CI — so the API surface shows up in a pull request diff even
+when the change that produced it is three files away.
+:::
 
-Both are unauthenticated. The document describes the _shape_ of the API — it is
+Both routes are unauthenticated. The document describes the _shape_ of the API — it is
 generated from the route table and from schemas that are already public in the
 repository, and it contains no project slugs, no key names, no identities and no
 data of any kind. Putting it behind Access would mean an operator cannot read the
@@ -280,7 +286,15 @@ All under `/projects/{project}/environments/{env}` (or the `/p/…/e/…` alias)
 `GET /secrets/{key}` and `GET /secrets/{key}:reveal` are the same operation. Both
 spellings exist because the browser client and the machine clients each guessed a
 different one, and the parse is unambiguous: a secret key is a POSIX environment
-variable name and cannot contain a colon. The response is `{ key, value }`.
+variable name and cannot contain a colon, so the suffix is stripped by the path
+schema rather than routed separately. Only the bare spelling appears in the
+OpenAPI document, for the same reason only the canonical slug path does. The
+response is `{ key, value }`.
+
+`?reason=` accepts `reveal`, `copy`, `export` or `run` and defaults to `reveal`.
+It is what makes the log answer "did anyone take this" rather than merely "did
+anyone look at it": the UI sends `copy` for the copy button and `reveal` for the
+eye toggle.
 
 `GET /secrets` decrypts every row and discards the plaintext immediately. That
 looks wasteful and is not: `unreadable` cannot be determined any other way, because
@@ -314,17 +328,32 @@ new one, in a single batch. There is no cheap rename and there cannot be one.
 
 ### Access
 
-| Method   | Path                         | Requires                       |
-| -------- | ---------------------------- | ------------------------------ |
-| `GET`    | `/identities`                | any admin, at any scope        |
-| `PATCH`  | `/identities/{id}`           | **global** admin               |
-| `GET`    | `/grants`                    | any admin, at any scope        |
-| `POST`   | `/grants`                    | admin **at the scope granted** |
-| `DELETE` | `/grants/{id}`               | admin at the grant's scope     |
-| `GET`    | `/access/unknown-identities` | any admin, at any scope        |
+| Method   | Path                                     | Requires                       |
+| -------- | ---------------------------------------- | ------------------------------ |
+| `GET`    | `/identities`                            | any admin, at any scope        |
+| `PATCH`  | `/identities/{id}`                       | **global** admin               |
+| `GET`    | `/identities/{id}/effective-permissions` | any admin, at any scope        |
+| `GET`    | `/grants`                                | any admin, at any scope        |
+| `POST`   | `/grants`                                | admin **at the scope granted** |
+| `DELETE` | `/grants/{id}`                           | admin at the grant's scope     |
+| `GET`    | `/access/unknown-identities`             | any admin, at any scope        |
 
 `PATCH /identities/{id}` requires _global_ admin because `disabled` is a kill
 switch that outranks every grant at every scope — including `BOOTSTRAP_ADMINS`.
+
+`GET /identities/{id}/effective-permissions` answers "why does Bob have
+production, and what do I remove to stop that". Each entry carries its `sources` —
+the rows that confer the role, each naming the group it came through when it came
+through one, with exactly one marked `decisive`. Only scopes that some grant
+actually names appear, never the cross product of every project and environment,
+so a global admin is one entry rather than one per project. A disabled identity
+reports `role: null` on every entry with the sources still listed and nothing
+decisive.
+
+The view is narrowed to the scopes the caller administers. The `sources` inside a
+visible entry are **not** narrowed: a project admin who can see that Bob has admin
+on their project must be able to see that it came from a global grant on a group,
+or the entry has a role and no explanation.
 
 `POST /grants` requires admin at the scope being granted, which falls out of
 scope inheritance and needs no special case. That is the point: the special case
@@ -341,25 +370,117 @@ redeploying — which is not a decision a confirmation dialog can make for you.
 carry no id; match `subject` against `GET /identities` to obtain the `identity_id`
 a grant needs.
 
+### Groups
+
+A group is a named set of identities that can hold grants. Membership alone
+confers nothing.
+
+| Method   | Path                                | Requires                       |
+| -------- | ----------------------------------- | ------------------------------ |
+| `GET`    | `/groups`                           | any admin, at any scope        |
+| `POST`   | `/groups`                           | **global** admin               |
+| `GET`    | `/groups/{id}`                      | any admin, at any scope        |
+| `PATCH`  | `/groups/{id}`                      | **global** admin               |
+| `DELETE` | `/groups/{id}`                      | **global** admin               |
+| `GET`    | `/groups/{id}/members`              | any admin, at any scope        |
+| `POST`   | `/groups/{id}/members`              | **global** admin               |
+| `DELETE` | `/groups/{id}/members/{identityId}` | **global** admin               |
+| `GET`    | `/groups/{id}/grants`               | any admin, at any scope        |
+| `POST`   | `/groups/{id}/grants`               | admin **at the scope granted** |
+| `DELETE` | `/groups/{id}/grants/{grantId}`     | admin at that grant's scope    |
+
+**Two different rules live on this router, and the split is the security
+argument.** The group itself — create, rename, delete, and every membership change
+— needs global admin, because membership is the escalation surface: a project admin
+who could edit the roster of a group that also holds admin elsewhere could add
+themselves to it. Its **grants** need admin at the scope being granted, resolved by
+the same code as granting an identity. Global authority curates who is on a roster;
+each scope's admin decides what that roster may do there.
+
+`POST /groups/{id}/grants` is not an escalation route for the granting admin even
+when they are in the group, because the role they can confer is bounded by the role
+they already hold there. Adding somebody _else_ is the operation that would widen
+their reach, and that one is global-admin only.
+
+Group grants are **purely additive**: effective role is the max over an identity's
+own grants and its groups', so a group can only raise a role. There is no deny
+rule.
+
+`DELETE /groups/{id}/grants/{grantId}` is addressed through the group, so a
+mismatched pair is a `404` rather than a revocation of a different group's grant
+because a client paired the wrong two values.
+
+`slug` is absent from `UpdateGroupBody`. A rename that silently repoints an
+identifier somebody wrote down is a change nobody notices until it matters.
+
+The `409 LAST_ADMIN` guard covers `DELETE /groups/{id}`, `DELETE
+…/members/{identityId}` and `DELETE …/grants/{grantId}` as well as `DELETE
+/grants/{id}` — each of them can remove the installation's last usable global
+administrator, and two of them do it through an endpoint whose name does not
+contain the word "grant".
+
+Membership removal takes effect on the **next request**, with nothing to
+invalidate: the authorization snapshot is cached per request, keyed on the
+request's own context object, so there is no longer-lived cache for a revocation to
+be missing from.
+
 ### Audit
 
-| Method | Path     | Requires         |
-| ------ | -------- | ---------------- |
-| `GET`  | `/audit` | **global** admin |
+| Method | Path     | Requires                |
+| ------ | -------- | ----------------------- |
+| `GET`  | `/audit` | any admin, at any scope |
 
 Keyset-paginated on the UUIDv7 primary key, never on `OFFSET`. The log is
 append-only and grows under the reader, so every insert between two `OFFSET` pages
 shifts the window by one and makes the reader silently skip a row.
 
-A filter naming a project that does not exist yields an empty page, not a `404` —
-the same non-oracle rule from the other direction.
+The line is **admin, at a scope** — not reader, not writer. An audit row carries no
+secret value by construction, but it does carry the roster of people and service
+tokens that touched a scope, when each of them did, and which subjects were
+refused. "May read the secrets" and "may audit who read the secrets" are different
+sentences.
 
-:::caution[This is stricter than it should be]
-The domain layer performs no scope narrowing on the log, so the transport gates it
-at global admin rather than serving a project admin the whole installation's
-events. A project admin ought to see their own project's events; that requires
-filtering in `core`, and this restriction lifts when it lands.
+| Caller            | Sees                                                                                    |
+| ----------------- | --------------------------------------------------------------------------------------- |
+| global admin      | Every row, unfiltered                                                                   |
+| project admin     | Rows carrying that project, **and** rows carrying one of its environments. Nothing else |
+| environment admin | Rows carrying that environment. Not its siblings, and not the project's own rows        |
+| anything below    | `403 FORBIDDEN`, audited like every other denial                                        |
+| disabled identity | `403`. The kill switch outranks every grant                                             |
+
+The environment half of a project admin's view is not redundant: a denial recorded
+at an environment scope carries `environment_id` and a `NULL` `project_id`, so
+filtering on `project_id` alone would drop exactly the rows they most need — the
+refusals inside their own project.
+
+Narrowing happens **in the query**, never as a filter afterwards. A post-filter over
+"all events" has already loaded rows the actor may not see by the time it runs, and
+the pagination is the immediate proof: a page of 50 trimmed to 3 would report a
+cursor derived from rows the caller was never entitled to.
+
+:::note[An unknown `?project=` is a 404, not an empty page]
+A filter naming a project that does not exist and one naming a project this admin
+may not audit both answer `404` — same status, same code, same hint. Splitting
+them would make the filter an oracle for which project slugs are in use: an admin
+of one small project could walk a dictionary and read the difference off an
+organisation they have nothing to do with. The same applies to `?environment=`.
+
+Only the unauthorized branch records a denial. There is nothing to be denied about
+a project that does not exist, and auditing one would fill "seen but not granted"
+with the noise of mistyped slugs.
 :::
+
+`?environment=` is never resolved as a bare `WHERE slug = ? LIMIT 1`. Environment
+slugs are unique only _within_ a project, so a global lookup for `prod` would find
+an arbitrary project's production environment. Paired with `?project=` it resolves
+the pair exactly; unpaired it means "every environment by that name that you may
+audit".
+
+A `detail` blob written by an older build that this one cannot parse comes back as
+`null` rather than failing the page. That is the one place in this system where
+swallowing is right: the log is historical and append-only, and refusing a whole
+page because one old row is odd would make it unreadable exactly when it is being
+consulted.
 
 ### Admin
 
@@ -378,6 +499,12 @@ surface they will keep.
 non-active key id has zero rows remaining. Removing `MASTER_KEY_OLD` while rows
 still reference a retired kid is the one irreversible mistake available in this
 design.
+
+Neither stub performs an authorization check, and the `501` is what makes that
+harmless: it is the same answer for every authenticated caller regardless of
+grants, and it reveals nothing. `assertRole(ctx, { type: "global" }, "admin")` has
+to be the first statement of each function when they are written — in `core`, not
+in the route, because authorization is written once.
 
 ## Error envelope
 
@@ -497,24 +624,35 @@ atomicity, so an oversized write is refused rather than made non-atomic.
 
 ## Request bodies
 
-| Schema                  | Shape                                                                                                      |
-| ----------------------- | ---------------------------------------------------------------------------------------------------------- |
-| `CreateProjectBody`     | `{ slug, name, description? }`                                                                             |
-| `UpdateProjectBody`     | `{ name?, description? }`                                                                                  |
-| `CreateEnvironmentBody` | `{ slug, name, description? }`                                                                             |
-| `BatchBody`             | `{ mode: "merge" \| "replace", set?, delete?, expected_rev?, reason? }`                                    |
-| `ImportBody`            | `{ format: "env" \| "json", content, mode, dry_run, expected_rev?, reason? }`                              |
-| `RollbackBody`          | `{ key, to_version, reason? }`                                                                             |
-| `RenameBody`            | `{ from, to }`                                                                                             |
-| `RekeyBody`             | `{ limit }`                                                                                                |
-| `RevealQuery`           | `{ reason: "reveal" \| "copy" \| "export" \| "run" }`                                                      |
-| `CreateGrantBody`       | Discriminated on `scope_type`: `global`, `project` (+`project`), `environment` (+`project`, `environment`) |
-| `UpdateIdentityBody`    | `{ display_name?, disabled? }`                                                                             |
-| `AuditQuery`            | `{ project?, environment?, actor?, action?, outcome?, since?, until?, cursor?, limit }`                    |
+| Schema                  | Shape                                                                                                                                                |
+| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `CreateProjectBody`     | `{ slug, name, description? }`                                                                                                                       |
+| `UpdateProjectBody`     | `{ name?, description? }`                                                                                                                            |
+| `CreateEnvironmentBody` | `{ slug, name, description? }`                                                                                                                       |
+| `BatchBody`             | `{ mode: "merge" \| "replace", set?, delete?, expected_rev?, reason? }`                                                                              |
+| `ImportBody`            | `{ format: "env" \| "json", content, mode, dry_run, expected_rev?, reason? }`                                                                        |
+| `RollbackBody`          | `{ key, to_version, reason? }`                                                                                                                       |
+| `RenameBody`            | `{ from, to }`                                                                                                                                       |
+| `RekeyBody`             | `{ limit }`                                                                                                                                          |
+| `RevealQuery`           | `{ reason: "reveal" \| "copy" \| "export" \| "run" }`                                                                                                |
+| `CreateGrantBody`       | Discriminated on `scope_type`: `global`, `project` (+`project`), `environment` (+`project`, `environment`). Plus `identity_id`, `role`, `expires_at` |
+| `UpdateIdentityBody`    | `{ display_name?, disabled? }`                                                                                                                       |
+| `CreateGroupBody`       | `{ slug, name, description? }`                                                                                                                       |
+| `UpdateGroupBody`       | `{ name?, description? }` — no `slug`                                                                                                                |
+| `AddGroupMemberBody`    | `{ identity_id }`                                                                                                                                    |
+| `CreateGroupGrantBody`  | Discriminated on `scope_type`, as above, but with `role` and `expires_at` and **no** `identity_id`                                                   |
+| `AuditQuery`            | `{ project?, environment?, actor?, action?, outcome?, since?, until?, cursor?, limit }`                                                              |
 
 Most live in `@prick/shared`, so the browser bundle and the MCP package validate
 against the same objects the Worker does. `RenameBody` and `RekeyBody` are
 transport-local.
+
+`expires_at` is an **absolute** epoch-millisecond timestamp, or `null` for a grant
+that does not expire. The grant terms are factored out and shared between
+`CreateGrantBody` and `CreateGroupGrantBody`, so a grant on a group and a grant on
+an identity cannot drift in role vocabulary or expiry semantics — the day that
+stops being true is the day "why does Bob have production?" stops having one
+answer.
 
 Two of them carry design decisions worth stating:
 

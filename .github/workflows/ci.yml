@@ -335,6 +335,69 @@ jobs:
       - name: Source file size
         run: mise run lint:loc
 
+      # ---------------------------------------------------------------------
+      # The deployment guard, run on EVERY push rather than only at deploy time.
+      #
+      # It used to live solely in deploy.yml, which fired on every push to main.
+      # Making that workflow manual-only was right -- a self-hosted product
+      # should not gate merges on the maintainer's Cloudflare credentials -- but
+      # it silently took this assertion with it, leaving the single most
+      # important invariant in the repository checked only by the person who
+      # remembered to dispatch a deploy.
+      #
+      # A workers.dev hostname that Cloudflare Access is not attached to is a
+      # complete bypass of the authentication model: the whole application,
+      # every secret, reachable without a JWT. Same for preview URLs. These two
+      # settings are the difference between a self-hosted secrets manager and a
+      # public one, and they need no credentials to check.
+      # ---------------------------------------------------------------------
+      - name: Worker is not publicly reachable
+        run: |
+          set -euo pipefail
+          config=""
+          for candidate in packages/app/wrangler.jsonc packages/app/wrangler.json packages/app/wrangler.toml; do
+            if [ -f "$candidate" ]; then config="$candidate"; break; fi
+          done
+          if [ -z "$config" ]; then
+            echo "::error::No wrangler configuration found under packages/app/."
+            exit 1
+          fi
+
+          fail=0
+          for key in workers_dev preview_urls; do
+            if ! grep -Eq "\"?${key}\"?[[:space:]]*[:=][[:space:]]*false" "$config"; then
+              echo "::error file=${config}::${key} must be explicitly set to false. Leaving it unset exposes a hostname that Cloudflare Access does not protect, which bypasses authentication entirely."
+              fail=1
+            fi
+          done
+          [ "$fail" -eq 0 ]
+          echo "${config}: workers_dev and preview_urls are both false."
+
+      # ---------------------------------------------------------------------
+      # No secret value may be returned from a SvelteKit server load.
+      #
+      # SvelteKit serialises whatever a load or form action returns into
+      # __sveltekit_data on the page, so a reveal called from a server load puts
+      # plaintext into the HTML. The secrets subtree sets `ssr = false` and
+      # fetches from the browser precisely to avoid that.
+      #
+      # A comment in the layout claimed CI enforced this. It did not. Either the
+      # claim or the check had to go, and the check is the one worth having --
+      # an unchecked invariant that everyone believes is checked is worse than
+      # an acknowledged convention.
+      # ---------------------------------------------------------------------
+      - name: No secret value reachable from a server load
+        run: |
+          set -euo pipefail
+          hits="$(grep -rlnE 'revealSecret|exportSecrets|revealSecrets|decryptSecretValue' \
+                    --include='+*.server.ts' packages/app/src/routes || true)"
+          if [ -n "$hits" ]; then
+            echo "::error::A server load reaches a secret-revealing function. SvelteKit serialises load return values into the page payload, so this puts plaintext into HTML. Fetch from the browser inside the ssr=false subtree instead."
+            echo "$hits"
+            exit 1
+          fi
+          echo "No +*.server.ts under src/routes reaches a reveal or export path."
+
       - name: No upstream references
         run: |
           set -euo pipefail

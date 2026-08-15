@@ -10,6 +10,10 @@ A self-hosted secrets manager on Cloudflare. Two halves in one repo:
 - `packages/app` — one Cloudflare Worker serving both a Hono JSON API (`/api/*`) and a SvelteKit
   admin UI (everything else).
 
+Plus, around them: `packages/shared` (zod schemas both halves validate against), `packages/mcp` and
+`packages/npm/prick` (published alongside the CLI), `packages/docs` (a **separate** Worker that
+renders the root `docs/` Markdown in place), and `action/` (the composite GitHub Action).
+
 ## Setup
 
 ```bash
@@ -75,11 +79,18 @@ Breaking these fails the build, not review.
 | Domain logic, transport-agnostic           | `packages/app/src/lib/server/core/`        |
 | Crypto (envelope, AAD, keyring)            | `packages/app/src/lib/server/crypto/`      |
 | Access JWT verification                    | `packages/app/src/lib/server/auth/`        |
+| Hono route mounting and middleware         | `packages/app/src/lib/server/http/`        |
 | Drizzle schema                             | `packages/app/src/lib/server/db/schema.ts` |
 | UI routes                                  | `packages/app/src/routes/`                 |
+| Prose documentation                        | `docs/` (root, not `packages/docs/`)       |
 
 The domain layer takes `(db, actor, input)` and knows nothing about HTTP. Hono routes and SvelteKit
 loads are both thin transports over it — so authorization is written once, in `core`.
+
+`docs/openapi.json` is **generated** from the Hono router by `mise run openapi`, and
+`mise run openapi:check` fails if it is stale. Never hand-edit it; if you changed a route,
+regenerate it in the same commit. It is the source of truth for the HTTP surface, and
+`docs/reference/api.md` summarises it rather than duplicating it.
 
 ## UI
 

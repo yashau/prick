@@ -10,20 +10,30 @@ and the Worker's `vars` in `packages/app/wrangler.jsonc`.
 
 ## CLI environment variables
 
-| Variable                   | Fallback                  | Equivalent flag   | Purpose                            |
-| -------------------------- | ------------------------- | ----------------- | ---------------------------------- |
-| `PRK_API_URL`              |                           | `--api-url`       | Base URL of the Worker             |
-| `PRK_PROJECT`              |                           | `-P`, `--project` | Default project                    |
-| `PRK_ENV`                  |                           | `-E`, `--env`     | Default environment                |
-| `PRK_ACCESS_CLIENT_ID`     | `CF_ACCESS_CLIENT_ID`     |                   | Access service token client id     |
-| `PRK_ACCESS_CLIENT_SECRET` | `CF_ACCESS_CLIENT_SECRET` |                   | Access service token client secret |
+| Variable                   | Fallback                  | Equivalent flag          | Purpose                            |
+| -------------------------- | ------------------------- | ------------------------ | ---------------------------------- |
+| `PRK_API_URL`              |                           | `--api-url`              | Base URL of the Worker             |
+| `PRK_PROJECT`              |                           | `-P`, `--project`        | Default project                    |
+| `PRK_ENV`                  |                           | `-E`, `--env`            | Default environment                |
+| `PRK_ACCESS_CLIENT_ID`     | `CF_ACCESS_CLIENT_ID`     | `--access-client-id`     | Access service token client id     |
+| `PRK_ACCESS_CLIENT_SECRET` | `CF_ACCESS_CLIENT_SECRET` | `--access-client-secret` | Access service token client secret |
 
 An explicit flag wins over the variable. `PRK_*` is checked before the
 `CF_ACCESS_*` fallbacks, which exist so that CI already configured for
-`cloudflared` works unchanged.
+`cloudflared` works unchanged, and **both halves must come from the same place** —
+a `PRK_` id paired with a `CF_` secret is not a credential.
 
-The service-token pair is defined in `crates/prick-auth/src/credential.rs` but is
-not read by any request path yet.
+The pair is resolved in `crates/prick-auth/src/credential.rs` and attached as the
+`CF-Access-Client-Id` and `CF-Access-Client-Secret` headers by
+`crates/prick-api/src/client.rs`.
+
+`--access-client-secret-file` has no environment variable by design: it exists
+precisely so the secret never reaches argv or the process environment. It takes
+precedence over both the flag and `PRK_ACCESS_CLIENT_SECRET`. See
+[the CLI reference](/reference/cli#global-flags).
+
+`PRK_API_URL` is only needed when you have not run `prk login`, which records the
+server it signed in to.
 
 ## Worker secrets
 
@@ -154,8 +164,11 @@ The parts that matter, beyond the vars above.
 | `assets.directory`      | Served **without invoking the Worker**, which is why `packages/app/_headers` exists                                                                          |
 | `head_sampling_rate: 1` | Sample nothing away. This is an admin console's request volume, not a CDN's, and a dropped log line is a missing answer to "who read that secret"            |
 
-CI greps the resolved configuration for `workers_dev` and `preview_urls` and
-fails the deploy workflow if either is not explicitly `false`.
+The `guard` job in `.github/workflows/deploy.yml` greps the config for
+`workers_dev` and `preview_urls` and blocks both deploy jobs if either is not
+explicitly `false`. Note that `deploy.yml` is manual-only, so that assertion runs
+when somebody deploys rather than on every push — see
+[Development](/contributing/development#deployment-guard).
 
 ## Local development
 
