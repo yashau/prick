@@ -1,23 +1,33 @@
 name: Deploy
 
+# MANUAL ONLY. Deliberately not triggered by a push, and not a CI gate.
+#
+# prick is self-hosted: the thing that matters is that someone else's
+# `wrangler deploy` works, not that this repository keeps an instance running.
+# An automatic production deploy here would gate every merge on Cloudflare
+# credentials this project does not need, and would make a red X on `main` mean
+# "the maintainer's instance is unhappy" rather than "the code is broken".
+#
+# The `guard` job below is the part worth keeping on every change -- it asserts
+# `workers_dev: false` and `preview_urls: false` -- and CI runs that
+# independently, with no secrets.
 on:
-  push:
-    branches: [main]
-  pull_request:
-    types: [opened, synchronize, reopened]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Which deployment to target"
+        type: choice
+        options: [production, preview]
+        default: preview
 
 permissions:
   contents: read
 
-# Production deploys serialise and are never cancelled: interrupting one between
+# Deploys serialise and are never cancelled: interrupting one between
 # `d1 migrations apply` and `deploy` leaves the schema ahead of the code.
-# Preview deploys for a pull request may freely supersede each other.
 concurrency:
-  group: >-
-    deploy-${{ github.event_name == 'push'
-      && 'production'
-      || format('preview-{0}', github.event.pull_request.number) }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: deploy-${{ inputs.environment }}
+  cancel-in-progress: false
 
 env:
   # The D1 binding as declared in packages/app/wrangler.jsonc.
@@ -76,23 +86,22 @@ jobs:
           echo "Deployment guard passed."
 
   # ---------------------------------------------------------------------------
-  # Preview: same-repository pull requests only.
+  # Preview: a version uploaded without shifting production traffic.
   #
-  # This uses `pull_request`, NOT `pull_request_target`. `pull_request_target`
-  # runs in the context of the base repository with full access to secrets while
-  # checking out attacker-controlled code -- the exact shape of the March 2026
-  # trivy-action incident. zizmor flags it, and there is no version of it that
-  # is safe here.
+  # Manual dispatch only, like the whole workflow. It deliberately does NOT run
+  # on pull requests: doing that safely for forks would mean
+  # `pull_request_target`, which runs with full access to secrets while checking
+  # out attacker-controlled code -- the exact shape of the March 2026
+  # trivy-action incident. There is no version of it that is safe here, so the
+  # feature is absent rather than guarded.
   #
-  # The same-repository condition means fork pull requests skip this job rather
-  # than failing on a missing secret.
+  # The alias is the commit being deployed, which is the only identifier that
+  # exists for a manually dispatched run.
   # ---------------------------------------------------------------------------
   preview:
     name: preview
     needs: guard
-    if: >-
-      github.event_name == 'pull_request'
-      && github.event.pull_request.head.repo.full_name == github.repository
+    if: inputs.environment == 'preview'
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     environment:
@@ -157,13 +166,13 @@ jobs:
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           workingDirectory: packages/app
           packageManager: pnpm
-          command: versions upload --preview-alias pr-${{ github.event.pull_request.number }}
+          command: versions upload --preview-alias sha-${{ github.sha }}
 
       - name: Summary
         env:
           # Through the environment, never interpolated into the script body:
           # DEPLOY_URL is an action output and so is not ours to trust.
-          ALIAS: pr-${{ github.event.pull_request.number }}
+          ALIAS: sha-${{ github.sha }}
           DEPLOY_URL: ${{ steps.deploy.outputs.deployment-url }}
         run: |
           {
@@ -181,7 +190,7 @@ jobs:
   production:
     name: production
     needs: guard
-    if: github.event_name == 'push'
+    if: inputs.environment == 'production'
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     environment:
