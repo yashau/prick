@@ -23,24 +23,51 @@
 
   let rekeying = $state(false);
 
-  /**
-   * `null` means the SERVER does not implement the key ring yet, not that the
-   * ring is empty. The distinction is the whole reason this is nullable: an
-   * empty ring rendered as "nothing outstanding" would show a green
-   * "safe to remove MASTER_KEY_OLD" on an install nobody has counted the rows
-   * of, and removing that key while any row still references a retired kid is
-   * the one irreversible mistake this design leaves available.
-   */
   const keyring = $derived(data.keyring);
 
+  /**
+   * Rows the server COUNTED under a key that is not the active one.
+   *
+   * Summed from the entries rather than inferred from `safeToRemoveOldKey`,
+   * because the two are not the same statement: the indicator can be false
+   * while this is zero -- a stored ciphertext the server could not attribute to
+   * any key id does not belong to an entry and cannot be shown in the table,
+   * and an unknown must not read as safe. That case gets its own message below
+   * rather than a "0 values" sentence that reads like a bug.
+   */
   const outstanding = $derived(
-    (keyring?.entries ?? [])
+    keyring.entries
       .filter((entry) => entry.status !== 'active')
       .reduce((total, entry) => total + entry.rowsRemaining, 0)
   );
 
-  const total = $derived(Math.max(outstanding, 1));
-  const migrated = $derived(outstanding === 0 ? 100 : 0);
+  const onActiveKey = $derived(
+    keyring.entries.find((entry) => entry.status === 'active')?.rowsRemaining ?? 0
+  );
+
+  const total = $derived(onActiveKey + outstanding);
+  const migrated = $derived(total === 0 ? 100 : Math.round((onActiveKey / total) * 100));
+
+  /**
+   * The action's two numbers, read through a guard rather than a cast.
+   *
+   * `enhance` types `result.data` as `Record<string, unknown>`, because a form
+   * can post to any action. Narrowing here means a change to what the action
+   * returns shows up as a wrong toast in review rather than as `undefined rows`
+   * on somebody's screen.
+   */
+  function rekeyMessage(payload: Record<string, unknown> | undefined): string {
+    const rekeyed = payload?.['rekeyed'];
+    const remaining = payload?.['remaining'];
+
+    if (typeof rekeyed !== 'number' || typeof remaining !== 'number') {
+      return 'Rekey page processed.';
+    }
+
+    return remaining === 0
+      ? `Re-encrypted ${pluralise(rekeyed, 'row')}. Nothing outstanding.`
+      : `Re-encrypted ${pluralise(rekeyed, 'row')}; ${remaining.toLocaleString()} still to go.`;
+  }
 </script>
 
 <svelte:head>
@@ -58,26 +85,10 @@
   Removing MASTER_KEY_OLD while any row still references a retired key id is
   the one irreversible mistake this design leaves available: those values can
   never be decrypted again, by anyone, ever. So the UI has to be what tells
-  you, and it only goes green at zero.
+  you, and it only goes green at zero -- counted by the server, over the real
+  rows, every time this page loads.
 -->
-{#if keyring === null}
-  <!--
-    NOT an error, and deliberately not silence either. `core.getKeyringStatus`
-    is a stub in this build and `GET /api/v1/admin/keyring` answers 501, so
-    there is no row count to reason about. Saying nothing would leave the
-    screen looking like a healthy install with an empty ring.
-  -->
-  <Alert.Root variant="destructive">
-    <TriangleAlertIcon aria-hidden="true" />
-    <Alert.Title>Key ring status is unavailable in this build</Alert.Title>
-    <Alert.Description>
-      The server has not implemented the row counts behind this panel yet, so nothing here can
-      tell you whether <code class="font-mono text-xs">MASTER_KEY_OLD</code> is still needed.
-      Treat it as still needed: removing it while any row references a retired key id makes those
-      values permanently undecryptable, and there is no recovery path.
-    </Alert.Description>
-  </Alert.Root>
-{:else if keyring.safeToRemoveOldKey}
+{#if keyring.safeToRemoveOldKey}
   <Alert.Root>
     <CircleCheckIcon aria-hidden="true" />
     <Alert.Title>Safe to remove MASTER_KEY_OLD</Alert.Title>
@@ -87,7 +98,7 @@
       the Worker's secrets now loses nothing.
     </Alert.Description>
   </Alert.Root>
-{:else}
+{:else if outstanding > 0}
   <Alert.Root variant="destructive">
     <TriangleAlertIcon aria-hidden="true" />
     <Alert.Title>Do not remove MASTER_KEY_OLD yet</Alert.Title>
@@ -95,6 +106,24 @@
       {pluralise(outstanding, 'value')} still can only be opened with a retired key. Removing that
       key now would make them permanently undecryptable — there is no recovery path and no backup
       this app can restore from. Let the rekey finish first.
+    </Alert.Description>
+  </Alert.Root>
+{:else}
+  <!--
+    Nothing is outstanding and it is still not safe. That means the server found
+    a stored ciphertext it could not attribute to any key id -- a row this
+    application cannot have written, because a value row always carries its kid
+    and a deletion carries neither. It belongs to no row of the table below, so
+    the only honest thing the screen can do is refuse to go green and say why.
+  -->
+  <Alert.Root variant="destructive">
+    <TriangleAlertIcon aria-hidden="true" />
+    <Alert.Title>Do not remove MASTER_KEY_OLD yet</Alert.Title>
+    <Alert.Description>
+      Every key id below reports zero rows, but the server found at least one stored value it
+      could not attribute to any key id. A row like that cannot have been written by this
+      application, so nothing here can tell you which key protects it. Investigate before removing
+      anything.
     </Alert.Description>
   </Alert.Root>
 {/if}
@@ -115,14 +144,6 @@
     </Card.Header>
 
     <Card.Content>
-      {#if keyring === null}
-        <p class="text-muted-foreground text-sm">
-          Not available: <code class="font-mono text-xs">GET /api/v1/admin/keyring</code> answers
-          <code class="font-mono text-xs">501 NOT_IMPLEMENTED</code> in this build. The key ids
-          themselves are not secret — they are stored in every envelope in the clear — so this
-          table will show all of them once the server counts the rows.
-        </p>
-      {:else}
       <Table.Root>
         <Table.Caption class="sr-only">Key ids known to this install.</Table.Caption>
         <Table.Header>
@@ -168,7 +189,6 @@
           {/each}
         </Table.Body>
       </Table.Root>
-      {/if}
     </Card.Content>
   </Card.Root>
 
@@ -192,18 +212,24 @@
           : `${outstanding} rows still on a retired key`}
       />
       <p class="text-sm">
-        {#if keyring === null}
-          Unknown — the server does not report row counts in this build.
-        {:else if outstanding === 0}
+        {#if outstanding === 0}
           Nothing outstanding.
         {:else}
           {pluralise(outstanding, 'row')} on a retired key, out of {total.toLocaleString()}.
         {/if}
       </p>
       <Separator />
+      <!--
+        NO SCHEDULE, AND THE SCREEN SAYS SO.
+
+        Nothing in wrangler.jsonc triggers this. An operator told that a
+        background job is working through it would wait for a count that never
+        moves, and the thing they are waiting to do safely is delete a key.
+      -->
       <p class="text-muted-foreground text-xs">
-        A cron trigger works through this in bounded pages so that a large database never needs a
-        single long transaction. This button runs one page immediately.
+        Nothing runs this on a schedule. Each press re-encrypts up to 100 rows in one transaction
+        and reports how many are left; press it until nothing is outstanding. Ordinary writes also
+        move rows onto the active key, so the count falls on its own as secrets are updated.
       </p>
     </Card.Content>
 
@@ -216,7 +242,7 @@
           return async ({ result }) => {
             rekeying = false;
             if (result.type === 'success') {
-              toast.success('Rekey page processed.');
+              toast.success(rekeyMessage(result.data));
               await invalidateAll();
               return;
             }
@@ -226,11 +252,11 @@
       >
         <input type="hidden" name="limit" value="100" />
         <!--
-          Disabled while the status is unknown as well as when nothing is
-          outstanding. `POST /api/v1/admin/rekey` answers 501 in this build, so
-          the button would only ever produce an error toast.
+          Disabled at zero because there is nothing for it to do — including in
+          the unattributed case above, which a rekey cannot fix: a row with no
+          key id names no key to move it off.
         -->
-        <Button type="submit" disabled={rekeying || keyring === null || outstanding === 0}>
+        <Button type="submit" disabled={rekeying || outstanding === 0}>
           {#if rekeying}<Spinner class="size-3" />{/if}
           {rekeying ? 'Rekeying…' : 'Run one page now'}
         </Button>

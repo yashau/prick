@@ -484,27 +484,29 @@ consulted.
 
 ### Admin
 
-| Method | Path             | Status today |
+| Method | Path             | Requires     |
 | ------ | ---------------- | ------------ |
-| `GET`  | `/admin/keyring` | `501`        |
-| `POST` | `/admin/rekey`   | `501`        |
+| `GET`  | `/admin/keyring` | Global admin |
+| `POST` | `/admin/rekey`   | Global admin |
 
-Both are mounted and both answer `501 NOT_IMPLEMENTED`, because the domain
-functions are stubs. `501` is a truthful answer a client can branch on, whereas a
-`404` from an unmounted route is indistinguishable from a typo — and fixing the
-paths now means the settings screen and the cron trigger are written against the
-surface they will keep.
-
-`GET /admin/keyring` will report `safeToRemoveOldKey`, true only when every
+`GET /admin/keyring` reports `safeToRemoveOldKey`, true only when every
 non-active key id has zero rows remaining. Removing `MASTER_KEY_OLD` while rows
 still reference a retired kid is the one irreversible mistake available in this
-design.
+design, so the counts are taken live rather than read from a stored progress
+figure, and they cover **history** as well as current versions — an earlier
+version stranded under a retired kid is a rollback that stops working when the
+key goes.
 
-Neither stub performs an authorization check, and the `501` is what makes that
-harmless: it is the same answer for every authenticated caller regardless of
-grants, and it reveals nothing. `assertRole(ctx, { type: "global" }, "admin")` has
-to be the first statement of each function when they are written — in `core`, not
-in the route, because authorization is written once.
+`POST /admin/rekey` re-encrypts one page onto the active key and returns
+`{ rekeyed, remaining }`. **Nothing calls it on a schedule**: there is no cron
+trigger, so a rotation advances only while something keeps calling it, and it is
+finished when `remaining` reaches zero. A row that cannot be decrypted fails the
+whole page instead of being skipped — a skipped row would still count as gone,
+and the ring would then report itself safe to prune while an unreadable value
+remained.
+
+Both authorization checks are the first statement of the corresponding function
+in `core`, not of the route, because authorization is written once.
 
 ## Error envelope
 

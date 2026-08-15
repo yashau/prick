@@ -11,30 +11,27 @@ import { validate } from "../validate.js";
  * Key ring status and rekeying.
  *
  * ---------------------------------------------------------------------------
- * BOTH HANDLERS CURRENTLY ANSWER 501, AND THAT IS ACCURATE
+ * AUTHORIZATION LIVES IN `core`, NOT HERE
  * ---------------------------------------------------------------------------
- * `core/keyring.ts` is a pair of stubs that throw `NOT_IMPLEMENTED`. The routes
- * are mounted anyway, for two reasons: `501 NOT_IMPLEMENTED` is a truthful
- * answer that a client can branch on, whereas a `404` from an unmounted route is
- * indistinguishable from a typo; and mounting them now fixes the paths, so the
- * settings screen and the cron trigger are written against the surface they will
- * keep.
+ * Both handlers require GLOBAL admin, and both checks are the first statement of
+ * the corresponding function in `core/keyring.ts`. This layer deliberately adds
+ * none: authorization is written once, and a check here would be the second
+ * place it lives -- two places that must agree, in the one area where they
+ * silently disagreeing is a breach rather than a bug.
+ *
+ * `rekeyPage` is the reason that matters. It re-encrypts rows, so it is a
+ * mutation, and a mutation reachable by any authenticated caller would be
+ * unauthenticated in effect.
  *
  * ---------------------------------------------------------------------------
- * FOR WHOEVER IMPLEMENTS `core/keyring.ts`
+ * NOTHING RUNS THE REKEY ON A SCHEDULE
  * ---------------------------------------------------------------------------
- * Neither stub performs an authorization check today, and this layer must not
- * add one -- authorization is written once, in `core`, and a check here would be
- * the second place it lives. So it has to go in there: both functions need
- * `assertRole(ctx, { type: "global" }, "admin")` as their first statement.
+ * There is no cron trigger in `wrangler.jsonc`. A rotation advances only when
+ * something calls `POST /admin/rekey`, page by page, until `remaining` is zero
+ * -- the settings screen has a button, and that is the whole mechanism. Do not
+ * describe it as a background sweep anywhere until one exists.
  *
- * Until then the 501 leaks nothing: it is the same answer for every
- * authenticated caller regardless of grants, and it reveals no data. But a
- * `rekeyPage` that starts re-encrypting rows without that line would be an
- * unauthenticated-in-effect mutation, so it is written down here as well as
- * there.
- *
- * The rekey itself re-encrypts under the IDENTICAL AAD with a new `kid`, and the
+ * The rekey re-encrypts under the IDENTICAL AAD with a new `kid`, and the
  * version does NOT change. That is exactly why `kid` lives in the envelope
  * rather than in the AAD: a rekey must not alter a row's identity, only the key
  * that protects it.
@@ -47,11 +44,10 @@ export function adminRoutes(): Hono<ApiEnv> {
     describe({
       summary: "Key ring status",
       description:
-        "Which key ids exist, how many rows still reference each, and whether `MASTER_KEY_OLD` can be removed.\n\n`safeToRemoveOldKey` is true only when every non-active kid has zero rows remaining. Removing the old key while rows still reference a retired kid is the **one irreversible mistake** available in this design — those values can never be decrypted again — so the indicator only goes green at zero, and the UI has to be what tells you.\n\n**Not implemented yet:** answers `501`.",
+        "Which key ids exist, how many rows still reference each, and whether `MASTER_KEY_OLD` can be removed. Requires global admin.\n\n`safeToRemoveOldKey` is true only when every non-active kid has zero rows remaining. Removing the old key while rows still reference a retired kid is the **one irreversible mistake** available in this design — those values can never be decrypted again — so the indicator only goes green at zero, and the UI has to be what tells you.\n\nThe counts are taken live over `secret_versions` and include **history**, not just current versions: an earlier version stranded under a retired kid is a rollback that stops working when the key goes.",
       tags: ["admin"],
       operationId: "getKeyringStatus",
       responses: { 200: jsonResponse("The ring.", KeyringStatusResponse) },
-      errors: { 501: "`NOT_IMPLEMENTED` — the domain function is a stub in this build." },
     }),
     async (c) => c.json(await getKeyringStatus(core(c))),
   );
@@ -61,12 +57,11 @@ export function adminRoutes(): Hono<ApiEnv> {
     describe({
       summary: "Re-encrypt one page of rows onto the active key",
       description:
-        "Incremental and resumable: a page per invocation, driven by this endpoint and by a cron trigger, so a large database never needs a batch that approaches the 30 s ceiling.\n\nThe re-encryption uses the **identical** AAD with the new `kid`, and the row's version is unchanged — a rekey alters the key that protects a row, never the row's identity.\n\n**Not implemented yet:** answers `501`.",
+        "Incremental and resumable: one page per invocation, so a large database never needs a batch that approaches the 30 s ceiling. Requires global admin.\n\n**Nothing calls this on a schedule.** There is no cron trigger; a rotation advances only while something keeps calling this endpoint, and it is finished when `remaining` reaches zero.\n\nThe re-encryption uses the **identical** AAD with the new `kid`, and the row's version is unchanged — a rekey alters the key that protects a row, never the row's identity.\n\nA row that cannot be decrypted fails the whole page rather than being skipped: a skipped row would still be counted as gone, and the ring would report itself safe to prune while an unreadable value remained.",
       tags: ["admin"],
       operationId: "rekeyPage",
       requestBody: jsonBody("How many rows to re-encrypt in this invocation.", RekeyBody),
       responses: { 200: jsonResponse("Progress.", RekeyResultResponse) },
-      errors: { 501: "`NOT_IMPLEMENTED` — the domain function is a stub in this build." },
     }),
     validate("json", RekeyBody),
     async (c) => c.json(await rekeyPage(core(c), c.req.valid("json").limit)),

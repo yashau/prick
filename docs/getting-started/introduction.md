@@ -58,16 +58,14 @@ projects, environments, secrets, identities, grants, groups and the audit query
 — and the whole HTTP surface is mounted on top of it. The `prk` CLI logs in,
 stores its token, sends service-token headers and runs every subcommand.
 
-Two gaps remain, and both are marked where they apply:
+One gap remains, and it is marked where it applies:
 
-- **The rekey job does not exist.** `getKeyringStatus` and `rekeyPage` in
-  `packages/app/src/lib/server/core/keyring.ts` are stubs, so
-  `GET /api/v1/admin/keyring` and `POST /api/v1/admin/rekey` answer `501`. A
-  rotation can be started but not finished. See
+- **Nothing runs the rekey on a schedule.** `getKeyringStatus` and `rekeyPage`
+  are implemented and `GET /api/v1/admin/keyring` and `POST /api/v1/admin/rekey`
+  answer for real, but there is no cron trigger. A rotation advances one page per
+  call and is finished when `remaining` reaches zero — the settings screen has a
+  button, and that is the whole mechanism. See
   [Key rotation](/guides/key-rotation).
-- **The web UI reads fixture data.** Every screen exists and renders, but its
-  SvelteKit server loads still call an in-memory fixture rather than the domain
-  layer. The seam is marked in each `+page.server.ts`.
 
 Nothing here describes behaviour that does not exist without saying so.
 

@@ -16,7 +16,7 @@ import type { EnvironmentSummary } from "../core/environments.js";
 import type { GrantRecord, IdentityRecord, UnknownIdentity } from "../core/identities.js";
 import type { EffectivePermissions } from "../core/permissions.js";
 import type { GroupGrantRecord, GroupMemberRecord, GroupRecord } from "../core/groups.js";
-import type { KeyringStatus } from "../core/keyring.js";
+import { REKEY_MAX_PAGE, type KeyringStatus } from "../core/keyring.js";
 import type { ProjectSummary } from "../core/projects.js";
 import type {
   ImportResult,
@@ -167,8 +167,16 @@ export type RenameBody = z.infer<typeof RenameBody>;
  * drive the same function; the limit is what makes it resumable rather than a
  * request that either finishes or times out having done an unknown amount.
  */
+/*
+ * `max` is `REKEY_MAX_PAGE` itself, imported rather than repeated.
+ *
+ * It used to allow 1000 while `rekeyPage` clamped to 100, so asking for 1000
+ * got you 100 and a success -- a caller pacing itself off the number it asked
+ * for would have been wrong by a factor of ten with nothing to notice. Refusing
+ * at the edge says so; two literals that must agree eventually do not.
+ */
 export const RekeyBody = z
-  .object({ limit: z.number().int().min(1).max(1000).default(100) })
+  .object({ limit: z.number().int().min(1).max(REKEY_MAX_PAGE).default(REKEY_MAX_PAGE) })
   .strict();
 export type RekeyBody = z.infer<typeof RekeyBody>;
 

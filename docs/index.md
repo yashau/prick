@@ -32,10 +32,10 @@ so at the point where it matters rather than describing intent as fact.
 | Access JWT verification, claims, authorization, bootstrap                 | Implemented                                                                                  |
 | Domain layer: projects, environments, secrets, identities, grants, groups | Implemented                                                                                  |
 | Domain layer: audit query, including per-scope narrowing                  | Implemented                                                                                  |
-| Domain layer: key ring status and the rekey job                           | **Not implemented.** Both functions are stubs; their routes answer `501`                     |
+| Domain layer: key ring status and the rekey job                           | Implemented. **No cron** — a rotation advances one page per call to `POST /admin/rekey`      |
 | HTTP API                                                                  | Fully mounted. `docs/openapi.json` is generated from the router, and CI fails if it is stale |
 | `prk` CLI                                                                 | Login, token storage, service tokens and every subcommand are wired                          |
-| Web UI                                                                    | Every screen exists, but its server loads still read **fixture data**                        |
+| Web UI                                                                    | Every screen exists and reads the domain layer                                               |
 
 No release has been cut, so `@yashau/prick` is not on npm yet — build the binary
 locally with `mise run build:rust`.

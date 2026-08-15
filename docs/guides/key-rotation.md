@@ -15,33 +15,25 @@ Rotation replaces the master key without downtime and without a bulk migration
 window. Two keys are loaded at once: the new one, which everything is written
 under, and the retired one, which old rows are still read under.
 
-:::caution[The rekey job is still not implemented]
-The key ring, the two-key derivation and the validation are implemented
-(`packages/app/src/lib/server/crypto/keyring.ts`), and the two admin routes are
-mounted. The **domain functions behind them are not**: `getKeyringStatus` and
-`rekeyPage` in `packages/app/src/lib/server/core/keyring.ts` are stubs, so
-`GET /api/v1/admin/keyring` and `POST /api/v1/admin/rekey` answer
-`501 NOT_IMPLEMENTED` to every authenticated caller. No cron trigger is configured
-in `packages/app/wrangler.jsonc`, and the settings screen renders against fixture
-data rather than the real ring.
-
-Ordinary writes **do** migrate rows — the secrets write path is implemented, and
-every write produces a new version under the active key. What is missing is the
-sweep for rows nobody touches, and therefore any trustworthy point at which it is
-safe to remove `MASTER_KEY_OLD`. Do not remove it.
+:::caution[Nothing runs the rekey on a schedule]
+There is no cron trigger in `packages/app/wrangler.jsonc`, so nothing sweeps
+rows in the background. The rekey runs when you run it — the **Run one page
+now** button on the settings screen, or a `POST /api/v1/admin/rekey` — and each
+invocation moves one bounded page and tells you how many rows are left. Press it
+until that number is zero.
 :::
-
-The routes are mounted ahead of the implementation on purpose. `501` is a truthful
-answer a client can branch on, whereas a `404` from an unmounted route is
-indistinguishable from a typo — and fixing the paths now means the settings screen
-and the cron trigger are written against the surface they will keep.
 
 ## The rule
 
 **Never remove a retired key while any row still references its key id.** Those
 values become permanently undecryptable. It is the one irreversible mistake
-available in this design, which is why the readiness signal is meant to be
-computed rather than judged.
+available in this design, which is why the readiness signal is computed rather
+than judged: `GET /api/v1/admin/keyring` counts the actual rows in
+`secret_versions`, grouped by the key id in each envelope, every time it is
+asked. It never reports a cached number.
+
+Both admin routes require a **global admin** grant. An admin grant on a project
+or a single environment is not enough — the key ring is installation-wide.
 
 ## The flow
 
@@ -94,35 +86,79 @@ key is decrypt-only.
 
 ### 5. Re-encrypt, incrementally
 
+Two things move rows onto the new key, and you generally want both.
+
+**Ordinary writes.** Any write to a secret produces a new version sealed under
+the active key, so normal traffic migrates rows on its own:
+
 ```bash
 prk secrets set DATABASE_URL --project api --env production
 ```
 
-Any write to a secret produces a new version under the active key, so ordinary
-traffic migrates rows on its own. The dedicated job is meant to do the rest a page
-at a time, so no single request has to re-encrypt a large database.
+**The rekey**, for everything nobody is touching. Open the settings screen and
+press **Run one page now**, or drive it directly:
 
-:::caution[The sweep is not implemented]
-`POST /api/v1/admin/rekey` is mounted but answers `501`, so there is currently no
-mechanism to migrate the rows nobody touches. Ordinary writes are the only thing
-moving rows onto the new key today.
+```bash
+curl -X POST https://prick.example.com/api/v1/admin/rekey \
+  -H 'Content-Type: application/json' \
+  --data '{"limit":100}'
+```
+
+Each call answers with what it did:
+
+```json
+{ "rekeyed": 100, "remaining": 2417 }
+```
+
+One call is one page and one database transaction. A page is capped at 100 rows
+however large a `limit` you send, because the whole page commits in a single
+`batch()` — splitting it across two would mean a failure in the second left the
+first committed, and D1 documents a 30-second ceiling on a transaction. Call it
+again while `remaining` is above zero; the endpoint is resumable and repeating a
+call that already succeeded is a no-op rather than a second pass.
+
+What a page does to each row: decrypt under the key the envelope names,
+re-encrypt under the active key with the **identical** authenticated data, and
+update the row in place. The row keeps its id, its environment, its key name,
+its version and its history position. The environment's revision counter is not
+bumped, so a rekey never invalidates an `expected_rev` a client is holding.
+
+**History is rekeyed too**, not just the current version of each secret. A
+rollback decrypts an arbitrary earlier version, so a version left behind under a
+retired key is a rollback that stops working the moment the key is removed.
+Deletion tombstones carry no ciphertext and no key id, so they are neither
+counted nor touched.
+
+:::danger[A row that will not open stops the whole page]
+If any row in a page fails authenticated decryption, the page fails: an audit
+row is written with `outcome: 'error'` naming the key and the key id, nothing is
+re-encrypted, and the request returns an error. The rekey does not skip the row
+and carry on — a skipped row would be left behind under a key you are about to
+delete while the remaining count fell to zero anyway, which is the one outcome
+that turns a maintenance job into data loss.
+
+`UNKNOWN_KID` means the envelope names a key the ring does not hold — restore it
+in `MASTER_KEY_OLD`. `DECRYPT_FAILED` means the bytes were not sealed against
+the identity they are stored under; treat that as tampering until proven
+otherwise.
 :::
 
 ### 6. Wait for zero, then remove the retired key
 
-`keyring_state` holds one row per key id ever observed, with a `rows_remaining`
-count. It is **recomputed** by the rekey job rather than maintained as a running
-counter, because a "safe to remove" indicator derived from a number that drifted
-is worse than no indicator at all. `safeToRemoveOldKey` goes true only when every
-non-active key id reports zero.
+The settings screen is the readout. `keyring_state` holds one row per key id
+ever observed, and its `rows_remaining` is **recomputed** by the rekey from the
+real rows rather than decremented as a running counter — a counter that drifted
+by one in the direction of zero is a green light on an installation that is not
+safe. The screen itself does not read that column at all: it counts live on
+every load.
 
-:::danger[There is no way to reach zero in this build]
-`GET /api/v1/admin/keyring` answers `501`, so nothing computes that count today.
-Treat this step as unreachable for now rather than as a check that happens to be
-passing.
-:::
+`safeToRemoveOldKey` goes true only when every non-active key id reports zero.
+It is also held false by a stored value the server cannot attribute to any key
+id — a row like that cannot have been written by this application, so nothing
+can say which key protects it, and an unknown must not read as safe. Investigate
+that before removing anything.
 
-Only when the retired key id reports zero rows may you remove it:
+Only when every retired key id reports zero rows may you remove it:
 
 ```bash
 pnpm --dir packages/app exec wrangler secret delete MASTER_KEY_OLD
@@ -153,6 +189,10 @@ No master key with id 4f2a9c1e7b3d5a08 is loaded. The keyring holds: 9d1c…
 to a key you retired, restore it in `MASTER_KEY_OLD` and redeploy — the data is
 fine, the ring is not.
 
+The settings screen shows the same thing before it becomes an error: a key id
+that the ring no longer holds is listed as `retired`, and if it still has rows
+against it, the indicator stays red.
+
 If it belongs to a key you never had, that row did not come from this
 deployment. Investigate where it came from before you do anything else.
 
@@ -164,8 +204,9 @@ opposite responses, and one message cannot tell them apart.
 
 There is no rule here that is right for every install. Rotate when you have
 reason to: a person with deploy access leaves, a laptop is lost, an audit
-requires it. Rotating on a calendar with no way to complete the migration is
-worse than not rotating — you accumulate retired keys you can never remove.
+requires it. Rotating on a calendar without following the migration through to
+zero is worse than not rotating — you accumulate retired keys you can never
+remove.
 
 ## Next
 

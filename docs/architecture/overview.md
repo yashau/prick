@@ -180,32 +180,28 @@ serialised page payload, which means there is nothing there to leak. Form action
 are used for projects, environments and grants only, never for anything that
 returns a value, because SvelteKit serialises an action's return into page data.
 
-:::caution[That rule is convention today]
-The intent is a build-time grep over every `+*.server.ts` for
-`revealSecret|exportSecrets|decrypt`. **No such check exists yet** — neither in
-`.github/workflows/ci.yml` nor in the Worker test suite. Until it lands, the rule
-holds because people hold it.
-:::
+:::note[That rule is enforced, not just held]
+`.github/workflows/ci.yml` greps every `+*.server.ts` under `src/routes` for
+**calls** to `revealSecret`, `revealSecrets`, `exportSecrets` or
+`decryptSecretValue`, on every push, and fails the build on a hit.
 
-:::caution[The UI reads fixture data]
-Every screen exists and renders, but each server load calls `fixtureApi` from
-`src/lib/client/fixtures.ts` rather than the domain layer. Each one carries a
-`FIXTURE SEAM` comment naming the `core` call that replaces it — in-process, never
-`event.fetch('/api/v1/…')`, because that hop cannot forward
-`CF-Access-JWT-Assertion` and would re-solve authorization a second, worse time.
+It matches call syntax rather than the bare names deliberately. The first version
+matched bare identifiers and failed on its own documentation — the comments that
+describe this very check name those functions — so naming one in prose, as this
+page does, is fine.
 :::
 
 ## Status
 
-| Layer                                                                | State                                              |
-| -------------------------------------------------------------------- | -------------------------------------------------- |
-| Crypto (`crypto/`)                                                   | Implemented                                        |
-| Access verification and authorization, incl. groups (`auth/`)        | Implemented                                        |
-| Projects, environments, secrets, identities, groups, audit (`core/`) | Implemented                                        |
-| Key ring status and rekey (`core/keyring.ts`)                        | Stubs that throw `NOT_IMPLEMENTED`                 |
-| Hono routes                                                          | Fully mounted, including the two that answer `501` |
-| SvelteKit UI                                                         | Complete screens, still reading fixture data       |
-| CLI                                                                  | Every command wired                                |
+| Layer                                                                | State                                               |
+| -------------------------------------------------------------------- | --------------------------------------------------- |
+| Crypto (`crypto/`)                                                   | Implemented                                         |
+| Access verification and authorization, incl. groups (`auth/`)        | Implemented                                         |
+| Projects, environments, secrets, identities, groups, audit (`core/`) | Implemented                                         |
+| Key ring status and rekey (`core/keyring.ts`)                        | Implemented; no cron, a rotation is driven by calls |
+| Hono routes                                                          | Fully mounted                                       |
+| SvelteKit UI                                                         | Complete screens, reading the domain layer          |
+| CLI                                                                  | Every command wired                                 |
 
 ## Next
 

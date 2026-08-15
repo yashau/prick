@@ -205,7 +205,7 @@
     },
     "/api/v1/admin/keyring": {
       "get": {
-        "description": "Which key ids exist, how many rows still reference each, and whether `MASTER_KEY_OLD` can be removed.\n\n`safeToRemoveOldKey` is true only when every non-active kid has zero rows remaining. Removing the old key while rows still reference a retired kid is the **one irreversible mistake** available in this design — those values can never be decrypted again — so the indicator only goes green at zero, and the UI has to be what tells you.\n\n**Not implemented yet:** answers `501`.",
+        "description": "Which key ids exist, how many rows still reference each, and whether `MASTER_KEY_OLD` can be removed. Requires global admin.\n\n`safeToRemoveOldKey` is true only when every non-active kid has zero rows remaining. Removing the old key while rows still reference a retired kid is the **one irreversible mistake** available in this design — those values can never be decrypted again — so the indicator only goes green at zero, and the UI has to be what tells you.\n\nThe counts are taken live over `secret_versions` and include **history**, not just current versions: an earlier version stranded under a retired kid is a rollback that stops working when the key goes.",
         "operationId": "getKeyringStatus",
         "responses": {
           "200": {
@@ -336,16 +336,6 @@
             },
             "description": "`INTERNAL`, `DECRYPT_FAILED`, `UNKNOWN_KID` or `SERVER_MISCONFIGURED`."
           },
-          "501": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiError"
-                }
-              }
-            },
-            "description": "`NOT_IMPLEMENTED` — the domain function is a stub in this build."
-          },
           "503": {
             "content": {
               "application/json": {
@@ -365,7 +355,7 @@
     },
     "/api/v1/admin/rekey": {
       "post": {
-        "description": "Incremental and resumable: a page per invocation, driven by this endpoint and by a cron trigger, so a large database never needs a batch that approaches the 30 s ceiling.\n\nThe re-encryption uses the **identical** AAD with the new `kid`, and the row's version is unchanged — a rekey alters the key that protects a row, never the row's identity.\n\n**Not implemented yet:** answers `501`.",
+        "description": "Incremental and resumable: one page per invocation, so a large database never needs a batch that approaches the 30 s ceiling. Requires global admin.\n\n**Nothing calls this on a schedule.** There is no cron trigger; a rotation advances only while something keeps calling this endpoint, and it is finished when `remaining` reaches zero.\n\nThe re-encryption uses the **identical** AAD with the new `kid`, and the row's version is unchanged — a rekey alters the key that protects a row, never the row's identity.\n\nA row that cannot be decrypted fails the whole page rather than being skipped: a skipped row would still be counted as gone, and the ring would report itself safe to prune while an unreadable value remained.",
         "operationId": "rekeyPage",
         "requestBody": {
           "content": {
@@ -376,7 +366,7 @@
                 "properties": {
                   "limit": {
                     "default": 100,
-                    "maximum": 1000,
+                    "maximum": 100,
                     "minimum": 1,
                     "type": "integer"
                   }
@@ -476,16 +466,6 @@
               }
             },
             "description": "`INTERNAL`, `DECRYPT_FAILED`, `UNKNOWN_KID` or `SERVER_MISCONFIGURED`."
-          },
-          "501": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiError"
-                }
-              }
-            },
-            "description": "`NOT_IMPLEMENTED` — the domain function is a stub in this build."
           },
           "503": {
             "content": {

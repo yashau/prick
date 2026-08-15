@@ -203,15 +203,11 @@ mounted, the CLI authenticates and injects, and the reveal audit, the `no-store`
 headers and the loud decrypt failure all run on real requests. What is still
 missing:
 
-- **The rekey job does not exist.** `getKeyringStatus` and `rekeyPage` are stubs
-  and their routes answer `501`, so a rotation cannot be completed and a retired
-  key cannot safely be removed. See [Key rotation](/guides/key-rotation).
-- **The UI reads fixture data.** Every screen renders, but its server loads call an
-  in-memory fixture rather than the domain layer, so the client-render-only rule is
-  not yet load bearing on real values.
-- **The "no secret in a server load" rule is convention, not a check.** The
-  intended build-time grep over every `+*.server.ts` for
-  `revealSecret|exportSecrets|decrypt` does not exist yet.
+- **Nothing schedules the rekey.** `getKeyringStatus` and `rekeyPage` are
+  implemented, but there is no cron trigger: a rotation advances only while
+  something keeps calling `POST /admin/rekey`, so a ring left half-rotated stays
+  half-rotated, and `MASTER_KEY_OLD` cannot be removed until it finishes. See
+  [Key rotation](/guides/key-rotation).
 - **`ENV_MAX_SECRETS` has not been load-tested.** 500 is derived from an
   undocumented per-batch statement limit against a documented 30-second ceiling.
 - **No release has been cut**, so nothing is published, and the npm provenance and
