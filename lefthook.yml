@@ -40,8 +40,27 @@ pre-commit:
       run: vp fmt {staged_files}
       stage_fixed: true
 
-    - name: lint-js
+    # Split in two for the same reason `lint:js` is -- see `lint:js:app` in
+    # mise.toml. Oxlint resolves vite configs through its own path and walks
+    # into `packages/app/vite.config.ts`, whose SvelteKit plugin resolves
+    # `src/app.html` relative to the CURRENT DIRECTORY and aborts before linting
+    # anything. The root `vite.config.ts` short-circuits that for `vp fmt`, but
+    # not for oxlint.
+    #
+    # A single `vp lint {staged_files}` at the root therefore fails outright the
+    # moment a commit stages only files under packages/app -- which is exactly
+    # how this was found, on a one-file commit. It had been passing on mixed
+    # commits, where oxlint happened to resolve the root config instead, so the
+    # hook was broken for months in a way that depended on what you staged.
+    - name: lint-js-app
+      root: "packages/app/"
       glob: "*.{js,mjs,cjs,ts,mts,cts,jsx,tsx,svelte}"
+      run: vp lint {staged_files}
+
+    - name: lint-js-repo
+      glob: "*.{js,mjs,cjs,ts,mts,cts,jsx,tsx,svelte}"
+      exclude:
+        - "packages/app/**"
       run: vp lint {staged_files}
 
     - name: typos

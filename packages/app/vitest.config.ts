@@ -81,5 +81,29 @@ export default defineConfig({
     // `lib/server/crypto`, the same one the write path will use, rather than
     // against internals it could be quietly co-adapted with.
     include: ["src/**/*.test.ts", "test/**/*.test.ts"],
+
+    /*
+     * 20 s rather than Vitest's 5 s default, and this is a correctness fix
+     * rather than a comfort setting.
+     *
+     * `singleWorker: true` above puts every test in ONE workerd isolate, while
+     * Vitest still runs the test FILES in parallel. So the route-matrix tests --
+     * `authentication.test.ts`'s "is a 401 on every authenticated route" and
+     * `permissions.test.ts`'s per-actor matrix, each issuing dozens of requests
+     * in a loop -- queue behind every other file's requests at that one isolate.
+     * Their wall-clock scales with the size of the route table and with whatever
+     * else is running, neither of which says anything about whether the code is
+     * right.
+     *
+     * At 5 s that was a cliff: the full suite failed roughly one run in three on
+     * a developer machine, always with `Test timed out in 5000ms` and always on a
+     * different row, while the same files passed in isolation. A gate that cries
+     * wolf at that rate is one people learn to re-run instead of read.
+     *
+     * The cost of the higher bound is that a genuinely hung test takes 20 s to
+     * report instead of 5. That is worth paying against a suite that already
+     * takes over a minute.
+     */
+    testTimeout: 20_000,
   },
 });
