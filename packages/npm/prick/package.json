@@ -1,7 +1,7 @@
 {
   "name": "@yashau/prick",
   "version": "0.0.0-dev",
-  "description": "Command-line client for a self-hosted secrets manager running on Cloudflare Workers and D1.",
+  "description": "Portable Runtime Injection of Cloudflare (stored) Keys — command-line client for a self-hosted secrets manager on Cloudflare Workers and D1.",
   "keywords": [
     "cli",
     "cloudflare",

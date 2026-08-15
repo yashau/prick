@@ -1,6 +1,6 @@
 [package]
 name = "prk"
-description = "Command-line client for prick, a self-hosted secrets manager."
+description = "prick — Portable Runtime Injection of Cloudflare (stored) Keys. Command-line client for a self-hosted secrets manager."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

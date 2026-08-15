@@ -1,7 +1,12 @@
 # prick
 
+**P**ortable **R**untime **I**njection of **C**loudflare (stored) **K**eys.
+
 A self-hosted secrets manager that runs entirely on your own Cloudflare account — one Worker, one D1
 database, and nothing else to operate.
+
+The name is the job description: keys live in your Cloudflare account, and `prk` injects them into a
+process at runtime — portably, and without ever touching disk.
 
 - **`prk`** — a single static Rust binary. No Node, no `wrangler`, no runtime dependencies.
 - **Web UI** — a SvelteKit admin app served from the same Worker.
