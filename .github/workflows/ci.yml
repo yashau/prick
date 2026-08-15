@@ -102,6 +102,12 @@ jobs:
               # `tsconfig.base.json`, so it governs `mise run typecheck`.
               - 'vite.config.ts'
               - 'tsconfig.base.json'
+              # `js-check` runs `test:scripts` and `test:action`, which live
+              # here rather than under `packages/`. `action/**` matched no
+              # filter at all before, so a change to the composite Action
+              # reached CI without running the Action's own suite.
+              - 'scripts/**'
+              - 'action/**'
             e2e:
               - *js
               - 'e2e/**'
@@ -251,6 +257,37 @@ jobs:
       - run: mise run lint:svelte
       - run: mise run fmt:check:js
       - run: mise run test:js
+
+      # ---------------------------------------------------------------------
+      # The three suites that `mise run test` fans out to and CI did not run.
+      #
+      # `test:rust`, `test:doc` and `test:js` were here; `test:scripts`,
+      # `test:action` and `test:mcp` were not, so roughly 390 tests covering the
+      # release scripts, the composite Action and the MCP server only ever ran
+      # on somebody's laptop. Every one of them is plain `node --test` needing
+      # nothing but node_modules, so there was no cost to running them -- they
+      # were simply missed.
+      # ---------------------------------------------------------------------
+      - run: mise run test:scripts
+      - run: mise run test:action
+      - run: mise run test:mcp
+
+      # ---------------------------------------------------------------------
+      # `docs/openapi.json` is generated from the router, and this is the check
+      # that fails when it is stale.
+      #
+      # `docs/reference/api.md` said "that check runs in CI -- so the API
+      # surface shows up in a pull request diff even when the change that
+      # produced it is three files away". It did not run in CI. The claim was
+      # the useful half, so the check is what changed.
+      #
+      # `packages/app/test/http/openapi.test.ts` deep-compares the same thing
+      # inside `test:js`, so this is not the only guard -- but it is the one
+      # that says "regenerate it" in a single line instead of failing inside a
+      # suite.
+      # ---------------------------------------------------------------------
+      - run: mise run openapi:check
+
       - run: mise run build:js
 
   # ---------------------------------------------------------------------------

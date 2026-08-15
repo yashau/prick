@@ -3,7 +3,9 @@
 # prick — the single source of truth for tooling and the task graph.
 #
 # A contributor installs exactly one thing (mise) and runs `mise run bootstrap`.
-# `mise run ci` is an exact mirror of .github/workflows/ci.yml.
+# `mise run ci` is a SUPERSET of .github/workflows/ci.yml: it runs everything CI
+# runs, plus `audit` and the full `build`. See the Gates section of AGENTS.md for
+# why those two are deliberately not CI jobs.
 #
 # ---------------------------------------------------------------------------
 # TASK BODY DISCIPLINE — read before adding a task

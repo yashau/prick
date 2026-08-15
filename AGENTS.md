@@ -35,7 +35,13 @@ fails, narrow to the leaf rather than re-running the whole gate.
 ### Gates
 
 `mise run ci` is all of them, in the order CI runs them. **Run it before declaring work done** — it
-mirrors `ci.yml` exactly, so a green run here is a green run there.
+is a superset of `ci.yml`, so a green run here is a green run there.
+
+A superset, not a mirror, and the difference is two tasks. `mise run ci` also runs `audit` and the
+full `build`; CI runs neither. `audit` is left out on purpose — advisories land without anyone
+pushing a commit, so a CI job would turn unrelated pull requests red on a day nobody changed
+anything. `build` is left out because `lint:rust` compiles every target already, and the only thing
+`build:rust` adds is `--release`, which the release workflow does on a tag.
 
 | Gate            | Covers                                                                     | Narrow to                                                                                                     |
 | --------------- | -------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
