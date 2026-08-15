@@ -389,14 +389,22 @@ jobs:
       - name: No secret value reachable from a server load
         run: |
           set -euo pipefail
-          hits="$(grep -rlnE 'revealSecret|exportSecrets|revealSecrets|decryptSecretValue' \
+          # Matches CALL SYNTAX -- `revealSecret(` -- not the bare identifier.
+          #
+          # The first version matched bare names and failed on its own
+          # documentation: the comments in +layout.server.ts and
+          # projects/+page.server.ts that describe this very check name the
+          # functions, and were duly reported as violations. Matching the call
+          # is also simply more correct, because the violation is calling one of
+          # these from a server load, not mentioning it.
+          hits="$(grep -rlnE '\b(revealSecret|revealSecrets|exportSecrets|decryptSecretValue)[[:space:]]*\(' \
                     --include='+*.server.ts' packages/app/src/routes || true)"
           if [ -n "$hits" ]; then
-            echo "::error::A server load reaches a secret-revealing function. SvelteKit serialises load return values into the page payload, so this puts plaintext into HTML. Fetch from the browser inside the ssr=false subtree instead."
+            echo "::error::A server load CALLS a secret-revealing function. SvelteKit serialises load return values into the page payload, so this puts plaintext into the HTML. Fetch from the browser inside the ssr=false subtree instead."
             echo "$hits"
             exit 1
           fi
-          echo "No +*.server.ts under src/routes reaches a reveal or export path."
+          echo "No +*.server.ts under src/routes calls a reveal or export path."
 
       - name: No upstream references
         run: |
