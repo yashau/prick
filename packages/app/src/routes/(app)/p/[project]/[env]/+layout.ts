@@ -24,6 +24,20 @@
  *   2. NO form action here may RETURN a secret value. SvelteKit serialises an
  *      action's return value into page data, which would put the value right
  *      back into the payload this file exists to keep empty. Form actions are
- *      for projects, environments and grants only.
+ *      for projects, environments and grants only -- which is why there is not
+ *      a single `+page.server.ts` anywhere in this subtree, and why every
+ *      mutation on these screens goes through a client `fetch`.
  */
 export const ssr = false;
+
+/**
+ * Prerendering must stay off as well, and for a different reason.
+ *
+ * `ssr = false` is about not RENDERING these pages on the server. Prerendering
+ * would additionally freeze a shell of them into the static assets bundle,
+ * which Cloudflare serves WITHOUT invoking the Worker -- so the Hono
+ * `Cache-Control: no-store` middleware and the Access check in front of the
+ * Worker would both be bypassed for that response. Stated explicitly rather
+ * than relying on the default.
+ */
+export const prerender = false;

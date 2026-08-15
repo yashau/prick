@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "app",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["-y", "pnpm@11.21.0", "--filter", "@prick/app", "exec", "vite", "dev"],
+      "port": 5173
+    }
+  ]
+}
