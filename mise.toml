@@ -235,7 +235,7 @@ wait_for = ["bootstrap:js"]
 # ---------------------------------------------------------------------------
 [tasks.test]
 description = "Rust, JS and repo-script test suites"
-depends = ["test:rust", "test:doc", "test:js", "test:scripts"]
+depends = ["test:rust", "test:doc", "test:js", "test:scripts", "test:action"]
 
 [tasks."test:rust"]
 description = "cargo nextest over the workspace"
@@ -264,6 +264,12 @@ description = "node:test suites for scripts/*.mjs"
 # scripts/ with no positional uses node's own recursive discovery instead, which
 # also keeps the body free of a glob.
 dir = "{{config_root}}/scripts"
+run = "node --test"
+
+[tasks."test:action"]
+description = "node:test suite for the composite GitHub Action"
+# Same Node 26 directory-walking caveat as test:scripts above.
+dir = "{{config_root}}/action"
 run = "node --test"
 
 [tasks.miri]
