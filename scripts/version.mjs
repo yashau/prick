@@ -462,15 +462,27 @@ export function discoverManifests(root) {
 // ---------------------------------------------------------------------------
 
 /**
+ * Every tag the repository knows about.
+ *
+ * A repository with no tags yields `[]`, which is the normal first-release case
+ * and must not be an error — `computePatch` turns it into N = 0.
+ *
  * @param {string} root
  * @returns {string[]}
  */
-function gitTags(root) {
-  const out = execFileSync('git', ['tag', '--list'], {
-    cwd: root,
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
+export function gitTags(root) {
+  let out;
+  try {
+    out = execFileSync('git', ['tag', '--list'], {
+      cwd: root,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+  } catch (error) {
+    throw new Error(
+      `could not read git tags in ${root}: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
   return out.split('\n').map((t) => t.trim()).filter(Boolean);
 }
 

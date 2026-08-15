@@ -83,6 +83,10 @@ rust = [
 "aqua:suzuki-shunsuke/pinact" = "4.1.1"
 "aqua:evilmartians/lefthook" = "2.1.10"
 
+# The GitHub CLI. Releases are cut by dispatching release.yml through it, so a
+# contributor without gh cannot release — pin it rather than assume it.
+"aqua:cli/cli" = "2.97.0"
+
 # cargo-auditable embeds the dependency list inside the binary so
 # `cargo audit bin ./prk` works on a shipped artefact with no side-car SBOM.
 # It has no aqua package; the cargo backend uses cargo-binstall by default, so
@@ -362,6 +366,32 @@ run = "node scripts/version.mjs set {{ usage.version }}"
 [tasks."version:check"]
 description = "Assert every manifest carries the same version"
 run = "node scripts/version.mjs check"
+
+# ---------------------------------------------------------------------------
+# RELEASE
+# ---------------------------------------------------------------------------
+# A release is cut by DISPATCHING release.yml, never by tagging locally.
+# release.yml's `plan` job pushes the tag itself and that push is the
+# concurrency lock — git refuses a duplicate ref, so two racing runs cannot both
+# claim the same N. A hand-made tag would take the lock the workflow depends on.
+# scripts/release.mjs therefore never touches a ref.
+
+[tasks."release:preview"]
+description = "Print the version the next release would take. Read-only, never prompts"
+run = "node scripts/release.mjs preview"
+
+[tasks."release:dry"]
+description = "Dispatch release.yml with dry_run=true — builds and stages everything, publishes nothing"
+run = "node scripts/release.mjs dry"
+
+[tasks."release:cut"]
+description = "Cut a real release: tag, build, publish to npm, GitHub Release. Requires a typed confirmation"
+# Pass --yes for automation: `mise run release:cut -- --yes`.
+run = "node scripts/release.mjs cut"
+
+[tasks."release:status"]
+description = "Follow the most recent release.yml run. Read-only"
+run = "node scripts/release.mjs status"
 
 # ---------------------------------------------------------------------------
 # CI — pure fan-out; an exact mirror of ci.yml
