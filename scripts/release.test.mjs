@@ -34,7 +34,7 @@ function harness(overrides = {}) {
     io: {
       log: (s) => out.push(s),
       logErr: (s) => err.push(s),
-      gh: (args, options) => {
+      gh: (args, _options) => {
         dispatched.push(args);
         return overrides.ghResult ?? '';
       },

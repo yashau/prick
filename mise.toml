@@ -186,14 +186,34 @@ depends = [
   "lint:loc",
 ]
 
+[tasks."lint:js:app"]
+description = "vp lint over packages/app, from inside packages/app"
+# `-C` is load-bearing. SvelteKit's plugin resolves `src/app.html` relative to
+# the CURRENT DIRECTORY, so loading packages/app/vite.config.ts from the repo
+# root aborts before a single file is linted. The root vite.config.ts
+# short-circuits that discovery for `vp fmt`, but oxlint resolves vite configs
+# through its own path and still walks into the nested one.
+run = "vp -C packages/app lint --deny-warnings"
+wait_for = ["bootstrap:js"]
+
+[tasks."lint:js:repo"]
+description = "vp lint over everything outside packages/app"
+# Explicit paths rather than a bare `vp lint`, for the same reason as above: a
+# bare invocation at the root rediscovers packages/app/vite.config.ts and dies.
+# Naming the directories also means a new top-level package is linted only once
+# somebody adds it here, which is a visible decision rather than a silent gap.
+run = "vp lint --deny-warnings scripts action packages/mcp packages/shared packages/docs e2e"
+wait_for = ["bootstrap:js"]
+
 [tasks."lint:rust"]
 description = "clippy over the whole workspace, warnings are errors"
 run = "cargo clippy --workspace --all-targets --all-features --locked -- -D warnings"
 
 [tasks."lint:js"]
-description = "vp lint (Oxlint); replaces a standalone oxlint invocation"
-run = "vp lint --deny-warnings"
-wait_for = ["bootstrap:js"]
+description = "vp lint (Oxlint) across the workspace; replaces a standalone oxlint invocation"
+# Split in two because packages/app must be linted from its own directory --
+# see lint:js:app. A single bare `vp lint` at the root cannot work.
+depends = ["lint:js:app", "lint:js:repo"]
 
 [tasks."lint:svelte"]
 description = "svelte-check — neither vp lint nor tsc typechecks .svelte files"
