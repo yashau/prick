@@ -195,16 +195,30 @@ async function fetchJwks(url: string): Promise<JwksKey[]> {
       cf: { cacheTtl: 3600, cacheEverything: true },
     });
   } catch (cause) {
-    throw new PrickError("SERVER_MISCONFIGURED", "Could not reach the Access certs endpoint.", {
-      hint: `Fetching ${url} failed.`,
-      cause,
-    });
+    // Transient, not misconfigured. The URL was validated before we got here, so
+    // a failed connection means Access is unreachable right now -- which is
+    // exactly the thing a client SHOULD retry.
+    throw new PrickError(
+      "IDENTITY_PROVIDER_UNAVAILABLE",
+      "Could not reach the Access certs endpoint.",
+      { hint: `Fetching ${url} failed.`, cause },
+    );
   }
 
   if (!response.ok) {
-    throw new PrickError("SERVER_MISCONFIGURED", "The Access certs endpoint returned an error.", {
-      hint: `${url} responded with HTTP ${String(response.status)}.`,
-    });
+    // 5xx is Access having a bad day: retryable. 4xx means we are pointed at
+    // something that is not our certs endpoint -- a wrong team name or a stale
+    // ACCESS_CERTS_URL -- and no amount of retrying will fix that.
+    const transient = response.status >= 500;
+    throw new PrickError(
+      transient ? "IDENTITY_PROVIDER_UNAVAILABLE" : "SERVER_MISCONFIGURED",
+      "The Access certs endpoint returned an error.",
+      {
+        hint: transient
+          ? `${url} responded with HTTP ${String(response.status)}. Access may be degraded.`
+          : `${url} responded with HTTP ${String(response.status)}. Check ACCESS_TEAM and ACCESS_CERTS_URL.`,
+      },
+    );
   }
 
   let body: unknown;

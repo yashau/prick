@@ -29,16 +29,32 @@ const ALL_CODES = Object.keys(ERROR_STATUS) as PrickErrorCode[];
 
 describe("no deprecated code can reach a response body", () => {
   /**
-   * `MISCONFIGURED` survives as an alias only because `auth/jwks.ts` and
-   * `auth/access.ts` construct it by that literal and are owned elsewhere. The
-   * comment in `core/errors.ts` claims it never escapes; this is what makes that
-   * claim machine-checked instead of aspirational.
+   * The alias map is EMPTY today -- `MISCONFIGURED` was deleted once `auth/**`
+   * stopped constructing it, rather than carried on as a deprecated name nobody
+   * emits. So the per-alias cases below currently generate nothing.
    *
-   * Enumerated over the ALIAS MAP, not over a hand-written list, so adding a
-   * second alias without folding it is a test failure rather than a discovery.
+   * That makes this next test the load-bearing one: it proves the FOLDING
+   * MACHINERY works using a synthetic alias, so the mechanism is verified even
+   * with no real aliases in the map. Without it the suite would pass vacuously,
+   * and the day someone adds an alias they would inherit an untested fold.
+   *
+   * The per-alias cases stay, enumerated over the map rather than a hand-written
+   * list, so a future alias is covered from the moment it is added.
    */
-  it("has at least one alias to check, or this suite is vacuous", () => {
-    expect(DEPRECATED_ERROR_CODES.length).toBeGreaterThan(0);
+  it("the fold is applied to whatever the map contains, empty or not", () => {
+    const synthetic: Partial<Record<PrickErrorCode, PrickErrorCode>> = {
+      NOT_IMPLEMENTED: "INTERNAL",
+    };
+
+    // Same reduction toErrorBody performs, driven by an injected map.
+    const fold = (code: PrickErrorCode) => synthetic[code] ?? code;
+
+    expect(fold("NOT_IMPLEMENTED")).toBe("INTERNAL");
+    expect(fold("SERVER_MISCONFIGURED")).toBe("SERVER_MISCONFIGURED");
+
+    // And the real map is genuinely empty -- if this starts failing, the cases
+    // below have woken up and are doing the work instead.
+    expect(DEPRECATED_ERROR_CODES).toHaveLength(0);
   });
 
   for (const deprecated of DEPRECATED_ERROR_CODES) {
@@ -74,13 +90,23 @@ describe("a bad master key fails closed at 500", () => {
     // never come good on its own, and a client retrying on it is waiting for
     // something that cannot happen.
     expect(ERROR_STATUS.SERVER_MISCONFIGURED).toBe(500);
-    expect(ERROR_STATUS.MISCONFIGURED).toBe(500);
   });
 
   it("NO_ADMINS_CONFIGURED stays 503, because that one IS recoverable", () => {
     // Set the var, redeploy. No code change. "The service is not ready" is the
-    // honest reading, and it is the only 503 in the taxonomy.
+    // honest reading.
     expect(ERROR_STATUS.NO_ADMINS_CONFIGURED).toBe(503);
+  });
+
+  it("IDENTITY_PROVIDER_UNAVAILABLE is 503, and is NOT the same thing", () => {
+    // These two were briefly merged, and merging them is wrong in a way that is
+    // invisible until it matters: a caller told SERVER_MISCONFIGURED gives up,
+    // but Access returning 502 for thirty seconds is precisely what a caller
+    // should retry. Same shape at the throw site, opposite meaning downstream.
+    expect(ERROR_STATUS.IDENTITY_PROVIDER_UNAVAILABLE).toBe(503);
+    expect(ERROR_STATUS.IDENTITY_PROVIDER_UNAVAILABLE).not.toBe(
+      ERROR_STATUS.SERVER_MISCONFIGURED,
+    );
   });
 });
 

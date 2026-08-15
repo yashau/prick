@@ -202,7 +202,12 @@ describe("unknown kid -- rate-limited refetch", () => {
 });
 
 describe("JWKS documents that must not be trusted", () => {
-  it("REJECTS a certs endpoint that returns HTTP 500", async () => {
+  it("REJECTS a certs endpoint that returns HTTP 500, as RETRYABLE", async () => {
+    // 503, not 500. An upstream 5xx is Access being degraded, which resolves on
+    // its own -- so the caller should retry. Reporting SERVER_MISCONFIGURED here
+    // would tell them to give up, and would send a human to check settings that
+    // were never wrong. A 4xx from the same endpoint IS misconfiguration and is
+    // covered separately below.
     const certs = certsEndpoint("broken");
 
     await rejectsWith(
@@ -213,7 +218,7 @@ describe("JWKS documents that must not be trusted", () => {
           certsUrl: certs.url,
           now: NOW,
         }),
-      "SERVER_MISCONFIGURED",
+      "IDENTITY_PROVIDER_UNAVAILABLE",
     );
   });
 

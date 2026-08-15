@@ -27,12 +27,22 @@
  *     so a crypto failure crossing into a transport is never an unrecognised
  *     throwable that degrades to a bare INTERNAL.
  *
- * `MISCONFIGURED` survives as a DEPRECATED ALIAS with the same 500 status,
- * because `auth/jwks.ts` and `auth/access.ts` construct it by that literal and
- * this agent does not own those files. `canonicalCode()` folds it away at the
- * transport boundary, so there is exactly one code on the wire today; the alias
- * can be deleted the moment those two files are updated. See the note in
- * `RuntimeConfig` for the rest of that hand-over.
+ * `MISCONFIGURED` briefly survived as a deprecated alias while `auth/**` still
+ * constructed it by that literal. It has since been DELETED rather than carried:
+ * a deprecated code nobody emits is just a second name lying in wait. The
+ * aliasing machinery stays (`CODE_ALIASES` is empty, `canonicalCode()` still
+ * folds) so the next alias is handled from the moment it is added.
+ *
+ * ONE THING THAT MERGE GOT WRONG, AND WHY IT IS NOW SPLIT BACK OUT.
+ *
+ * Folding everything into `SERVER_MISCONFIGURED` also swept up JWKS fetch
+ * failures, and those are the opposite kind of problem. A `MASTER_KEY` that
+ * decodes to 31 bytes never comes good; Access returning 502 for thirty seconds
+ * resolves on its own. Reporting the second as the first tells a client to give
+ * up on something it should retry, and sends a human to check settings that were
+ * never wrong. Hence `IDENTITY_PROVIDER_UNAVAILABLE` (503), reserved for network
+ * failure and upstream 5xx -- a 4xx from the certs endpoint really is
+ * misconfiguration and stays at 500.
  */
 
 import { CryptoError } from "../crypto/errors.js";
@@ -83,10 +93,20 @@ export const ERROR_STATUS = {
   /** Fail closed. Every route, including `/health`. */
   SERVER_MISCONFIGURED: 500,
   /**
-   * @deprecated Alias of `SERVER_MISCONFIGURED`, kept only so `auth/**` keeps
-   * compiling. Same status; folded to the canonical name by `canonicalCode()`.
+   * The identity provider is unreachable or degraded RIGHT NOW.
+   *
+   * Deliberately distinct from `SERVER_MISCONFIGURED`, which they were briefly
+   * merged into. The two look alike at the throw site and are opposites to a
+   * caller: a `MASTER_KEY` that decodes to 31 bytes never comes good, whereas
+   * Access returning 502 for thirty seconds resolves on its own. Folding them
+   * tells a client to give up on a failure it should have retried -- and tells
+   * a human that a transient blip is a configuration error, sending them to
+   * check settings that were never wrong.
+   *
+   * Only network failure and an upstream 5xx qualify. A 4xx from the certs
+   * endpoint means we are pointed at the wrong place, which is misconfiguration.
    */
-  MISCONFIGURED: 500,
+  IDENTITY_PROVIDER_UNAVAILABLE: 503,
   NOT_IMPLEMENTED: 501,
   /**
    * Neither `BOOTSTRAP_ADMINS` nor a usable global admin grant exists.
@@ -109,7 +129,11 @@ export type PrickErrorCode = keyof typeof ERROR_STATUS;
  * `test/http/errors.test.ts`, which enumerates this map.
  */
 export const CODE_ALIASES: Partial<Record<PrickErrorCode, PrickErrorCode>> = {
-  MISCONFIGURED: "SERVER_MISCONFIGURED",
+  // Empty by design. `MISCONFIGURED` lived here until `auth/**` stopped
+  // constructing it; the alias was then deleted rather than carried, because a
+  // deprecated code nobody emits is just a second name waiting to be picked up
+  // again. The machinery stays so the next alias is folded from the moment it
+  // is added, and the enumeration test keeps working against an empty map.
 };
 
 /** Every code that must never appear on the wire. Derived, not listed twice. */
