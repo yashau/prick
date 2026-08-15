@@ -119,7 +119,7 @@ const PATH_SENTINELS: [&str; 3] = [PROJECT, ENVIRONMENT, KEY];
 /// call would assert falsely, since the set comparison would then fail first
 /// and name the op. Raise it in the same change that adds the call, never
 /// ahead of one.
-const OPS_AT_LAST_REVIEW: usize = 23;
+const OPS_AT_LAST_REVIEW: usize = 24;
 
 /// The module under test, read at compile time so the list of ops comes from
 /// the code rather than from anybody's memory of it.
@@ -231,6 +231,11 @@ async fn call_every_op(client: &Client) -> Vec<&'static str> {
     let batch = BatchRequest {
         mode: WriteMode::Replace,
         set: vec![(KEY, &value)],
+        // Keyed by a key that is also in `set`, which is what `BatchBody`
+        // refines: a description for a key the batch does not write is a 422,
+        // so a contract call that sent one would be recording a request the
+        // server refuses.
+        descriptions: vec![(KEY, Some("contract test"))],
         delete: vec![OTHER_KEY],
         expected_rev: Some(1),
         reason: Some("contract test"),
@@ -250,6 +255,7 @@ async fn call_every_op(client: &Client) -> Vec<&'static str> {
 
     exercise!(called, list_projects(client));
     exercise!(called, create_project(client, PROJECT, "Zz", Some("contract test")));
+    exercise!(called, get_project(client, PROJECT));
     exercise!(called, update_project(client, PROJECT, Some("Zz"), Some("contract test")));
     exercise!(called, delete_project(client, PROJECT));
 

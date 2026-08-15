@@ -103,6 +103,146 @@ describe("round trip", () => {
   });
 });
 
+/**
+ * DESCRIPTIONS, and the one thing the upsert makes easy to get wrong.
+ *
+ * A description is plaintext metadata: it is NOT in the AAD, which binds
+ * `(purpose, environment_id, key, version)` and nothing else, so writing one
+ * re-encrypts nothing and moves no version beyond the ordinary bump the value
+ * write was already making.
+ *
+ * The hazard is structural rather than cryptographic. ONE `onConflictDoUpdate`
+ * applies ONE `SET` expression to every row in its statement, so an
+ * implementation that wrote `description = excluded.description` for the whole
+ * batch would clear the description of every key it merely happened to be
+ * writing alongside -- a data loss that no test of the described key itself can
+ * see. Every case below is written from the other keys' point of view for that
+ * reason.
+ */
+describe("descriptions", () => {
+  /** Every live key's description, by key. */
+  async function stored(): Promise<Record<string, string | null>> {
+    const entries = await listSecrets(ctx(), "acme", "prod");
+    return Object.fromEntries(entries.map((entry) => [entry.key, entry.description]));
+  }
+
+  it("stores the description written alongside a value", async () => {
+    await writeSecrets(ctx(), "acme", "prod", {
+      mode: "merge",
+      set: { STRIPE_SECRET_KEY: "sk-live-hunter2" },
+      descriptions: { STRIPE_SECRET_KEY: "Live mode, rotates quarterly" },
+    });
+
+    expect(await stored()).toEqual({ STRIPE_SECRET_KEY: "Live mode, rotates quarterly" });
+
+    // The description is metadata and the value is not. Listing one must not
+    // have leaked the other.
+    const entries = await listSecrets(ctx(), "acme", "prod");
+    expect(JSON.stringify(entries)).not.toContain("hunter2");
+  });
+
+  it("describing ONE key does not clear the descriptions of the others in the same batch", async () => {
+    await writeSecrets(ctx(), "acme", "prod", {
+      mode: "merge",
+      set: { A: "1", B: "2", C: "3" },
+      descriptions: { A: "alpha", B: "beta", C: "gamma" },
+    });
+
+    // One batch, three keys, ONE of which names a description. The other two
+    // are rewritten in the same statement group -- and their descriptions must
+    // survive a write that simply did not mention them.
+    await writeSecrets(ctx(), "acme", "prod", {
+      mode: "merge",
+      set: { A: "1-again", B: "2-again", C: "3-again" },
+      descriptions: { B: "beta, revised" },
+    });
+
+    expect(await stored()).toEqual({ A: "alpha", B: "beta, revised", C: "gamma" });
+  });
+
+  it("an explicit null clears that key's description and only that key's", async () => {
+    await writeSecrets(ctx(), "acme", "prod", {
+      mode: "merge",
+      set: { A: "1", B: "2" },
+      descriptions: { A: "alpha", B: "beta" },
+    });
+
+    // `Description` is nullable, so `null` is the clear. There is no sentinel
+    // string, and an empty one would be a description that renders as a blank
+    // line rather than as nothing.
+    await writeSecrets(ctx(), "acme", "prod", {
+      mode: "merge",
+      set: { A: "1-again", B: "2-again" },
+      descriptions: { A: null },
+    });
+
+    expect(await stored()).toEqual({ A: null, B: "beta" });
+  });
+
+  it("a write that mentions no descriptions at all keeps every one of them", async () => {
+    await writeSecrets(ctx(), "acme", "prod", {
+      mode: "merge",
+      set: { A: "1", B: "2" },
+      descriptions: { A: "alpha", B: "beta" },
+    });
+
+    await write({ A: "1-again", B: "2-again" });
+
+    expect(await stored()).toEqual({ A: "alpha", B: "beta" });
+  });
+
+  it("leaves the value, its version and its readability exactly where an undescribed write would", async () => {
+    await write({ TOKEN: "v1", OTHER: "o1" });
+
+    await writeSecrets(ctx(), "acme", "prod", {
+      mode: "merge",
+      set: { TOKEN: "v2", OTHER: "o2" },
+      descriptions: { TOKEN: "rotates quarterly" },
+    });
+
+    // ONE new version for each, not two: the description rode along with the
+    // value write rather than causing a second one. The AAD binds
+    // `(purpose, environment_id, key, version)` and a description is in none of
+    // it, so there is nothing here to re-encrypt.
+    expect((await listVersions(ctx(), "acme", "prod", "TOKEN")).map((e) => e.version)).toEqual([
+      2, 1,
+    ]);
+    expect((await listVersions(ctx(), "acme", "prod", "OTHER")).map((e) => e.version)).toEqual([
+      2, 1,
+    ]);
+
+    // And both still decrypt -- under an AAD the description did not widen.
+    expect(await exportSecrets(ctx(), "acme", "prod")).toEqual({ TOKEN: "v2", OTHER: "o2" });
+
+    // The environment advanced by exactly one revision, as any single write
+    // does. A description is not a second mutation.
+    expect((await getEnvironment(ctx(), "acme", "prod")).rev).toBe(2);
+  });
+
+  it("carries a description onto a key created and deleted and created again", async () => {
+    await writeSecrets(ctx(), "acme", "prod", {
+      mode: "merge",
+      set: { API_KEY: "first" },
+      descriptions: { API_KEY: "the first one" },
+    });
+    await writeSecrets(ctx(), "acme", "prod", { mode: "merge", delete: ["API_KEY"] });
+
+    // The row was deleted, so there is nothing to coalesce onto: the recreated
+    // key takes the description this write gave it, and nothing of the old row
+    // survives to be inherited.
+    await writeSecrets(ctx(), "acme", "prod", {
+      mode: "merge",
+      set: { API_KEY: "second" },
+      descriptions: { API_KEY: "the second one" },
+    });
+
+    expect(await stored()).toEqual({ API_KEY: "the second one" });
+
+    await write({ API_KEY: "third" });
+    expect(await stored()).toEqual({ API_KEY: "the second one" });
+  });
+});
+
 describe("delete and recreate", () => {
   it("CONTINUES the version sequence rather than restarting at 1", async () => {
     // The property `secret_versions` has no foreign key on `key` in order to

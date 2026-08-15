@@ -18,6 +18,9 @@
 //!   same route with a one-entry `delete`. The batch is one D1 transaction with
 //!   its audit row inside it; a per-key route would be a second write path with
 //!   no transaction around it.
+//! - **A description travels with its value.** `descriptions` is a sibling of
+//!   `set` on `:batch`, and every key in it must also be in `set`. There is no
+//!   metadata-only update, and no separate route for one.
 //! - **`:rollback` is collection-level**: `POST …/secrets:rollback` with
 //!   `{key, to_version}`, not a suffix on the key's own path.
 //! - **`:import` takes a blob**, not a parsed array: `{format, content, …}`.
@@ -196,6 +199,17 @@ pub struct BatchRequest<'a> {
     /// one order stores the value and the other tombstones it, and the request
     /// does not say which was meant.
     pub set: Vec<(&'a str, &'a SecretString)>,
+    /// Free-text descriptions, by key. **Every key here must also be in
+    /// `set`** -- a description for a key this batch does not write is a 422,
+    /// because a metadata-only update is not something this route performs.
+    ///
+    /// `None` is the CLEAR: it is sent as a JSON `null`, which overwrites the
+    /// stored description. A key left out of this list keeps whatever
+    /// description it already had.
+    ///
+    /// Not a `SecretString`: a description is written to be read in a listing,
+    /// alongside the key name, and both are stored in plaintext.
+    pub descriptions: Vec<(&'a str, Option<&'a str>)>,
     /// Keys to remove.
     pub delete: Vec<&'a str>,
     /// Optimistic guard. Omit to write unconditionally.
@@ -209,6 +223,10 @@ impl fmt::Debug for BatchRequest<'_> {
         f.debug_struct("BatchRequest")
             .field("mode", &self.mode)
             .field("set", &self.set.iter().map(|(key, _)| *key).collect::<Vec<_>>())
+            // Shown in full. A description is plaintext metadata written to be
+            // read in a listing; redacting it here would hide the one field in
+            // this struct a `--verbose` reader might need to see.
+            .field("descriptions", &self.descriptions)
             .field("delete", &self.delete)
             .field("expected_rev", &self.expected_rev)
             .field("reason", &self.reason)
@@ -302,6 +320,21 @@ pub async fn create_project(
         body["description"] = serde_json::Value::String(description.to_owned());
     }
     client.post_json(&client.url(&["projects"]), &body).await
+}
+
+/// `GET /projects/{project}`.
+///
+/// One project by slug, rather than [`list_projects`] filtered down to one. The
+/// difference is visible to the caller: a project that does not exist and one
+/// the caller has no grant for produce the identical `404`, down to the hint,
+/// so a client cannot infer the existence of a project it may not see -- which
+/// is precisely what "it was not in the list" would tell it.
+///
+/// # Errors
+///
+/// Any transport or response failure, including `404`.
+pub async fn get_project(client: &Client, project: &str) -> Result<Project, ApiError> {
+    client.get_json(&client.url(&["projects", project])).await
 }
 
 /// `PATCH /projects/{project}`.
@@ -519,6 +552,23 @@ fn batch_body(request: &BatchRequest<'_>) -> serde_json::Value {
             );
         }
         body.insert("set".to_owned(), serde_json::Value::Object(set));
+    }
+
+    if !request.descriptions.is_empty() {
+        let mut descriptions = serde_json::Map::with_capacity(request.descriptions.len());
+        for (key, description) in &request.descriptions {
+            // `null` rather than an omitted entry, and rather than `""`. The
+            // server reads a present `null` as "clear this description"; an
+            // absent key means "leave it alone", and an empty string would be a
+            // description that renders as a blank line in a listing.
+            descriptions.insert(
+                (*key).to_owned(),
+                description.map_or(serde_json::Value::Null, |text| {
+                    serde_json::Value::String(text.to_owned())
+                }),
+            );
+        }
+        body.insert("descriptions".to_owned(), serde_json::Value::Object(descriptions));
     }
 
     if !request.delete.is_empty() {
@@ -775,6 +825,7 @@ mod tests {
         let body = batch_body(&BatchRequest {
             mode: WriteMode::Merge,
             set: vec![("DATABASE_URL", &value)],
+            descriptions: vec![("DATABASE_URL", Some("Primary, rotates quarterly"))],
             delete: vec!["OLD_KEY"],
             expected_rev: Some(4),
             reason: Some("rotation"),
@@ -782,11 +833,36 @@ mod tests {
 
         assert_eq!(body["mode"], "merge");
         assert_eq!(body["set"]["DATABASE_URL"], "postgres://u:p@h/db");
+        assert_eq!(body["descriptions"]["DATABASE_URL"], "Primary, rotates quarterly");
         assert_eq!(body["delete"], serde_json::json!(["OLD_KEY"]));
         // `expectedRev` would be accepted by no schema in this API and would
         // leave the write with no concurrency guard at all.
         assert_eq!(body["expected_rev"], 4);
         assert_eq!(body["reason"], "rotation");
+    }
+
+    #[test]
+    fn a_description_is_omitted_when_unset_and_null_when_cleared() {
+        let value = SecretString::from("x");
+
+        // Omitted. The server coalesces, so the stored description survives a
+        // write that says nothing about it -- which is what every `prk secrets
+        // set` without `--description` must do.
+        let silent =
+            batch_body(&BatchRequest { set: vec![("K", &value)], ..BatchRequest::default() });
+        assert!(silent.get("descriptions").is_none(), "an empty list is not an empty object");
+
+        // Present and `null`. The server overwrites, so this clears it.
+        let cleared = batch_body(&BatchRequest {
+            set: vec![("K", &value)],
+            descriptions: vec![("K", None)],
+            ..BatchRequest::default()
+        });
+        assert_eq!(cleared["descriptions"]["K"], serde_json::Value::Null);
+        assert!(
+            cleared["descriptions"].as_object().is_some_and(|map| map.contains_key("K")),
+            "a cleared description is a present null, not an absent key"
+        );
     }
 
     #[test]

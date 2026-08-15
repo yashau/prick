@@ -399,6 +399,40 @@ mod tests {
         }
     }
 
+    /// The invocation `docs/guides/secrets.md` prints, character for
+    /// character.
+    ///
+    /// The documentation promised `--description` for a release in which the
+    /// flag did not exist, so the command in the guide was a `clap` error. A
+    /// test that constructs `SetArgs` directly would not have caught that; only
+    /// parsing the published argv does.
+    #[test]
+    fn the_documented_set_invocation_parses_with_its_description() {
+        let cli = Cli::try_parse_from([
+            "prk",
+            "secrets",
+            "set",
+            "STRIPE_SECRET_KEY",
+            "--description",
+            "Live mode, rotates quarterly",
+            "--project",
+            "api",
+            "--env",
+            "production",
+        ])
+        .expect("the invocation printed in docs/guides/secrets.md must parse");
+
+        let Command::Secrets(commands::secrets::SecretsCommand::Set(args)) = cli.command else {
+            panic!("`secrets set` did not parse as itself");
+        };
+
+        assert_eq!(args.key, "STRIPE_SECRET_KEY");
+        assert_eq!(args.description.as_deref(), Some("Live mode, rotates quarterly"));
+        // The value is still not expressible on the command line, and adding a
+        // flag beside it must not have changed that.
+        assert!(!args.stdin);
+    }
+
     #[test]
     fn every_command_reports_a_path() {
         for argv in [

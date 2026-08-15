@@ -631,7 +631,7 @@ atomicity, so an oversized write is refused rather than made non-atomic.
 | `CreateProjectBody`     | `{ slug, name, description? }`                                                                                                                       |
 | `UpdateProjectBody`     | `{ name?, description? }`                                                                                                                            |
 | `CreateEnvironmentBody` | `{ slug, name, description? }`                                                                                                                       |
-| `BatchBody`             | `{ mode: "merge" \| "replace", set?, delete?, expected_rev?, reason? }`                                                                              |
+| `BatchBody`             | `{ mode: "merge" \| "replace", set?, descriptions?, delete?, expected_rev?, reason? }`                                                               |
 | `ImportBody`            | `{ format: "env" \| "json", content, mode, dry_run, expected_rev?, reason? }`                                                                        |
 | `RollbackBody`          | `{ key, to_version, reason? }`                                                                                                                       |
 | `RenameBody`            | `{ from, to }`                                                                                                                                       |
@@ -656,12 +656,18 @@ an identity cannot drift in role vocabulary or expiry semantics — the day that
 stops being true is the day "why does Bob have production?" stops having one
 answer.
 
-Two of them carry design decisions worth stating:
+Three of them carry design decisions worth stating:
 
 - `BatchBody.mode` decides what happens to keys named in neither `set` nor
   `delete`: `merge` leaves them alone, `replace` deletes them. A key named in
   **both** is a 422 — one order stores the value and the other tombstones it, and
   the request does not say which was meant.
+- `BatchBody.descriptions` is keyed exactly as `set` is, and **every key in it
+  must also be in `set`** — a description for a key the batch is not writing is a 422. A metadata-only update would raise "does it bump a version", and it must
+  not: a description is not ciphertext and the AAD binds
+  `(purpose, environment_id, key, version)`, none of which a description touches.
+  A key omitted from the map keeps whatever description it had; a present `null`
+  clears it.
 - `CreateGrantBody` is a discriminated union rather than a flat object with
   optional fields, so scope fields are required exactly where they are meaningful
   and rejected where they are not. A flat object would accept

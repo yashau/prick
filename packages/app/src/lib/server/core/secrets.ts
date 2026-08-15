@@ -234,7 +234,8 @@ async function sealValues(
  *   1. the optimistic-concurrency guard (only when `expected_rev` was sent)
  *   2. UPDATE environments SET rev = rev + 1
  *   3. multi-row INSERT into secret_versions        (11 rows per statement)
- *   4. multi-row upsert into secrets                (12 rows per statement)
+ *   4. multi-row upsert into secrets, DESCRIBED     (12 rows per statement)
+ *   4b. multi-row upsert into secrets, INHERITED    (12 rows per statement)
  *   5. tombstone rows into secret_versions          (11 rows per statement)
  *   6. DELETE FROM secrets WHERE key IN (...)       (99 keys per statement)
  *   7. INSERT INTO audit_log                        <- LAST
@@ -330,18 +331,49 @@ function buildStatements(
     statements.push(ctx.db.insert(secretVersions).values(rows));
   }
 
-  const secretRows: NewSecret[] = plan.sets.map((entry) => ({
+  // Validated to be a subset of `set` by `BatchBody`, so every key here has a
+  // row in `plan.sets` and none of them is a metadata-only update.
+  const descriptions = input.descriptions ?? {};
+
+  /*
+   * TWO GROUPS OF UPSERT STATEMENTS, ONE BATCH.
+   *
+   * ONE `onConflictDoUpdate` applies ONE `SET` expression to every row in its
+   * statement, so "overwrite the description" and "keep the existing
+   * description" cannot both be expressed by one upsert -- whichever clause is
+   * written applies to all twelve rows of the chunk. A batch that set
+   * `description = excluded.description` for every row would clear the
+   * description of every key it merely happened to be writing alongside; one
+   * that coalesced for every row could never clear anything, which is what
+   * makes `null` mean "clear" impossible to honour.
+   *
+   * So the rows are partitioned by whether this request said anything about the
+   * key's description, and each half gets the clause that is true of it. Both
+   * halves are pushed onto the SAME `statements` array: this is more
+   * statements, never more batches. Splitting them across two `batch()` calls
+   * would make a description write commit while its value rolled back.
+   */
+  const described = plan.sets.filter((entry) => Object.hasOwn(descriptions, entry.key));
+  const inherited = plan.sets.filter((entry) => !Object.hasOwn(descriptions, entry.key));
+
+  const secretRow = (entry: WritePlan["sets"][number], description: string | null): NewSecret => ({
     id: uuidv7(ctx.now),
     environmentId: environment.id,
     key: entry.key,
     currentVersion: entry.version,
-    description: null,
+    description,
     createdAt: ctx.now,
     updatedAt: ctx.now,
     updatedBy: ctx.actor.subject,
-  }));
+  });
 
-  for (const rows of chunk(secretRows, SECRET_ROWS_PER_STATEMENT)) {
+  for (const rows of chunk(
+    // `?? null` is unreachable -- `Object.hasOwn` selected these keys -- and is
+    // written rather than asserted because the map's value type already admits
+    // `null`, which is exactly the CLEAR this branch exists to carry.
+    described.map((entry) => secretRow(entry, descriptions[entry.key] ?? null)),
+    SECRET_ROWS_PER_STATEMENT,
+  )) {
     statements.push(
       ctx.db
         .insert(secrets)
@@ -350,10 +382,34 @@ function buildStatements(
           target: [secrets.environmentId, secrets.key],
           set: {
             currentVersion: sql`excluded.current_version`,
-            // COALESCE, not overwrite: this write path carries no description,
-            // and a batch that silently cleared every description because it
-            // did not mention them would be indistinguishable from one that
-            // meant to.
+            // OVERWRITE. The request named this key's description, so an
+            // explicit `null` has to reach the column -- coalescing here would
+            // make a description unclearable, with the request appearing to
+            // succeed.
+            description: sql`excluded.description`,
+            updatedAt: sql`excluded.updated_at`,
+            updatedBy: sql`excluded.updated_by`,
+          },
+        }),
+    );
+  }
+
+  for (const rows of chunk(
+    inherited.map((entry) => secretRow(entry, null)),
+    SECRET_ROWS_PER_STATEMENT,
+  )) {
+    statements.push(
+      ctx.db
+        .insert(secrets)
+        .values(rows)
+        .onConflictDoUpdate({
+          target: [secrets.environmentId, secrets.key],
+          set: {
+            currentVersion: sql`excluded.current_version`,
+            // COALESCE, not overwrite: this request said nothing about these
+            // keys' descriptions, and a batch that silently cleared every
+            // description because it did not mention them would be
+            // indistinguishable from one that meant to.
             description: sql`coalesce(excluded.description, ${secrets.description})`,
             updatedAt: sql`excluded.updated_at`,
             updatedBy: sql`excluded.updated_by`,

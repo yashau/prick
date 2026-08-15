@@ -6039,6 +6039,26 @@
                     "maxItems": 500,
                     "type": "array"
                   },
+                  "descriptions": {
+                    "additionalProperties": {
+                      "anyOf": [
+                        {
+                          "maxLength": 1024,
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "propertyNames": {
+                      "maxLength": 256,
+                      "minLength": 1,
+                      "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+                      "type": "string"
+                    },
+                    "type": "object"
+                  },
                   "expected_rev": {
                     "maximum": 9007199254740991,
                     "minimum": 0,

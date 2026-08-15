@@ -168,6 +168,57 @@ describe("a stale If-Match is a 412 and the environment is untouched", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Descriptions
+// ---------------------------------------------------------------------------
+
+describe("a description may only accompany a value", () => {
+  it("refuses a descriptions key that is not in set, and writes nothing", async () => {
+    await write({ mode: "merge", set: { A: "1" }, descriptions: { A: "alpha" } });
+
+    // A description for a key this batch is not writing would be a
+    // metadata-only update, which immediately raises "does it bump a version".
+    // It must not -- a description is not ciphertext and the AAD does not bind
+    // it -- so the case is refused rather than given semantics nothing
+    // documents.
+    const response = await write({ mode: "merge", set: { A: "2" }, descriptions: { B: "beta" } });
+
+    expect(response.status).toBe(422);
+    await expect(response.json()).resolves.toMatchObject({ code: "VALIDATION_FAILED" });
+
+    // The whole body was refused: `A` was not written either, and the
+    // revision did not move.
+    const rows = await api.db.select().from(secrets);
+    expect(rows.map((row) => row.currentVersion)).toEqual([1]);
+    expect((await api.db.select().from(environments))[0]?.rev).toBe(1);
+  });
+
+  it("refuses a descriptions-only body outright", async () => {
+    // No `set` at all, so there is nothing for the description to travel with.
+    const response = await write({ mode: "merge", descriptions: { A: "alpha" } });
+
+    expect(response.status).toBe(422);
+  });
+
+  it("accepts a description for every key it is writing", async () => {
+    const response = await write({
+      mode: "merge",
+      set: { A: "1", B: "2" },
+      descriptions: { A: "alpha", B: null },
+    });
+
+    expect(response.status).toBe(200);
+
+    const listed = await api.json<{ key: string; description: string | null }[]>(SECRETS, {
+      token,
+    });
+    expect(listed.body).toMatchObject([
+      { key: "A", description: "alpha" },
+      { key: "B", description: null },
+    ]);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Size limits
 // ---------------------------------------------------------------------------
 

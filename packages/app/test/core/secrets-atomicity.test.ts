@@ -1,6 +1,11 @@
 import { beforeEach, describe, expect, it } from "vitest";
 
-import { exportSecrets, listVersions, writeSecrets } from "../../src/lib/server/core/secrets.js";
+import {
+  exportSecrets,
+  listSecrets,
+  listVersions,
+  writeSecrets,
+} from "../../src/lib/server/core/secrets.js";
 import type { Keyring } from "../../src/lib/server/crypto/index.js";
 import { createDatabase, type Database } from "../../src/lib/server/db/client.js";
 import { environments } from "../../src/lib/server/db/schema.js";
@@ -238,6 +243,56 @@ describe("the write is ONE batch", () => {
     // each) and 4 secrets-upsert chunks (12 rows each).
     const snapshot = await snapshotEnvironment(db, environmentId);
     expect(Object.keys(snapshot.secrets)).toHaveLength(40);
+  });
+
+  /**
+   * Descriptions DOUBLE the number of upsert statement groups, and that is the
+   * whole hazard.
+   *
+   * One `onConflictDoUpdate` applies one `SET` expression to every row in its
+   * statement, so "overwrite this description" and "keep that one" cannot share
+   * a statement -- the described rows and the undescribed rows are chunked
+   * separately. Two groups is two obvious places to put a `batch()`, and doing
+   * so would pass every assertion about the DATA while making a description
+   * write commit whose value write rolled back.
+   *
+   * The mix is deliberately uneven and larger than one chunk on both sides, so
+   * both groups really are chunked rather than being one statement each.
+   */
+  it("issues exactly one batch() when descriptions split the upsert into two groups", async () => {
+    const counter = countingBinding();
+    const countedDb = createDatabase(counter.binding);
+
+    const set: Record<string, string> = {};
+    const descriptions: Record<string, string | null> = {};
+    for (let i = 0; i < 40; i += 1) {
+      const key = `KEY_${String(i)}`;
+      set[key] = `value-${String(i)}`;
+      // 15 described (2 chunks of 12 + 3), 25 not (12 + 12 + 1).
+      if (i < 15) descriptions[key] = `described ${String(i)}`;
+    }
+
+    counter.reset();
+
+    await writeSecrets(secretsContext(countedDb, userActor(ADMIN), keyring), "acme", "prod", {
+      mode: "replace",
+      set,
+      descriptions,
+    });
+
+    expect(counter.batches()).toBe(1);
+
+    // Both groups landed, and each carries its own clause: the described half
+    // has its text, the other half has `null` rather than somebody else's.
+    const entries = await listSecrets(
+      secretsContext(db, userActor(ADMIN), keyring),
+      "acme",
+      "prod",
+    );
+    expect(entries).toHaveLength(40);
+    expect(entries.filter((entry) => entry.description !== null)).toHaveLength(15);
+    expect(entries.find((entry) => entry.key === "KEY_0")?.description).toBe("described 0");
+    expect(entries.find((entry) => entry.key === "KEY_39")?.description).toBeNull();
   });
 
   it("stays one batch at 250 keys, where chunking produces ~45 statements", async () => {

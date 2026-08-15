@@ -74,6 +74,15 @@ export const BatchBody = z
   .object({
     mode: z.enum(["merge", "replace"]).default("merge"),
     set: SecretsMap.optional(),
+    /**
+     * Free-text descriptions, keyed exactly as `set` is.
+     *
+     * `Description` is nullable, and `null` is the CLEAR -- not a sentinel
+     * string, not an empty one. A key omitted from this map keeps whatever
+     * description it already had, so a batch that never mentions descriptions
+     * cannot silently wipe them.
+     */
+    descriptions: z.record(SecretKey, Description).optional(),
     delete: z.array(SecretKey).max(ENV_MAX_SECRETS).optional(),
     /** Optimistic guard. Omit to write unconditionally. */
     expected_rev: Revision.optional(),
@@ -84,6 +93,30 @@ export const BatchBody = z
   .refine(
     (body) => body.mode === "replace" || body.set !== undefined || body.delete !== undefined,
     { error: 'a merge batch must specify at least one of "set" or "delete"' },
+  )
+  /*
+   * EVERY `descriptions` KEY MUST ALSO BE IN `set`.
+   *
+   * A description for a key this batch is not writing would be a METADATA-ONLY
+   * UPDATE, and that immediately raises "does it bump a version?". It must not:
+   * a description is not ciphertext, the AAD binds `(purpose, environment_id,
+   * key, version)` and a description is in none of it, so nothing is
+   * re-encrypted and no version moves. But a write path that answers with a new
+   * `rev` and an unchanged key version is a shape nobody asked for, and the
+   * documentation only ever promises a value and a description TOGETHER --
+   * `prk secrets set KEY --description "..."`. Refusing the other case closes
+   * the documented gap without inventing semantics for one that was never
+   * specified. Widening it later is additive; narrowing it would not be.
+   */
+  .refine(
+    (body) => {
+      const set = body.set ?? {};
+      return Object.keys(body.descriptions ?? {}).every((key) => Object.hasOwn(set, key));
+    },
+    {
+      error:
+        'every key in "descriptions" must also appear in "set": a description without a value would be a metadata-only update, which this route does not perform',
+    },
   );
 export type BatchBody = z.infer<typeof BatchBody>;
 

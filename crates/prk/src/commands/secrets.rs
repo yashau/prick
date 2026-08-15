@@ -22,12 +22,17 @@
 //! last statement inside it, so an un-audited or half-applied write is not
 //! expressible. `set` and `rm` each send a one-entry batch.
 //!
-//! # What this cannot do yet
+//! # Descriptions travel with values
 //!
-//! Write a secret's **description**. `SecretsMap` carries key and value only,
-//! and no route on the server accepts one, so there is no flag for it here --
-//! a flag that silently discarded its argument would be worse than its absence.
-//! Descriptions are readable in a listing.
+//! `set --description` sends `descriptions` alongside `set` in the same batch,
+//! which is the only shape the server accepts: every key in `descriptions` must
+//! also be in `set`. So there is no way to edit a description without writing
+//! the value, and that is the server's rule rather than this command's --
+//! a metadata-only update would raise "does it bump a version", and the answer
+//! has to be no, because a description is not ciphertext and the AAD does not
+//! bind it.
+//!
+//! Omitting the flag leaves any stored description ALONE. It is not a clear.
 
 use std::collections::BTreeMap;
 use std::io::Read as _;
@@ -135,6 +140,13 @@ pub struct SetArgs {
     /// interactive prompt never contend for the same stream.
     #[arg(long)]
     pub stdin: bool,
+
+    /// Human-readable note stored with the secret, shown in a listing.
+    ///
+    /// Omitting it leaves any existing description alone -- it is not a clear.
+    /// Stored in plaintext beside the key name; never put a value in it.
+    #[arg(long, value_name = "TEXT")]
+    pub description: Option<String>,
 
     /// Recorded verbatim in the audit row. Never contains a value.
     #[arg(long, value_name = "TEXT")]
@@ -332,6 +344,7 @@ fn set(
         &BatchRequest {
             mode: WriteMode::Merge,
             set: vec![(args.key.as_str(), &value)],
+            descriptions: descriptions_for(args.key.as_str(), args.description.as_deref()),
             reason: args.reason.as_deref(),
             ..BatchRequest::default()
         },
@@ -352,6 +365,23 @@ fn set(
     }
 
     Ok(())
+}
+
+/// The `descriptions` entry a `set` should carry, if any.
+///
+/// An ABSENT key is what "leave the stored description alone" is spelled as; a
+/// present one is an overwrite, and a present `null` is the clear. So a write
+/// without `--description` must send no entry at all -- mapping the missing
+/// flag onto `Some(key, None)` would wipe the description of every secret ever
+/// set without it, silently, on the next ordinary rotation.
+fn descriptions_for<'a>(
+    key: &'a str,
+    description: Option<&'a str>,
+) -> Vec<(&'a str, Option<&'a str>)> {
+    match description {
+        Some(text) => vec![(key, Some(text))],
+        None => Vec::new(),
+    }
 }
 
 /// Deletes one secret.
@@ -677,10 +707,18 @@ mod tests {
     fn set_has_no_way_to_pass_a_value_as_an_argument() {
         // Structural, not a rule: there is no field for it, so a value cannot
         // reach the shell history or `ps` however the command is invoked.
-        let args = SetArgs { key: "K".to_owned(), stdin: true, reason: None };
+        let args = SetArgs { key: "K".to_owned(), stdin: true, description: None, reason: None };
         let rendered = format!("{args:?}");
         assert!(rendered.contains('K'));
         assert_eq!(size_of_val(&args.stdin), 1);
+    }
+
+    #[test]
+    fn a_set_without_the_flag_sends_no_description_entry_at_all() {
+        // Not `[(K, None)]`. That is the CLEAR, and sending it for every write
+        // would erase the description of every secret rotated without the flag.
+        assert!(descriptions_for("K", None).is_empty());
+        assert_eq!(descriptions_for("K", Some("live mode")), vec![("K", Some("live mode"))]);
     }
 
     #[test]
