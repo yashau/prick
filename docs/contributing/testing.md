@@ -204,6 +204,7 @@ Playwright against a locally built Worker, with its own Access harness under
 | `import-export.spec.ts` | The `.env` dry-run diff, and an export that round-trips              |
 | `access.spec.ts`        | Grants and revocation from the UI                                    |
 | `groups.spec.ts`        | A role reaching an identity through a group, and removal revoking it |
+| `rbac-ui.spec.ts`       | The same, rendered: the screen names the decisive group              |
 | `journey.spec.ts`       | The whole flow in one serial run, in a project of its own            |
 | `api-flow.spec.ts`      | The API path the client-rendered subtree uses                        |
 | `headers.spec.ts`       | `frame-ancestors 'none'` and `Cache-Control: no-store` where needed  |
