@@ -1,0 +1,394 @@
+#:schema https://mise.jdx.dev/schema/mise.json
+#
+# prick — the single source of truth for tooling and the task graph.
+#
+# A contributor installs exactly one thing (mise) and runs `mise run bootstrap`.
+# `mise run ci` is an exact mirror of .github/workflows/ci.yml.
+#
+# ---------------------------------------------------------------------------
+# TASK BODY DISCIPLINE — read before adding a task
+# ---------------------------------------------------------------------------
+# A task body is ONE executable invocation with arguments. No pipes, no `&&`,
+# no `$(...)`, no shell globs, no `if`. Anything that needs branching lives in
+# scripts/*.mjs and is invoked as `node scripts/<name>.mjs`.
+#
+# This is not style. The dev machine is Windows 11 and CI is a 3-OS matrix; a
+# body that contains no shell syntax behaves identically under cmd.exe, pwsh,
+# bash and dash, so `mise run ci` means the same thing everywhere. Where a
+# platform-specific command is genuinely unavoidable (`clean`), the platform
+# interpreter is named as the executable rather than assumed from the ambient
+# shell.
+#
+# NOTE (verified on mise 2026.8.2): `windows_default_inline_shell_args` and
+# `unix_default_inline_shell_args` are deliberately IGNORED by mise when set in
+# a non-global config — mise prints
+#   "<setting> in non-global config ... is ignored for security reasons"
+# on every invocation. They are therefore not set here; the discipline above is
+# what makes the ambient shell irrelevant. A contributor who wants pwsh as the
+# default inline shell anyway sets it once, globally and at their own choice:
+#   mise settings set windows_default_inline_shell_args "pwsh -NoProfile -Command"
+#   mise settings set unix_default_inline_shell_args    "bash -euo pipefail -c"
+
+[settings]
+# mise.lock records the resolved version + checksum of every tool above.
+lockfile = true
+# Never silently install a tool because a command was not found. Tools come
+# from this file or they do not come at all.
+not_found_auto_install = false
+
+[settings.task]
+# Prefix each line with the task name so parallel fan-out stays readable.
+# (`task_output` at the top level is deprecated since mise 2026.8; the nested
+# `task.output` key is the supported spelling.)
+output = "prefix"
+
+# ---------------------------------------------------------------------------
+# TOOLS
+# ---------------------------------------------------------------------------
+# Cross-compilation targets are deliberately NOT declared here. `targets = [...]`
+# on the rust tool makes every fresh clone download a full std for every target
+# (~1 GB). Release builds add their target in the workflow, on the one runner
+# that needs it.
+[tools]
+node = "26.7.0"
+pnpm = "11.21.0"
+
+# Stable does the work; the date-pinned nightly exists only to carry miri.
+# Pinning the date keeps the miri job from breaking on unrelated PRs when a
+# rolling nightly regresses. `rust-src` is required by `cargo miri setup`.
+rust = [
+  { version = "1.97.1", components = ["rustfmt", "clippy"] },
+  { version = "nightly-2026-08-01", components = ["miri", "rust-src"], profile = "minimal" },
+]
+
+# Vite Plus (CLI `vp`) owns the JS-side workflow: lint, fmt, check, test, build.
+# It is installed by mise, NOT by its curl installer. `vp env` is never used —
+# mise owns Node, and two version managers fighting over it is the exact failure
+# mode this file exists to prevent.
+#
+# vp ships no tools of its own (`vp --version` reports vite/oxlint/oxfmt/vitest
+# as "Not found" until they are in node_modules), so every vp task below waits
+# for bootstrap:js.
+"npm:vite-plus" = "0.2.9"
+
+# Dev tools use the `aqua:` backend: prebuilt, checksum-verified binaries with
+# real Windows support. `cargo:` would compile each of these from source on
+# every fresh Windows clone.
+"aqua:EmbarkStudios/cargo-deny" = "0.20.2"
+"aqua:nextest-rs/nextest/cargo-nextest" = "0.9.143"
+"aqua:rustsec/rustsec/cargo-audit" = "0.22.2"
+"aqua:crate-ci/typos" = "1.49.0"
+"aqua:rhysd/actionlint" = "1.7.12"
+"aqua:zizmorcore/zizmor" = "1.29.0"
+"aqua:suzuki-shunsuke/pinact" = "4.1.1"
+"aqua:evilmartians/lefthook" = "2.1.10"
+
+# cargo-auditable embeds the dependency list inside the binary so
+# `cargo audit bin ./prk` works on a shipped artefact with no side-car SBOM.
+# It has no aqua package; the cargo backend uses cargo-binstall by default, so
+# this still resolves to a prebuilt release binary rather than a source build.
+"cargo:cargo-auditable" = "0.7.5"
+
+# ---------------------------------------------------------------------------
+# ENVIRONMENT
+# ---------------------------------------------------------------------------
+[env]
+# Workspace-local JS binaries (vitest, playwright, svelte-check, …).
+_.path = ["{{config_root}}/node_modules/.bin"]
+
+# Local-only worker secrets. Absent by default; values are redacted from mise
+# output so a MASTER_KEY never lands in a task log.
+_.file = { path = "{{config_root}}/.dev.vars", redact = true }
+
+CARGO_TERM_COLOR = "always"
+CARGO_TARGET_DIR = "{{config_root}}/target"
+RUST_BACKTRACE = "1"
+# CalVer is computed in UTC and only in UTC. A maintainer in UTC+5 computing a
+# version locally after 19:00 would be a day ahead of CI.
+TZ = "UTC"
+
+# ---------------------------------------------------------------------------
+# BOOTSTRAP
+# ---------------------------------------------------------------------------
+[tasks.bootstrap]
+description = "Prepare a fresh clone: workspace dependencies + git hooks"
+depends = ["bootstrap:js", "bootstrap:hooks"]
+
+[tasks."bootstrap:js"]
+description = "Install the pnpm workspace from the lockfile"
+run = "pnpm install --frozen-lockfile"
+sources = [
+  "package.json",
+  "pnpm-lock.yaml",
+  "pnpm-workspace.yaml",
+  "packages/*/package.json",
+  "packages/npm/*/package.json",
+  "e2e/package.json",
+]
+outputs = ["node_modules/.modules.yaml"]
+
+[tasks."bootstrap:hooks"]
+description = "Install the lefthook git hooks"
+run = "lefthook install"
+
+# ---------------------------------------------------------------------------
+# FORMAT
+# ---------------------------------------------------------------------------
+[tasks.fmt]
+description = "Format everything in place"
+depends = ["fmt:rust", "fmt:js"]
+
+[tasks."fmt:rust"]
+description = "rustfmt the cargo workspace"
+run = "cargo fmt --all"
+
+[tasks."fmt:js"]
+description = "Format the JS/Svelte workspace (vp fmt, Oxfmt-based)"
+run = "vp fmt --write"
+wait_for = ["bootstrap:js"]
+
+[tasks."fmt:check"]
+description = "Fail if anything is unformatted"
+depends = ["fmt:check:rust", "fmt:check:js"]
+
+[tasks."fmt:check:rust"]
+description = "rustfmt --check"
+run = "cargo fmt --all --check"
+
+[tasks."fmt:check:js"]
+description = "vp fmt --check"
+run = "vp fmt --check"
+wait_for = ["bootstrap:js"]
+
+# ---------------------------------------------------------------------------
+# LINT — pure fan-out, every leaf individually runnable
+# ---------------------------------------------------------------------------
+[tasks.lint]
+description = "Every linter: clippy, vp lint, svelte-check, actionlint, zizmor, pinact, typos"
+depends = [
+  "lint:rust",
+  "lint:js",
+  "lint:svelte",
+  "lint:actions",
+  "lint:zizmor",
+  "lint:pinact",
+  "lint:typos",
+]
+
+[tasks."lint:rust"]
+description = "clippy over the whole workspace, warnings are errors"
+run = "cargo clippy --workspace --all-targets --all-features --locked -- -D warnings"
+
+[tasks."lint:js"]
+description = "vp lint (Oxlint); replaces a standalone oxlint invocation"
+run = "vp lint --deny-warnings"
+wait_for = ["bootstrap:js"]
+
+[tasks."lint:svelte"]
+description = "svelte-check — neither vp lint nor tsc typechecks .svelte files"
+# Delegated to the package script because it must run `svelte-kit sync` first,
+# which is two commands and therefore not a legal task body here.
+# Deliberately overlaps with `typecheck` (which fans out to the same script
+# through pnpm -r): the app's Svelte types are worth checking under `lint` on
+# their own, and svelte-check on this app costs a few seconds.
+run = "pnpm --dir packages/app run typecheck"
+wait_for = ["bootstrap:js"]
+
+[tasks."lint:actions"]
+description = "actionlint over .github/workflows"
+run = "actionlint"
+
+[tasks."lint:zizmor"]
+description = "zizmor static analysis of the workflows"
+run = "zizmor .github/workflows"
+
+[tasks."lint:pinact"]
+description = "Assert every action is pinned to a 40-char SHA"
+run = "pinact run --check"
+
+[tasks."lint:typos"]
+description = "Spellcheck the tree"
+run = "typos"
+
+# ---------------------------------------------------------------------------
+# TYPECHECK
+# ---------------------------------------------------------------------------
+[tasks.typecheck]
+description = "TypeScript typecheck across the workspace"
+# NOT `vp check`. Verified against vp 0.2.9: plain `vp check` is fmt + lint +
+# typecheck, so it would duplicate fmt:check:js and lint:js inside `ci`; and
+# narrowing it with `vp check --no-fmt --no-lint` exits non-zero with
+# "No checks enabled" unless `lint.options.typeCheck` is set in vite.config.ts,
+# which nothing in this repo sets. Delegating to each package's own `typecheck`
+# script runs svelte-check for packages/app and tsc --noEmit for e2e today, and
+# picks up new packages automatically. Revisit if Vite+ gains a typecheck-only
+# subcommand.
+run = "pnpm --recursive --if-present run typecheck"
+wait_for = ["bootstrap:js"]
+
+# ---------------------------------------------------------------------------
+# TEST — pure fan-out
+# ---------------------------------------------------------------------------
+[tasks.test]
+description = "Rust, JS and repo-script test suites"
+depends = ["test:rust", "test:doc", "test:js", "test:scripts"]
+
+[tasks."test:rust"]
+description = "cargo nextest over the workspace"
+run = "cargo nextest run --workspace --all-features --locked"
+
+[tasks."test:doc"]
+description = "Doc tests — nextest cannot run these, so they need their own pass"
+run = "cargo test --workspace --doc --locked"
+
+[tasks."test:js"]
+description = "vp test — Vitest against packages/app (vitest-pool-workers)"
+# Scoped with -C, verified against vp 0.2.9 for two reasons: at the workspace
+# root vp hands Vitest the whole tree, which sweeps up scripts/*.test.mjs (those
+# are node:test files, owned by test:scripts); and e2e's own `test` script is
+# Playwright, which must not run here.
+# `run` is explicit rather than relying on vp's run-once default.
+# Fallback if vitest-pool-workers turns out not to work under vp: replace with
+# `pnpm --dir packages/app run test` — a one-line swap.
+run = "vp -C packages/app test run"
+wait_for = ["bootstrap:js"]
+
+[tasks."test:scripts"]
+description = "node:test suites for scripts/*.mjs"
+# `node --test <dir>` no longer walks a directory in Node 26 — it tries to load
+# the path as a module and fails with MODULE_NOT_FOUND. Running from inside
+# scripts/ with no positional uses node's own recursive discovery instead, which
+# also keeps the body free of a glob.
+dir = "{{config_root}}/scripts"
+run = "node --test"
+
+[tasks.miri]
+description = "Machine-checked proof that prick-core is pure (no I/O, no unsafe)"
+# The pinned nightly is activated for this task only, so `cargo` stays stable
+# everywhere else.
+tools = { rust = "nightly-2026-08-01" }
+env = { MIRIFLAGS = "-Zmiri-strict-provenance" }
+run = "cargo miri nextest run --package prick-core"
+
+# ---------------------------------------------------------------------------
+# DEV / E2E
+# ---------------------------------------------------------------------------
+[tasks.dev]
+description = "Run the Worker + SvelteKit dev server"
+run = "pnpm --dir packages/app run dev"
+
+[tasks."e2e:install"]
+description = "Download the Playwright browsers (CI runs this only on a cache miss)"
+# --with-deps installs the system libraries Chromium needs; it is a no-op on
+# macOS and Windows, so one invocation covers the whole matrix.
+run = "pnpm --dir e2e run install-browsers"
+wait_for = ["bootstrap:js"]
+
+[tasks.e2e]
+description = "Playwright end-to-end suite"
+run = "pnpm --dir e2e run test"
+# Not a `depends`: CI installs the browsers only on a cache miss, and forcing an
+# install on every local run would undo that. `wait_for` orders the two when
+# both are scheduled and does nothing otherwise.
+wait_for = ["bootstrap:js", "build:js", "e2e:install"]
+
+# ---------------------------------------------------------------------------
+# BUILD
+# ---------------------------------------------------------------------------
+[tasks.build]
+description = "Build the CLI and the Worker bundle"
+depends = ["build:rust", "build:js"]
+
+[tasks."build:rust"]
+description = "cargo build --release for the host target"
+run = "cargo build --workspace --release --locked"
+
+[tasks."build:js"]
+description = "vp build — the SvelteKit + adapter-cloudflare Worker bundle"
+# Scoped with -C because vp 0.2.9 refuses to build at the workspace root:
+# "`vp build` at the workspace root needs a target package."
+# Fallback if vp does not drive the SvelteKit build: replace with
+# `pnpm --dir packages/app run build` — a one-line swap.
+run = "vp -C packages/app build"
+wait_for = ["bootstrap:js"]
+
+[tasks."build:dist"]
+description = "Release build of prk for one target triple"
+usage = 'arg "<target>" help="Rust target triple, e.g. x86_64-unknown-linux-musl"'
+run = "cargo build --locked --profile dist --package prk --bin prk --target {{ usage.target }}"
+
+[tasks."build:auditable"]
+description = "Release build of prk with the dependency list embedded in the binary"
+usage = 'arg "<target>" help="Rust target triple, e.g. x86_64-unknown-linux-musl"'
+run = "cargo auditable build --locked --profile dist --package prk --bin prk --target {{ usage.target }}"
+
+# ---------------------------------------------------------------------------
+# SUPPLY CHAIN
+# ---------------------------------------------------------------------------
+[tasks.deny]
+description = "cargo-deny: licences, bans, advisories and the git-source ban"
+run = "cargo deny check"
+
+[tasks.audit]
+description = "Advisory audit of both dependency trees"
+depends = ["audit:rust", "audit:js"]
+
+[tasks."audit:rust"]
+description = "RustSec advisories against Cargo.lock"
+run = "cargo audit --deny warnings"
+
+[tasks."audit:js"]
+description = "npm advisories against the pnpm lockfile"
+run = "pnpm audit --audit-level high"
+wait_for = ["bootstrap:js"]
+
+[tasks."audit:bin"]
+description = "RustSec advisories read from a built binary's embedded dependency list"
+usage = 'arg "<binary>" help="Path to a binary produced by build:auditable"'
+run = "cargo audit bin {{ usage.binary }}"
+
+# ---------------------------------------------------------------------------
+# VERSIONING — scripts/version.mjs is the single writer of every version string
+# ---------------------------------------------------------------------------
+[tasks."version:plan"]
+description = "Compute today's CalVer and the tag that claims it"
+run = "node scripts/version.mjs plan"
+
+[tasks."version:set"]
+description = "Stamp a version into every manifest"
+usage = 'arg "<version>" help="CalVer version, e.g. 2026.815.0"'
+run = "node scripts/version.mjs set {{ usage.version }}"
+
+[tasks."version:check"]
+description = "Assert every manifest carries the same version"
+run = "node scripts/version.mjs check"
+
+# ---------------------------------------------------------------------------
+# CI — pure fan-out; an exact mirror of ci.yml
+# ---------------------------------------------------------------------------
+[tasks.ci]
+description = "Everything CI runs, in the order CI runs it"
+depends = [
+  "bootstrap",
+  "fmt:check",
+  "lint",
+  "typecheck",
+  "test",
+  "deny",
+  "audit",
+  "miri",
+  "build",
+  "e2e:install",
+  "e2e",
+  "version:check",
+]
+
+# ---------------------------------------------------------------------------
+# CLEAN — the one task with a platform override, because deleting a directory
+# tree is the one thing with no portable spelling. The Windows body names pwsh
+# as the executable rather than relying on the ambient inline shell.
+# ---------------------------------------------------------------------------
+[tasks.clean]
+description = "Remove build outputs and installed dependencies"
+run = "rm -rf target dist node_modules .svelte-kit"
+run_windows = "pwsh -NoProfile -Command Remove-Item -Recurse -Force -ErrorAction SilentlyContinue 'target','dist','node_modules','.svelte-kit'"
