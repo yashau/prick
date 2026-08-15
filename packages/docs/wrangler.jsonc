@@ -49,9 +49,14 @@
     "not_found_handling": "404-page",
   },
 
-  // The custom hostname. Uncomment and set it before the first real deploy;
-  // until then the deploy lands on the workers.dev subdomain, which for this
-  // Worker is harmless (see above).
+  // The custom hostname. Commented out because there is no zone for
+  // `docs.prick.dev`; until there is, the deploy lands on the workers.dev
+  // subdomain, which for this Worker is harmless (see above).
+  //
+  // Uncommenting this is half a change. `site` in `astro.config.ts` is what
+  // the built pages advertise as canonical, and the two pointing at different
+  // hostnames is worse than either one being provisional -- do both in the
+  // same commit.
   //
   // "routes": [
   //   { "pattern": "docs.prick.dev", "custom_domain": true }

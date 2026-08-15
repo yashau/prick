@@ -119,15 +119,13 @@ key.
 
 ## Status
 
-Pre-release. The architecture is settled and the test suite is real:
+Pre-release. The architecture is settled and the test suite is real: six suites — Rust, Worker + UI,
+end-to-end, scripts, the GitHub Action and the MCP server — and CI runs every one of them on every
+push. `prick-core` additionally carries a machine-checked purity proof under miri.
 
-<div align="center">
-
-| Rust | Worker + UI | E2E | Scripts | Action | MCP |
-| ---: | ----------: | --: | ------: | -----: | --: |
-|  546 |        1080 |  90 |     206 |    110 |  73 |
-
-</div>
+There are deliberately no counts here. A hand-written number is wrong the first time someone adds a
+test and does not think to come back, and a precise number that is wrong is worse than no number at
+all. `mise run test` prints the real ones.
 
 Nothing is published to npm yet, so `npm install -g @yashau/prick` does not work — build from source
 until the first release is cut.
