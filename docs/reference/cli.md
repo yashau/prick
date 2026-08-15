@@ -190,6 +190,7 @@ useless in a health check. Under `--json` it emits
 
 ```
 prk projects list
+prk projects get <PROJECT>
 prk projects create <NAME> [--slug <SLUG>]
 prk projects rename <PROJECT> <NAME>
 prk projects rm <PROJECT>
@@ -197,6 +198,31 @@ prk projects rm <PROJECT>
 
 `--slug` defaults to a slugified `<NAME>`. `rm` deletes the project and
 everything in it.
+
+`get` reads one project rather than filtering `list` down to a row. It prints
+the id and the description, which the listing's human output leaves out:
+
+```
+$ prk projects get api
+api	API service
+id	0198f3c2-7f0a-7a11-9d4c-2f9b1d5e8c30
+description	Everything customer-facing
+environments	3
+```
+
+Columns are tab-separated. A project with no description prints `none` in that
+row rather than trailing an empty column. Under `--json` it is one document,
+carrying `updated_at` as well — epoch milliseconds, which is why the human
+rendering omits it:
+
+```
+$ prk projects get api --json
+{"description":"Everything customer-facing","environment_count":3,"id":"0198f3c2-7f0a-7a11-9d4c-2f9b1d5e8c30","name":"API service","slug":"api","updated_at":1760000000000}
+```
+
+A project that does not exist and one no grant of yours covers both answer
+`NOT_FOUND`, down to the hint. A slug that is absent from `list` or refused by
+`get` is therefore not a slug you can conclude is free.
 
 ### `prk env`
 

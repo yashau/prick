@@ -33,6 +33,19 @@ prk projects list
 ```
 
 ```bash
+prk projects get api
+```
+
+`list` is every project you can see, one line each. `get` is one project in
+full — its id, its description, and how many environments it holds — and it is
+addressed by slug, like every other command here.
+
+`get` answers `NOT_FOUND` both for a project that does not exist and for one no
+grant of yours covers, so it tells you whether _you_ can reach `api`, never
+whether the slug is taken. Creating it is what settles that, with a `CONFLICT`
+if it is.
+
+```bash
 prk projects create "API" --slug api
 ```
 

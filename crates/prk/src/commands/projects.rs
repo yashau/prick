@@ -7,6 +7,7 @@
 
 use clap::Subcommand;
 
+use prick_api::models::Project;
 use prick_api::ops;
 use prick_core::slug::slugify;
 
@@ -20,6 +21,18 @@ use crate::output::Output;
 pub enum ProjectsCommand {
     /// List projects visible to the current identity.
     List,
+
+    /// Show one project.
+    ///
+    /// `list` filtered down to one row would answer a different question: this
+    /// reads `GET /projects/{project}`, so a project that does not exist and one
+    /// no grant of yours covers both answer `NOT_FOUND`. A slug missing from
+    /// `list` is therefore not a slug that is free.
+    Get {
+        /// The project to show.
+        #[arg(value_name = "PROJECT")]
+        project: String,
+    },
 
     /// Create a project.
     Create {
@@ -62,6 +75,7 @@ impl ProjectsCommand {
     pub fn path(&self) -> &'static str {
         match self {
             Self::List => "projects list",
+            Self::Get { .. } => "projects get",
             Self::Create { .. } => "projects create",
             Self::Rename { .. } => "projects rename",
             Self::Remove { .. } => "projects rm",
@@ -106,6 +120,22 @@ pub fn run(command: &ProjectsCommand, global: &GlobalArgs, out: Output) -> Resul
                         "{}\t{}\t{} environment(s)",
                         project.slug, project.name, project.environment_count
                     ));
+                }
+            }
+        }
+
+        ProjectsCommand::Get { project } => {
+            require_slug("project", project)?;
+            // `ops`, rather than a URL assembled here: a request built outside
+            // it is invisible to the contract test, which is the only thing
+            // that notices a route that no longer exists.
+            let found = context.block_on(ops::get_project(client, project))?;
+
+            if global.json {
+                out.json(&project_json(&found));
+            } else {
+                for line in describe_project(&found) {
+                    out.data(&line);
                 }
             }
         }
@@ -170,13 +200,47 @@ pub fn resolve_slug(kind: &str, slug: Option<&str>, name: &str) -> Result<String
     }
 }
 
+/// One project in full, as a JSON document.
+///
+/// Snake case, and the same key for the same field as `projects list` --
+/// `environment_count`, not `environmentCount` and not `environments`. A
+/// sibling command that spelled a field its own way is something every script
+/// reading both has to special-case.
+///
+/// It carries `updated_at` as well, which the listing does not: a read of one
+/// project that returned strictly less than the listing row for it would leave
+/// nothing for this command to be for.
+fn project_json(project: &Project) -> serde_json::Value {
+    serde_json::json!({
+        "id": project.id,
+        "slug": project.slug,
+        "name": project.name,
+        "description": project.description,
+        "environment_count": project.environment_count,
+        "updated_at": project.updated_at,
+    })
+}
+
+/// The human-mode rendering of one project, as lines.
+///
+/// A value rather than a series of `out.data` calls, so that a test can assert
+/// on the shape of the output. `updated_at` is deliberately absent: it is epoch
+/// milliseconds, nothing in this CLI formats a timestamp, and a raw integer
+/// under a heading reads as an identifier. `--json` carries it for the callers
+/// that can do something with it.
+fn describe_project(project: &Project) -> Vec<String> {
+    vec![
+        format!("{}\t{}", project.slug, project.name),
+        format!("id\t{}", project.id),
+        // "none" rather than an empty column: a blank after a label reads as a
+        // rendering fault rather than as an absent description.
+        format!("description\t{}", project.description.as_deref().unwrap_or("none")),
+        format!("environments\t{}", project.environment_count),
+    ]
+}
+
 /// Prints one project.
-fn report_project(
-    project: &prick_api::models::Project,
-    global: &GlobalArgs,
-    out: Output,
-    verb: &str,
-) {
+fn report_project(project: &Project, global: &GlobalArgs, out: Output, verb: &str) {
     if global.json {
         out.json(&serde_json::json!({
             "id": project.id,
@@ -218,8 +282,10 @@ pub fn confirm(global: &GlobalArgs, out: Output, question: &str) -> Result<bool,
 
 #[cfg(test)]
 mod tests {
+    use clap::Parser as _;
+
     use super::*;
-    use crate::cli::ColorChoice;
+    use crate::cli::{Cli, ColorChoice, Command};
 
     fn global(yes: bool, no_input: bool) -> GlobalArgs {
         GlobalArgs {
@@ -243,16 +309,42 @@ mod tests {
         Output::new(false, true, 0, ColorChoice::Auto)
     }
 
+    /// A project row in the shape the server sends one.
+    ///
+    /// Deserialised rather than constructed: `Project` is `#[non_exhaustive]`,
+    /// and going through serde means a field the server renames breaks these
+    /// tests instead of quietly rendering a default.
+    fn project(slug: &str, name: &str, description: Option<&str>) -> Project {
+        serde_json::from_value(serde_json::json!({
+            "id": format!("project-{slug}"),
+            "slug": slug,
+            "name": name,
+            "description": description,
+            "environmentCount": 3,
+            "updatedAt": 1_760_000_000_000_i64,
+        }))
+        .expect("the shape matches the server's project row")
+    }
+
     #[test]
     fn every_subcommand_reports_a_path() {
+        let mut paths = Vec::new();
+
         for command in [
             ProjectsCommand::List,
+            ProjectsCommand::Get { project: "a".to_owned() },
             ProjectsCommand::Create { name: "a".to_owned(), slug: None },
             ProjectsCommand::Rename { project: "a".to_owned(), name: "b".to_owned() },
             ProjectsCommand::Remove { project: "a".to_owned() },
         ] {
             assert!(command.path().starts_with("projects "));
+            paths.push(command.path());
         }
+
+        // A copy-pasted arm reports a sibling's name, and `prk -v` then says it
+        // is dispatching a command the user did not type.
+        let unique: std::collections::BTreeSet<&str> = paths.iter().copied().collect();
+        assert_eq!(unique.len(), paths.len(), "two subcommands share a path: {paths:?}");
     }
 
     #[test]
@@ -292,5 +384,89 @@ mod tests {
         let message = err.to_string();
         assert!(message.contains("--no-input"), "{message}");
         assert!(message.contains("--yes"), "{message}");
+    }
+
+    // -----------------------------------------------------------------------
+    // `projects get`
+    // -----------------------------------------------------------------------
+
+    /// The invocation `docs/reference/cli.md` prints, character for character.
+    #[test]
+    fn the_documented_get_invocation_parses_as_a_read_of_one_project() {
+        let cli = Cli::try_parse_from(["prk", "projects", "get", "api"])
+            .expect("the invocation printed in docs/reference/cli.md must parse");
+
+        let Command::Projects(ProjectsCommand::Get { project }) = cli.command else {
+            panic!("`projects get` did not parse as itself");
+        };
+        assert_eq!(project, "api");
+    }
+
+    #[test]
+    fn the_human_rendering_carries_every_field_the_project_has() {
+        // A renderer that printed the slug and stopped would still look like
+        // output, and `list` already prints the slug.
+        let lines = describe_project(&project("billing", "Billing EU", Some("Invoicing")));
+
+        assert_eq!(lines[0], "billing\tBilling EU");
+        assert!(lines.iter().any(|line| line == "description\tInvoicing"), "{lines:?}");
+        assert!(lines.iter().any(|line| line == "environments\t3"), "{lines:?}");
+        assert!(lines.iter().any(|line| line == "id\tproject-billing"), "{lines:?}");
+    }
+
+    #[test]
+    fn two_different_projects_do_not_render_the_same_lines() {
+        // The failure this is here for: a renderer that emits a constant, or
+        // one that renders a field of something other than its argument.
+        let one = describe_project(&project("billing", "Billing EU", Some("Invoicing")));
+        let two = describe_project(&project("payments", "Payments", Some("Card capture")));
+
+        assert_ne!(one, two);
+        assert!(!one.join("\n").contains("payments"), "{one:?}");
+        assert!(!two.join("\n").contains("billing"), "{two:?}");
+    }
+
+    #[test]
+    fn a_project_with_no_description_says_so_rather_than_printing_an_empty_column() {
+        let lines = describe_project(&project("billing", "Billing EU", None));
+        assert!(lines.iter().any(|line| line == "description\tnone"), "{lines:?}");
+    }
+
+    #[test]
+    fn the_json_document_carries_the_projects_fields() {
+        let document = project_json(&project("billing", "Billing EU", Some("Invoicing")));
+
+        assert_eq!(document["id"], "project-billing");
+        assert_eq!(document["slug"], "billing");
+        assert_eq!(document["name"], "Billing EU");
+        assert_eq!(document["description"], "Invoicing");
+        assert_eq!(document["environment_count"], 3);
+        assert_eq!(document["updated_at"], 1_760_000_000_000_i64);
+    }
+
+    #[test]
+    fn the_json_keys_are_the_snake_case_ones_the_other_commands_emit() {
+        // `prk projects list` emits `environment_count`. A second spelling for
+        // the same field in a sibling command is a thing every script reading
+        // both has to special-case.
+        let document = project_json(&project("billing", "Billing EU", Some("Invoicing")));
+
+        for key in ["id", "slug", "name", "description", "environment_count", "updated_at"] {
+            assert!(document.get(key).is_some(), "`{key}` is missing from the document");
+        }
+        assert!(
+            document.get("environmentCount").is_none(),
+            "the camel-case spelling must not leak through"
+        );
+        assert!(document.get("updatedAt").is_none());
+    }
+
+    #[test]
+    fn an_absent_description_is_null_rather_than_missing() {
+        // A key that disappears when the value is absent makes every consumer
+        // handle two shapes for one field.
+        let document = project_json(&project("billing", "Billing EU", None));
+        assert_eq!(document["description"], serde_json::Value::Null);
+        assert!(document.get("description").is_some());
     }
 }
