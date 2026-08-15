@@ -24,7 +24,7 @@ use serde::de::DeserializeOwned;
 use crate::config::Config;
 use crate::credential::{Credential, HEADER_REQUEST_ID};
 use crate::error::{ApiError, Transport};
-use crate::models::ErrorEnvelope;
+use crate::models::ApiErrorBody;
 use crate::response::{BODY_CAP, Classified, ResponseFacts, classify, html_title};
 
 /// What a request carries, if anything.
@@ -297,19 +297,6 @@ impl Client {
         self.request_json(reqwest::Method::GET, url, Body::None).await
     }
 
-    /// `PUT` a JSON document and read one back.
-    ///
-    /// # Errors
-    ///
-    /// See [`Client::request_json`].
-    pub async fn put_json<T: DeserializeOwned>(
-        &self,
-        url: &str,
-        body: &serde_json::Value,
-    ) -> Result<T, ApiError> {
-        self.request_json(reqwest::Method::PUT, url, Body::Json(body)).await
-    }
-
     /// `PATCH` a JSON document and read one back.
     ///
     /// # Errors
@@ -351,17 +338,23 @@ impl Client {
         self.request_json(reqwest::Method::POST, url, Body::Json(body)).await
     }
 
-    /// Fetches `/health`, and checks that the answer is from a prick server.
+    /// Fetches `/api/v1/health`, and checks that the answer is from a prick
+    /// server.
     ///
     /// A `200` with a JSON body is not sufficient evidence on its own: a
     /// captive portal, a status page and a misconfigured proxy all produce one.
+    ///
+    /// **Under the API prefix, not at the origin.** The Worker hands `/api/*`
+    /// to the API and everything else to the admin UI, so probing the origin's
+    /// `/health` reads SvelteKit's 404 page and reports that this is not a
+    /// prick server -- which is true of the path, and false of the deployment.
     ///
     /// # Errors
     ///
     /// See [`Client::request_json`], plus [`ErrorKind::NotPrick`] when
     /// something answered but did not identify itself as this service.
     pub async fn health(&self) -> Result<crate::models::Health, ApiError> {
-        let url = self.config.root_url(&["health"]);
+        let url = self.config.url(&["health"]);
         let health: crate::models::Health = self.get_json(&url).await?;
         if health.is_prick() {
             Ok(health)
@@ -396,13 +389,27 @@ fn decode<T: DeserializeOwned>(received: Received) -> Result<T, ApiError> {
     }
 
     // A JSON error status: the server's own envelope is more specific than
-    // anything this client could infer, so it is preferred when present.
+    // anything this client could infer, so it is preferred when present. The
+    // envelope is flat -- `{code, message, request_id?, hint?, issues?}` -- and
+    // a client expecting a wrapping `error` object silently falls back to
+    // "the server returned HTTP 422", discarding the only useful part.
     if received.facts.status >= 400 {
-        let message = serde_json::from_slice::<ErrorEnvelope>(&received.body).ok().map_or_else(
+        let body = serde_json::from_slice::<ApiErrorBody>(&received.body).ok();
+        let hint = body.as_ref().and_then(|body| body.hint.clone());
+        let message = body.map_or_else(
             || format!("the server returned HTTP {}", received.facts.status),
-            ErrorEnvelope::into_message,
+            ApiErrorBody::into_message,
         );
-        return Err(ApiError::from_server(received.facts, message));
+
+        // The envelope's own `request_id` is deliberately not read: it is the
+        // same value the `X-Request-Id` header carries, the header is set by
+        // middleware mounted ahead of every route, and taking it from one place
+        // means there is no case where the two could be reported differently.
+        let err = ApiError::from_server(received.facts, message);
+        return Err(match hint {
+            Some(hint) => err.with_server_hint(hint),
+            None => err,
+        });
     }
 
     serde_json::from_slice(&received.body).map_err(|err| {

@@ -11,6 +11,7 @@
 //! the end.
 
 use prick_auth::{StorageBackend, TokenStore};
+use prick_core::classify::ErrorKind;
 
 use crate::cli::GlobalArgs;
 use crate::commands::Context;
@@ -130,7 +131,7 @@ pub fn run(global: &GlobalArgs, out: Output) -> Result<(), CliError> {
     if let Some(mut context) = context {
         checks.extend(server_checks(&mut context, out));
     } else {
-        checks.push(Check::new("reachability", Status::Skip, "no server url to test"));
+        checks.push(Check::new("api", Status::Skip, "no server url to test"));
     }
 
     // 4. How this binary was installed.
@@ -183,60 +184,80 @@ fn token_file_check() -> Check {
 
 /// Everything that needs to talk to the server.
 fn server_checks(context: &mut Context, out: Output) -> Vec<Check> {
-    let mut checks = Vec::new();
-
-    // Unauthenticated first: the probe is the only thing that can tell an
-    // unprotected server from a protected one, and it must run before any
-    // credential is sent.
-    match context.block_on(prick_auth::discovery::probe(context.client())) {
-        Ok(probe) => {
-            let check = match &probe {
-                prick_auth::Probe::ManagedOAuth { .. } => Check::new(
-                    "access",
-                    Status::Ok,
-                    "Cloudflare Access with managed OAuth is in front of this server",
-                ),
-                prick_auth::Probe::ManagedOAuthDisabled => Check::new(
-                    "access",
-                    Status::Fail,
-                    "Cloudflare Access is in front, but managed OAuth is not enabled, so \
-                     `prk login` cannot complete",
-                ),
-                prick_auth::Probe::Unprotected => Check::new(
-                    "access",
-                    Status::Fail,
-                    prick_auth::discovery::UNPROTECTED_WARNING.to_owned(),
-                ),
-            };
-            checks.push(check);
-        }
-        Err(err) => {
-            checks.push(Check::new("reachability", Status::Fail, err.to_string()));
-            return checks;
-        }
-    }
+    let mut checks = vec![reachability_check(context), access_check(context)];
 
     // Then with a credential, if there is one.
     match context.authenticate(out) {
-        Ok(()) => {
-            let url = context.client().url(&["whoami"]);
-            match context.block_on(context.client().get_json::<prick_api::models::Whoami>(&url)) {
-                Ok(identity) => checks.push(Check::new(
-                    "identity",
-                    Status::Ok,
-                    format!("{} ({})", identity.subject, identity.kind),
-                )),
-                Err(err) => {
-                    let request_id =
-                        err.request_id().map(|id| format!(" [request {id}]")).unwrap_or_default();
-                    checks.push(Check::new("identity", Status::Fail, format!("{err}{request_id}")));
-                }
+        Ok(()) => match context.block_on(prick_api::ops::whoami(context.client())) {
+            Ok(identity) => checks.push(Check::new(
+                "identity",
+                Status::Ok,
+                format!("{} ({})", identity.subject, identity.kind),
+            )),
+            Err(err) => {
+                let request_id =
+                    err.request_id().map(|id| format!(" [request {id}]")).unwrap_or_default();
+                checks.push(Check::new("identity", Status::Fail, format!("{err}{request_id}")));
             }
-        }
+        },
         Err(err) => checks.push(Check::new("credentials", Status::Warn, err.to_string())),
     }
 
     checks
+}
+
+/// Whether the API answers at all, at the path it is actually served from.
+///
+/// `/api/v1/health` -- the Worker hands `/api/*` to the API and everything else
+/// to the admin UI, so this is the one probe that distinguishes "the API is
+/// there" from "something is serving this hostname".
+///
+/// A `401` is a **success** for this check: it means something answered on the
+/// API's own path, and that Cloudflare Access refused an anonymous caller,
+/// which is the correct configuration.
+fn reachability_check(context: &Context) -> Check {
+    match context.block_on(prick_api::ops::health(context.client())) {
+        Ok(health) => Check::new(
+            "api",
+            Status::Ok,
+            format!("/api/v1/health answered, version {}", health.version),
+        ),
+        Err(err) if err.kind() == ErrorKind::Unauthenticated => Check::new(
+            "api",
+            Status::Ok,
+            "/api/v1/health is reachable and refuses an anonymous caller".to_owned(),
+        ),
+        Err(err) => Check::new("api", Status::Fail, err.to_string()),
+    }
+}
+
+/// What is in front of the server.
+///
+/// Unauthenticated, and it must run before any credential is sent: this is the
+/// only check that can tell an exposed deployment from a protected one, and the
+/// answer is the most important thing this command reports.
+fn access_check(context: &Context) -> Check {
+    match context.block_on(prick_auth::discovery::probe(context.client())) {
+        Ok(prick_auth::Probe::ManagedOAuth { .. }) => Check::new(
+            "access",
+            Status::Ok,
+            "Cloudflare Access with managed OAuth is in front of this server",
+        ),
+        Ok(prick_auth::Probe::ManagedOAuthDisabled) => Check::new(
+            "access",
+            Status::Fail,
+            "Cloudflare Access is in front, but managed OAuth is not enabled, so `prk login` \
+             cannot complete",
+        ),
+        Ok(prick_auth::Probe::Unprotected) => Check::new(
+            "access",
+            Status::Fail,
+            prick_auth::discovery::UNPROTECTED_WARNING.to_owned(),
+        ),
+        // Not fatal to the run, and deliberately not the end of the report: the
+        // remaining checks are about this machine and are still worth having.
+        Err(err) => Check::new("access", Status::Fail, err.to_string()),
+    }
 }
 
 /// Notes when the binary is being run through the npm shim.

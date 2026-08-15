@@ -17,6 +17,13 @@ use prick_core::classify::ErrorKind;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
+/// Where the liveness probe actually lives.
+///
+/// Under the API prefix, because the Worker routes `/api/*` to the API and
+/// everything else to the admin UI. A probe of the origin's `/health` reads
+/// SvelteKit's 404 page.
+const HEALTH: &str = "/api/v1/health";
+
 /// `{"service":"prick","version":"2026.815.0"}`, gzip-compressed.
 ///
 /// Precomputed rather than produced by a compression crate: the point is to
@@ -56,7 +63,7 @@ async fn a_healthy_server_is_recognised() {
     let server = MockServer::start().await;
     mount(
         &server,
-        "/health",
+        HEALTH,
         ResponseTemplate::new(200).set_body_raw(
             br#"{"service":"prick","version":"2026.815.0"}"#.to_vec(),
             "application/json",
@@ -73,7 +80,7 @@ async fn a_gzipped_response_is_decompressed() {
     let server = MockServer::start().await;
     mount(
         &server,
-        "/health",
+        HEALTH,
         ResponseTemplate::new(200)
             .set_body_raw(GZIPPED_HEALTH.to_vec(), "application/json")
             .insert_header("content-encoding", "gzip"),
@@ -92,7 +99,7 @@ async fn an_html_two_hundred_says_the_url_is_not_a_prick_server() {
     let server = MockServer::start().await;
     mount(
         &server,
-        "/health",
+        HEALTH,
         ResponseTemplate::new(200).set_body_raw(
             b"<!DOCTYPE html><html><head><title>Sign in to continue</title></head></html>".to_vec(),
             "text/html; charset=utf-8",
@@ -113,7 +120,7 @@ async fn a_json_body_of_the_wrong_shape_is_reported_as_a_shape_problem() {
     let server = MockServer::start().await;
     mount(
         &server,
-        "/health",
+        HEALTH,
         ResponseTemplate::new(200)
             .set_body_raw(br#"{"status":"ok","uptime":41}"#.to_vec(), "application/json"),
     )
@@ -132,7 +139,7 @@ async fn a_json_response_from_some_other_service_is_refused() {
     let server = MockServer::start().await;
     mount(
         &server,
-        "/health",
+        HEALTH,
         ResponseTemplate::new(200).set_body_raw(
             br#"{"service":"vault","version":"1.15.0"}"#.to_vec(),
             "application/json",
@@ -150,7 +157,7 @@ async fn a_redirect_to_access_is_reported_as_a_missing_credential() {
     let server = MockServer::start().await;
     mount(
         &server,
-        "/health",
+        HEALTH,
         ResponseTemplate::new(302).insert_header(
             "location",
             "https://example.cloudflareaccess.com/cdn-cgi/access/login/prick.example.com",
@@ -172,7 +179,7 @@ async fn a_redirect_is_not_followed() {
     let server = MockServer::start().await;
     mount(
         &server,
-        "/health",
+        HEALTH,
         ResponseTemplate::new(302).insert_header("location", "https://example.com/elsewhere"),
     )
     .await;
@@ -192,7 +199,7 @@ async fn a_401_carries_its_discovery_pointer_through_rather_than_swallowing_it()
     let server = MockServer::start().await;
     mount(
         &server,
-        "/health",
+        HEALTH,
         ResponseTemplate::new(401)
             .insert_header("www-authenticate", CHALLENGE)
             .set_body_raw(b"unauthorized".to_vec(), "text/plain"),
@@ -201,7 +208,7 @@ async fn a_401_carries_its_discovery_pointer_through_rather_than_swallowing_it()
 
     let client = client_for(&server);
     let received = client
-        .fetch(reqwest::Method::GET, &format!("{}/health", server.uri()), prick_api::Body::None)
+        .fetch(reqwest::Method::GET, &client.url(&["health"]), prick_api::Body::None)
         .await
         .expect("a 401 is not a transport failure");
 
@@ -219,7 +226,7 @@ async fn an_access_denial_page_is_distinguished_from_an_api_forbidden() {
     let server = MockServer::start().await;
     mount(
         &server,
-        "/health",
+        HEALTH,
         ResponseTemplate::new(403).insert_header("cf-ray", "8f0c0e0a0b0c0d0e-LHR").set_body_raw(
             b"<html><head><title>Access denied | prick.example.com</title></head></html>".to_vec(),
             "text/html",
@@ -238,7 +245,7 @@ async fn a_managed_challenge_is_named_as_such() {
     let server = MockServer::start().await;
     mount(
         &server,
-        "/health",
+        HEALTH,
         ResponseTemplate::new(403)
             .insert_header("cf-mitigated", "challenge")
             .insert_header("cf-ray", "8f0c0e0a0b0c0d0e-LHR")
@@ -256,7 +263,7 @@ async fn a_cloudflare_1033_page_names_the_tunnel() {
     let server = MockServer::start().await;
     mount(
         &server,
-        "/health",
+        HEALTH,
         ResponseTemplate::new(530).insert_header("cf-ray", "8f0c0e0a0b0c0d0e-LHR").set_body_raw(
             cloudflare_error_page(1033, "Argo Tunnel error").into_bytes(),
             "text/html",
@@ -276,7 +283,7 @@ async fn a_bare_530_still_says_the_worker_could_not_be_reached() {
     let server = MockServer::start().await;
     mount(
         &server,
-        "/health",
+        HEALTH,
         ResponseTemplate::new(530)
             .insert_header("cf-ray", "8f0c0e0a0b0c0d0e-LHR")
             .set_body_raw(b"<html><title>prick.example.com</title></html>".to_vec(), "text/html"),
@@ -293,7 +300,7 @@ async fn a_worker_exception_page_is_read_out_of_the_title() {
     let server = MockServer::start().await;
     mount(
         &server,
-        "/health",
+        HEALTH,
         ResponseTemplate::new(500).insert_header("cf-ray", "8f0c0e0a0b0c0d0e-LHR").set_body_raw(
             cloudflare_error_page(1101, "Worker threw exception").into_bytes(),
             "text/html",
@@ -315,7 +322,7 @@ async fn an_over_long_body_is_refused_rather_than_parsed() {
     let huge = format!(r#"{{"service":"prick","version":"1","pad":"{}"}}"#, "x".repeat(80 * 1024));
     mount(
         &server,
-        "/health",
+        HEALTH,
         ResponseTemplate::new(200).set_body_raw(huge.into_bytes(), "application/json"),
     )
     .await;
@@ -333,7 +340,7 @@ async fn a_json_body_with_the_wrong_content_type_is_not_parsed() {
     let server = MockServer::start().await;
     mount(
         &server,
-        "/health",
+        HEALTH,
         ResponseTemplate::new(200)
             .set_body_raw(br#"{"service":"prick","version":"2026.815.0"}"#.to_vec(), "text/plain"),
     )
@@ -349,7 +356,7 @@ async fn a_slow_response_hits_the_deadline_rather_than_hanging() {
     let server = MockServer::start().await;
     mount(
         &server,
-        "/health",
+        HEALTH,
         ResponseTemplate::new(200)
             .set_delay(Duration::from_secs(3))
             .set_body_raw(br#"{"service":"prick","version":"1"}"#.to_vec(), "application/json"),
@@ -386,14 +393,21 @@ async fn nothing_listening_is_reported_as_unreachable_not_as_a_parse_failure() {
 
 #[tokio::test]
 async fn a_server_error_envelope_keeps_the_servers_own_code_and_message() {
+    // The envelope is FLAT. `{"error":{…}}` is not a shape this API produces,
+    // and a client expecting one falls back to "the server returned HTTP 409",
+    // discarding the only part of the response worth reading.
     let server = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path("/api/v1/projects"))
-        .respond_with(ResponseTemplate::new(409).set_body_raw(
-            br#"{"error":{"code":"LAST_ADMIN","message":"cannot remove the last administrator"}}"#
-                .to_vec(),
-            "application/json",
-        ))
+        .respond_with(
+            ResponseTemplate::new(409).set_body_raw(
+                br#"{"code":"LAST_ADMIN","message":"cannot remove the last administrator",
+                 "request_id":"0199a0c0-0000-7000-8000-00000000000a",
+                 "hint":"Set BOOTSTRAP_ADMINS and redeploy."}"#
+                    .to_vec(),
+                "application/json",
+            ),
+        )
         .mount(&server)
         .await;
 
@@ -406,6 +420,69 @@ async fn a_server_error_envelope_keeps_the_servers_own_code_and_message() {
     assert_eq!(err.kind(), ErrorKind::Conflict);
     assert!(err.to_string().contains("LAST_ADMIN"), "{err}");
     assert!(err.to_string().contains("last administrator"), "{err}");
+    assert_eq!(err.server_hint(), Some("Set BOOTSTRAP_ADMINS and redeploy."));
+}
+
+#[tokio::test]
+async fn a_validation_failure_names_the_field_the_server_rejected() {
+    // The shape `http/validate.ts` produces: a flat body whose `issues` carry
+    // `{path, message}` and never the rejected input.
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/api/v1/projects"))
+        .respond_with(ResponseTemplate::new(422).set_body_raw(
+            br#"{"code":"VALIDATION_FAILED","message":"The request body is not valid.",
+                 "request_id":"0199a0c0-0000-7000-8000-00000000000b",
+                 "issues":[{"path":"slug","message":"must be lowercase alphanumeric with single interior hyphens"}]}"#
+                .to_vec(),
+            "application/json",
+        ))
+        .mount(&server)
+        .await;
+
+    let client = client_for(&server);
+    let err = client
+        .post_json::<serde_json::Value>(
+            &client.url(&["projects"]),
+            &serde_json::json!({ "slug": "Not A Slug", "name": "x" }),
+        )
+        .await
+        .expect_err("422 is a failure");
+
+    assert_eq!(err.kind(), ErrorKind::Validation);
+    assert_eq!(err.exit_code(), 11);
+    assert!(err.to_string().contains("slug"), "the rejected field must be named: {err}");
+    assert!(err.to_string().contains("lowercase alphanumeric"), "{err}");
+    // The rejected value is not echoed, because the server never sends it.
+    assert!(!err.to_string().contains("Not A Slug"), "{err}");
+}
+
+#[tokio::test]
+async fn an_unknown_api_path_answers_401_and_is_reported_as_such() {
+    // Authentication is mounted ahead of routing, so a typo in a route is a
+    // 401 rather than a 404. Reporting it as "not found" would send an
+    // operator looking for a missing project.
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/v1/access/identities"))
+        .respond_with(
+            ResponseTemplate::new(401).set_body_raw(
+                br#"{"code":"UNAUTHENTICATED","message":"No Access assertion was presented."}"#
+                    .to_vec(),
+                "application/json",
+            ),
+        )
+        .mount(&server)
+        .await;
+
+    let client = client_for(&server);
+    let err = client
+        .get_json::<serde_json::Value>(&client.url(&["access", "identities"]))
+        .await
+        .expect_err("401 is a failure");
+
+    assert_eq!(err.kind(), ErrorKind::Unauthenticated);
+    assert_eq!(err.exit_code(), 3);
 }
 
 #[tokio::test]
@@ -413,7 +490,7 @@ async fn a_request_id_is_sent_and_the_servers_own_one_is_preferred_on_the_way_ba
     let server = MockServer::start().await;
     mount(
         &server,
-        "/health",
+        HEALTH,
         ResponseTemplate::new(500)
             .insert_header("x-request-id", "01J8Z3K9X0000000000000000")
             .set_body_raw(b"<html><title>oops</title></html>".to_vec(), "text/html"),
@@ -432,7 +509,7 @@ async fn a_service_token_is_sent_as_the_header_pair_cloudflared_uses() {
     let server = MockServer::start().await;
     mount(
         &server,
-        "/health",
+        HEALTH,
         ResponseTemplate::new(200)
             .set_body_raw(br#"{"service":"prick","version":"1"}"#.to_vec(), "application/json"),
     )
@@ -463,16 +540,16 @@ async fn a_retryable_failure_is_retried_and_a_permanent_one_is_not() {
     // wiremock matches mocks in the order they were mounted, so the limited
     // 503 answers first and the 200 takes over once its budget is spent.
     Mock::given(method("GET"))
-        .and(path("/health"))
+        .and(path(HEALTH))
         .respond_with(ResponseTemplate::new(503).set_body_raw(
-            br#"{"error":{"code":"NOT_READY","message":"starting"}}"#.to_vec(),
+            br#"{"code":"NOT_READY","message":"starting"}"#.to_vec(),
             "application/json",
         ))
         .up_to_n_times(1)
         .mount(&server)
         .await;
     Mock::given(method("GET"))
-        .and(path("/health"))
+        .and(path(HEALTH))
         .respond_with(ResponseTemplate::new(200).set_body_raw(
             br#"{"service":"prick","version":"2026.815.0"}"#.to_vec(),
             "application/json",
@@ -493,9 +570,9 @@ async fn a_permanent_failure_is_not_retried() {
     let server = MockServer::start().await;
     mount(
         &server,
-        "/health",
+        HEALTH,
         ResponseTemplate::new(403).set_body_raw(
-            br#"{"error":{"code":"FORBIDDEN","message":"no grant"}}"#.to_vec(),
+            br#"{"code":"FORBIDDEN","message":"no grant"}"#.to_vec(),
             "application/json",
         ),
     )
@@ -518,7 +595,7 @@ async fn the_facts_of_a_failure_survive_onto_the_error() {
     let server = MockServer::start().await;
     mount(
         &server,
-        "/health",
+        HEALTH,
         ResponseTemplate::new(530).insert_header("cf-ray", "8f0c0e0a0b0c0d0e-LHR").set_body_raw(
             cloudflare_error_page(1016, "Origin DNS error").into_bytes(),
             "text/html",

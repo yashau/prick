@@ -150,11 +150,16 @@ pub struct GlobalArgs {
     #[arg(long, global = true, value_name = "FILE")]
     pub access_client_secret_file: Option<PathBuf>,
 
-    /// Project to operate on.
+    /// Project to operate on, by slug.
     #[arg(short = 'P', long, global = true, value_name = "PROJECT", env = "PRK_PROJECT")]
     pub project: Option<String>,
 
-    /// Environment to operate on. May contain colons.
+    /// Environment to operate on, by slug.
+    ///
+    /// The slug, not the display name: `eu-west` addresses the environment
+    /// shown as "EU West". Lowercase letters, digits and single hyphens --
+    /// which is also what makes `--scope project:environment` unambiguous,
+    /// since a slug cannot contain a colon.
     #[arg(short = 'E', long = "env", global = true, value_name = "ENVIRONMENT", env = "PRK_ENV")]
     pub env: Option<String>,
 
@@ -261,7 +266,7 @@ mod tests {
             "--project",
             "billing",
             "--env",
-            "eu:west",
+            "eu-west",
             "--timeout",
             "5",
             "whoami",
@@ -276,7 +281,7 @@ mod tests {
         assert_eq!(cli.global.api_url.as_deref(), Some("https://prick.example.com"));
         assert_eq!(cli.global.access_client_id.as_deref(), Some("abc.access"));
         assert_eq!(cli.global.project.as_deref(), Some("billing"));
-        assert_eq!(cli.global.env.as_deref(), Some("eu:west"));
+        assert_eq!(cli.global.env.as_deref(), Some("eu-west"));
         assert_eq!(cli.global.timeout, 5);
     }
 
@@ -352,9 +357,24 @@ mod tests {
     }
 
     #[test]
-    fn an_environment_name_may_contain_colons() {
+    fn the_parser_does_not_second_guess_a_name_it_cannot_validate() {
+        // Whether `eu:west` names anything is a question about the server's
+        // slug grammar, and it is answered in `commands::naming` with a message
+        // that can suggest `eu-west`. A `value_parser` here would answer it
+        // with clap's generic "invalid value" and exit 2 -- a usage error for
+        // something that is not a usage mistake.
         let cli = Cli::try_parse_from(["prk", "--env", "eu:west:1", "whoami"]).unwrap();
         assert_eq!(cli.global.env.as_deref(), Some("eu:west:1"));
+    }
+
+    #[test]
+    fn the_environment_flag_says_it_takes_a_slug() {
+        let command = Cli::command();
+        let arg = command.get_arguments().find(|arg| arg.get_id() == "env").expect("--env exists");
+
+        let help = arg.get_long_help().map(ToString::to_string).unwrap_or_default();
+        assert!(help.contains("slug"), "{help}");
+        assert!(help.contains("eu-west"), "{help}");
     }
 
     #[test]

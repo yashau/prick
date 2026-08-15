@@ -73,7 +73,16 @@ pub const UNPROTECTED_WARNING: &str = "this server answered an unauthenticated r
 /// [`AuthError::Api`] for a transport failure or a response that is not from
 /// this service at all.
 pub async fn probe(client: &Client) -> Result<Probe, AuthError> {
-    let url = client.config().root_url(&["health"]);
+    // The API prefix, not the origin. The Worker routes `/api/*` to the API and
+    // everything else to the SvelteKit admin UI, so a probe of `/health` at the
+    // origin reads SvelteKit's HTML 404.
+    //
+    // With Access in front this is invisible -- every path 401s, so detection
+    // still works. It misfires on exactly one deployment: an UNPROTECTED one,
+    // where the probe is the thing that would have warned you. `prk login`
+    // would abort with "not a prick server" instead of saying the server is
+    // reachable without authentication.
+    let url = client.config().url(&["health"]);
     let received = client.fetch(reqwest::Method::GET, &url, Body::None).await?;
     let facts = &received.facts;
 

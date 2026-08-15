@@ -94,9 +94,14 @@ impl CliError {
     }
 
     /// The actionable next step, rendered as `help:` under the error.
-    pub fn hint(&self) -> Option<&'static str> {
+    ///
+    /// Borrowed rather than `'static`, because the best hint for an API failure
+    /// is often the server's own: it is about the request that just failed --
+    /// which route to use instead, which variable to set -- where this client's
+    /// static advice is about the whole class of failure.
+    pub fn hint(&self) -> Option<&str> {
         match self {
-            Self::Api(err) => err.hint(),
+            Self::Api(err) => err.server_hint().or_else(|| err.hint()),
             Self::Auth(err) => err.hint(),
             Self::Launch(err) => err.hint(),
             Self::Format(_) => Some(

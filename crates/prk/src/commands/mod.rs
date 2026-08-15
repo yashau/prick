@@ -15,6 +15,7 @@ pub mod auth;
 pub mod completions;
 pub mod doctor;
 pub mod env;
+pub mod naming;
 pub mod projects;
 pub mod run;
 pub mod secrets;
@@ -264,27 +265,38 @@ pub fn dispatch(cli: &Cli, out: Output) -> Result<(), CliError> {
     }
 }
 
+/// The project a command operates in.
+///
+/// # Errors
+///
+/// [`CliError::Other`] naming the flag and the environment variable, or the
+/// slug grammar when what was supplied is not addressable.
+pub fn require_project(global: &GlobalArgs) -> Result<&str, CliError> {
+    let project = global.project.as_deref().filter(|value| !value.is_empty()).ok_or_else(|| {
+        CliError::Other("no project selected; pass --project <SLUG> or set PRK_PROJECT".to_owned())
+    })?;
+    naming::require_slug("project", project)?;
+    Ok(project)
+}
+
 /// The project and environment a command operates on.
+///
+/// Both are **slugs**. An environment is addressed by its slug rather than by
+/// its display name, so `eu-west` reaches the environment displayed as
+/// "EU West"; the two are separate fields on the server and only one of them
+/// is in a URL.
 ///
 /// # Errors
 ///
 /// [`CliError::Other`] naming the flag and the environment variable that supply
-/// whichever one is missing.
+/// whichever one is missing, or the slug grammar when one of them cannot be
+/// addressed.
 pub fn require_scope(global: &GlobalArgs) -> Result<(&str, &str), CliError> {
-    let project = global.project.as_deref().filter(|value| !value.is_empty()).ok_or_else(|| {
-        CliError::Other("no project selected; pass --project <NAME> or set PRK_PROJECT".to_owned())
-    })?;
+    let project = require_project(global)?;
     let environment = global.env.as_deref().filter(|value| !value.is_empty()).ok_or_else(|| {
-        CliError::Other("no environment selected; pass --env <NAME> or set PRK_ENV".to_owned())
+        CliError::Other("no environment selected; pass --env <SLUG> or set PRK_ENV".to_owned())
     })?;
-
-    // `.` and `..` are resolved by the path grammar itself rather than by any
-    // character rule, so they are rejected as names rather than encoded.
-    for name in [project, environment] {
-        if !prick_core::urlpath::is_usable_segment(name) {
-            return Err(CliError::Other(format!("`{name}` is not a usable name")));
-        }
-    }
+    naming::require_slug("environment", environment)?;
 
     Ok((project, environment))
 }
@@ -351,23 +363,26 @@ mod tests {
         let project_only = global_with(Some("billing"), None);
         assert!(require_scope(&project_only).unwrap_err().to_string().contains("--env"));
 
-        let global = global_with(Some("billing"), Some("eu:west"));
-        assert_eq!(require_scope(&global).unwrap(), ("billing", "eu:west"));
+        let global = global_with(Some("billing"), Some("eu-west"));
+        assert_eq!(require_scope(&global).unwrap(), ("billing", "eu-west"));
     }
 
     #[test]
-    fn dot_segments_are_refused_as_names() {
-        for name in [".", ".."] {
-            let global = global_with(Some(name), Some("prod"));
+    fn a_name_no_route_could_address_is_refused_before_a_request_is_made() {
+        // Every path parameter is validated against the slug grammar, so these
+        // are 422s. Refusing here names the argument instead of a schema.
+        for name in [".", "..", "eu:west", "EU-West", "eu west"] {
+            let global = global_with(Some("billing"), Some(name));
             let err = require_scope(&global).unwrap_err();
             assert!(err.to_string().contains(name), "{name} was accepted");
         }
     }
 
     #[test]
-    fn an_environment_name_may_contain_colons() {
-        let global = global_with(Some("billing"), Some("eu:west:1"));
-        assert_eq!(require_scope(&global).unwrap().1, "eu:west:1");
+    fn a_mistyped_environment_is_told_what_it_should_have_been() {
+        let global = global_with(Some("billing"), Some("EU West"));
+        let message = require_scope(&global).unwrap_err().to_string();
+        assert!(message.contains("eu-west"), "{message}");
     }
 
     /// Writes a secret file and returns the directory guarding its lifetime.

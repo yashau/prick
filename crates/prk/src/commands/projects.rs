@@ -7,8 +7,10 @@
 
 use clap::Subcommand;
 
+use prick_api::ops;
+
 use crate::cli::GlobalArgs;
-use crate::commands::Context;
+use crate::commands::{Context, naming};
 use crate::error::CliError;
 use crate::output::Output;
 
@@ -24,12 +26,17 @@ pub enum ProjectsCommand {
         #[arg(value_name = "NAME")]
         name: String,
 
-        /// URL-safe short name. Defaults to a slugified `NAME`.
+        /// URL-safe short name, and the only way a project is addressed.
+        ///
+        /// Required by the server; derived from `NAME` when it is not given.
         #[arg(long, value_name = "SLUG")]
         slug: Option<String>,
     },
 
     /// Rename a project.
+    ///
+    /// Changes the display name only. The slug is how everybody else addresses
+    /// the project, and there is no route that repoints it.
     Rename {
         /// The project to rename.
         #[arg(value_name = "PROJECT")]
@@ -74,9 +81,7 @@ pub fn run(command: &ProjectsCommand, global: &GlobalArgs, out: Output) -> Resul
 
     match command {
         ProjectsCommand::List => {
-            let url = client.url(&["projects"]);
-            let projects: Vec<prick_api::models::Project> =
-                context.block_on(client.get_json(&url))?;
+            let projects = context.block_on(ops::list_projects(client))?;
 
             if global.json {
                 let rows: Vec<serde_json::Value> = projects
@@ -86,6 +91,8 @@ pub fn run(command: &ProjectsCommand, global: &GlobalArgs, out: Output) -> Resul
                             "id": project.id,
                             "slug": project.slug,
                             "name": project.name,
+                            "description": project.description,
+                            "environment_count": project.environment_count,
                         })
                     })
                     .collect();
@@ -94,38 +101,37 @@ pub fn run(command: &ProjectsCommand, global: &GlobalArgs, out: Output) -> Resul
                 out.note("No projects. Create one with `prk projects create <NAME>`.");
             } else {
                 for project in &projects {
-                    out.data(&format!("{}\t{}", project.slug, project.name));
+                    out.data(&format!(
+                        "{}\t{}\t{} environment(s)",
+                        project.slug, project.name, project.environment_count
+                    ));
                 }
             }
         }
 
         ProjectsCommand::Create { name, slug } => {
-            let url = client.url(&["projects"]);
-            let mut body = serde_json::json!({ "name": name });
-            if let Some(slug) = slug {
-                body["slug"] = serde_json::Value::String(slug.clone());
-            }
-            let project: prick_api::models::Project =
-                context.block_on(client.post_json(&url, &body))?;
+            // The server requires a slug and will not invent one, because the
+            // slug is the identifier every other route and every script uses.
+            let slug = resolve_slug("project", slug.as_deref(), name)?;
+            let project = context.block_on(ops::create_project(client, &slug, name, None))?;
             report_project(&project, global, out, "Created");
         }
 
         ProjectsCommand::Rename { project, name } => {
-            let url = client.url(&["projects", project]);
-            let body = serde_json::json!({ "name": name });
-            let renamed: prick_api::models::Project =
-                context.block_on(client.patch_json(&url, &body))?;
+            naming::require_slug("project", project)?;
+            let renamed =
+                context.block_on(ops::update_project(client, project, Some(name), None))?;
             report_project(&renamed, global, out, "Renamed");
         }
 
         ProjectsCommand::Remove { project } => {
+            naming::require_slug("project", project)?;
             // Deleting a project cascades to its environments and their
             // secrets, which is not something to do on a typo.
             if !global.yes && !confirm(global, out, &format!("Delete project `{project}`"))? {
                 return Err(CliError::Other("cancelled".to_owned()));
             }
-            let url = client.url(&["projects", project]);
-            context.block_on(client.delete(&url))?;
+            context.block_on(ops::delete_project(client, project))?;
 
             if global.json {
                 out.json(&serde_json::json!({ "deleted": project }));
@@ -136,6 +142,31 @@ pub fn run(command: &ProjectsCommand, global: &GlobalArgs, out: Output) -> Resul
     }
 
     Ok(())
+}
+
+/// Resolves the slug a create call must send.
+///
+/// An explicit `--slug` is validated rather than mangled: a name the user typed
+/// deliberately should be rejected rather than silently turned into something
+/// else. A derived one is checked too, so the failure is always local.
+///
+/// # Errors
+///
+/// [`CliError::Other`] when the slug is unusable, or when nothing usable can be
+/// derived from the name.
+pub fn resolve_slug(kind: &str, slug: Option<&str>, name: &str) -> Result<String, CliError> {
+    match slug {
+        Some(slug) => {
+            naming::require_slug(kind, slug)?;
+            Ok(slug.to_owned())
+        }
+        None => naming::slugify(name).ok_or_else(|| {
+            CliError::Other(format!(
+                "no {kind} slug could be derived from `{name}`; pass --slug <SLUG> with lowercase \
+                 letters, digits and single hyphens"
+            ))
+        }),
+    }
 }
 
 /// Prints one project.
@@ -150,6 +181,7 @@ fn report_project(
             "id": project.id,
             "slug": project.slug,
             "name": project.name,
+            "description": project.description,
         }));
     } else {
         out.data(&format!("{verb} project `{}` ({}).", project.name, project.slug));
@@ -227,6 +259,29 @@ mod tests {
         assert!(confirm(&global(true, false), quiet(), "Delete").unwrap());
         // Even with prompting disabled: an explicit --yes is an answer.
         assert!(confirm(&global(true, true), quiet(), "Delete").unwrap());
+    }
+
+    #[test]
+    fn a_create_derives_the_slug_the_server_requires() {
+        assert_eq!(resolve_slug("project", None, "Billing EU").unwrap(), "billing-eu");
+    }
+
+    #[test]
+    fn an_explicit_slug_is_validated_rather_than_mangled() {
+        // Silently turning `Billing EU` into `billing-eu` when it was passed to
+        // --slug deliberately would create an identifier nobody asked for.
+        assert_eq!(
+            resolve_slug("project", Some("billing-eu"), "Billing EU").unwrap(),
+            "billing-eu"
+        );
+        let err = resolve_slug("project", Some("Billing EU"), "Billing EU").unwrap_err();
+        assert!(err.to_string().contains("billing-eu"), "{err}");
+    }
+
+    #[test]
+    fn a_name_with_no_derivable_slug_says_to_pass_one() {
+        let err = resolve_slug("project", None, "日本").unwrap_err();
+        assert!(err.to_string().contains("--slug"), "{err}");
     }
 
     #[test]

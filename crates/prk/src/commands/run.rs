@@ -20,8 +20,8 @@
 use std::ffi::OsString;
 
 use clap::Args;
-use secrecy::SecretString;
 
+use prick_api::ops;
 use prick_exec::{EnvGuard, LaunchSpec};
 
 use crate::cli::GlobalArgs;
@@ -68,15 +68,11 @@ pub fn run(args: &RunArgs, global: &GlobalArgs, out: Output) -> Result<(), CliEr
     let mut context = Context::new(global)?;
     context.authenticate(out)?;
 
-    let url = format!(
-        "{}:export",
-        context.client().url(&["projects", project, "environments", environment, "secrets"])
-    );
-    let export: prick_api::models::SecretExport =
-        context.block_on(context.client().get_json(&url))?;
-
-    let secrets: Vec<(String, SecretString)> =
-        export.secrets.into_iter().map(|secret| (secret.key, secret.value)).collect();
+    // One request for the whole environment, and one audit row for it: an
+    // export is a single decision at a single instant, and a row per secret
+    // would make the log worse rather than more complete.
+    let export = context.block_on(ops::export_secrets(context.client(), project, environment))?;
+    let secrets = export.into_pairs();
 
     out.debug(1, &format!("injecting {} secrets into the child environment", secrets.len()));
 

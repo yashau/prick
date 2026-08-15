@@ -21,6 +21,14 @@ use prick_auth::discovery::{self, Probe};
 use prick_auth::store::{StorageBackend, StoredSession, TokenStore, Tokens};
 use prick_auth::{AuthError, LoginOptions};
 
+/// Where the liveness probe actually lives.
+///
+/// Under the API prefix, not at the origin. The Worker routes `/api/*` to the
+/// API and everything else to the SvelteKit admin UI, so a probe of the
+/// origin's `/health` reads an HTML 404. These mocks previously answered
+/// `/health`, which meant they agreed with a bug rather than with the server.
+const HEALTH: &str = "/api/v1/health";
+
 /// The `WWW-Authenticate` challenge a managed-OAuth application returns.
 fn challenge(server: &MockServer) -> String {
     format!(
@@ -44,7 +52,7 @@ fn json(body: &Value) -> ResponseTemplate {
 /// Mounts everything an Access application with managed OAuth serves.
 async fn mount_discovery(server: &MockServer) {
     Mock::given(method("GET"))
-        .and(path("/health"))
+        .and(path(HEALTH))
         .respond_with(
             ResponseTemplate::new(401)
                 .insert_header("www-authenticate", challenge(server).as_str())
@@ -412,7 +420,7 @@ async fn managed_oauth_being_off_names_the_dashboard_setting() {
     // Access is in front -- it answered 401 -- but advertised no authorization
     // server, so there is no machine-readable way in.
     Mock::given(method("GET"))
-        .and(path("/health"))
+        .and(path(HEALTH))
         .respond_with(
             ResponseTemplate::new(401).set_body_raw(b"unauthorized".to_vec(), "text/plain"),
         )
@@ -435,7 +443,7 @@ async fn managed_oauth_being_off_names_the_dashboard_setting() {
 async fn a_browser_only_access_redirect_is_also_reported_as_managed_oauth_being_off() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
-        .and(path("/health"))
+        .and(path(HEALTH))
         .respond_with(ResponseTemplate::new(302).insert_header(
             "location",
             "https://example.cloudflareaccess.com/cdn-cgi/access/login/x",
@@ -451,7 +459,7 @@ async fn a_browser_only_access_redirect_is_also_reported_as_managed_oauth_being_
 async fn an_unprotected_server_is_detected_and_has_a_warning_to_show() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
-        .and(path("/health"))
+        .and(path(HEALTH))
         .respond_with(json(&serde_json::json!({ "service": "prick", "version": "2026.815.0" })))
         .mount(&server)
         .await;
@@ -470,7 +478,7 @@ async fn an_unprotected_server_is_detected_and_has_a_warning_to_show() {
 async fn something_that_is_not_this_service_is_refused_before_any_credential_is_sent() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
-        .and(path("/health"))
+        .and(path(HEALTH))
         .respond_with(json(&serde_json::json!({ "service": "vault", "version": "1.15.0" })))
         .mount(&server)
         .await;

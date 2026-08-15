@@ -167,22 +167,31 @@ pub fn whoami(global: &GlobalArgs, out: Output) -> Result<(), CliError> {
     let mut context = Context::new(global)?;
     context.authenticate(out)?;
 
-    let url = context.client().url(&["whoami"]);
-    let identity: prick_api::models::Whoami = context.block_on(context.client().get_json(&url))?;
+    let identity = context.block_on(prick_api::ops::whoami(context.client()))?;
 
     if global.json {
         out.json(&serde_json::json!({
             "kind": identity.kind,
             "subject": identity.subject,
+            "identity_id": identity.identity_id,
             "role": identity.role,
+            "bootstrap": identity.bootstrap,
         }));
     } else {
         // A service token's subject is a `common_name` like
         // `e367826f93b8d71185e03fe518aff3b4.access`, which is exactly the
         // string an administrator needs in order to grant it something.
         out.data(&format!("{} ({})", identity.subject, identity.kind));
+        // The GLOBAL role, and only that. A project-scoped admin reports none
+        // here and is still an administrator of that project.
         if let Some(role) = identity.role.as_deref() {
-            out.data(&format!("role: {role}"));
+            out.data(&format!("role: {role} (global)"));
+        }
+        if identity.bootstrap {
+            out.warn(
+                "you are an administrator by BOOTSTRAP_ADMINS alone; the self-heal turns that \
+                 into a real, revocable grant on the next authenticated request",
+            );
         }
     }
 

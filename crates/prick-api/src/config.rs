@@ -92,15 +92,38 @@ impl Config {
     ///
     /// Routes are always built this way and never with `format!`; see
     /// [`prick_core::urlpath`] for why.
+    ///
+    /// **Everything the server serves is under this prefix**, `/health`
+    /// included. The Worker routes `/api/*` to the API and everything else to
+    /// the admin UI, so a path built at the origin reaches SvelteKit's 404 page
+    /// rather than a route.
     pub fn url(&self, segments: &[&str]) -> String {
         let base = format!("{}{API_PREFIX}", self.base_url);
         prick_core::urlpath::join(&base, segments)
     }
 
-    /// Builds an absolute URL outside the API prefix.
+    /// Builds an absolute URL for a route, with a query string.
     ///
-    /// `/health` and the RFC 9728 discovery documents live at the origin, not
-    /// under the versioned API.
+    /// Both halves of every pair are percent-encoded, which over-encodes for a
+    /// query component and is deliberate: the same conservative set is used for
+    /// path segments, and nothing here needs a character it removes.
+    pub fn url_with_query(&self, segments: &[&str], query: &[(&str, &str)]) -> String {
+        let mut url = self.url(segments);
+        for (index, (name, value)) in query.iter().enumerate() {
+            url.push(if index == 0 { '?' } else { '&' });
+            url.push_str(&prick_core::urlpath::encode_segment(name));
+            url.push('=');
+            url.push_str(&prick_core::urlpath::encode_segment(value));
+        }
+        url
+    }
+
+    /// Builds an absolute URL at the deployment origin, outside the API prefix.
+    ///
+    /// Nothing this crate calls lives there. It remains because a caller
+    /// reaching the origin has no other way to build a URL that respects the
+    /// configured base -- but if you are reaching for it to build an API route,
+    /// you want [`Config::url`].
     pub fn root_url(&self, segments: &[&str]) -> String {
         prick_core::urlpath::join(&self.base_url, segments)
     }
@@ -127,9 +150,28 @@ mod tests {
     }
 
     #[test]
-    fn health_lives_at_the_origin_rather_than_under_the_api_prefix() {
+    fn health_lives_under_the_api_prefix_like_every_other_route() {
+        // The Worker routes `/api/*` to the API and everything else to the
+        // admin UI, so a probe of the origin's `/health` gets an HTML 404.
         let config = Config::new("https://prick.example.com");
-        assert_eq!(config.root_url(&["health"]), "https://prick.example.com/health");
+        assert_eq!(config.url(&["health"]), "https://prick.example.com/api/v1/health");
+    }
+
+    #[test]
+    fn a_query_string_is_encoded_rather_than_interpolated() {
+        let config = Config::new("https://prick.example.com");
+        assert_eq!(
+            config.url_with_query(
+                &["projects", "billing", "environments", "eu-west", "secrets"],
+                &[("reason", "run")]
+            ),
+            "https://prick.example.com/api/v1/projects/billing/environments/eu-west/secrets?reason=run"
+        );
+        assert_eq!(
+            config.url_with_query(&["x"], &[("a", "b c"), ("d", "e&f")]),
+            "https://prick.example.com/api/v1/x?a=b%20c&d=e%26f"
+        );
+        assert_eq!(config.url_with_query(&["x"], &[]), config.url(&["x"]));
     }
 
     #[test]

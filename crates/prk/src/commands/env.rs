@@ -1,14 +1,23 @@
 //! `prk env`.
 //!
-//! An environment name may contain colons -- `eu:west` is a legal name -- so
-//! nothing here splits one, and every name reaches the URL through
-//! [`prick_core::urlpath`] rather than a `format!`. See [`prick_core::scope`]
-//! for the parser that splits a *scope* on the first colon only.
+//! # An environment has two names
+//!
+//! A **slug**, which is what every route addresses it by and what `--env`
+//! takes, and a **display name**, which is free text. `eu-west` and "EU West"
+//! are the same environment; only the first appears in a URL.
+//!
+//! The slug grammar excludes `:` outright, which is what makes the CLI's own
+//! `project:environment` scope spelling unambiguous -- see
+//! [`prick_core::scope`] for the parser that splits on the first colon.
 
 use clap::Subcommand;
 
+use prick_api::ops;
+
 use crate::cli::GlobalArgs;
-use crate::commands::{Context, projects::confirm};
+use crate::commands::{
+    Context, naming, projects::confirm, projects::resolve_slug, require_project,
+};
 use crate::error::CliError;
 use crate::output::Output;
 
@@ -20,17 +29,23 @@ pub enum EnvCommand {
 
     /// Create an environment.
     Create {
-        /// The environment name. May contain colons.
+        /// The environment's display name.
         #[arg(value_name = "NAME")]
         name: String,
+
+        /// URL-safe short name, and the only way an environment is addressed.
+        ///
+        /// Required by the server; derived from `NAME` when it is not given.
+        #[arg(long, value_name = "SLUG")]
+        slug: Option<String>,
     },
 
     /// Delete an environment and its secrets.
     #[command(name = "rm")]
     Remove {
-        /// The environment to delete.
-        #[arg(value_name = "NAME")]
-        name: String,
+        /// The environment to delete, by slug.
+        #[arg(value_name = "SLUG")]
+        slug: String,
     },
 }
 
@@ -43,17 +58,6 @@ impl EnvCommand {
             Self::Remove { .. } => "env rm",
         }
     }
-}
-
-/// The project a `prk env` command operates in.
-///
-/// # Errors
-///
-/// [`CliError::Other`] naming the flag and the environment variable.
-fn require_project(global: &GlobalArgs) -> Result<&str, CliError> {
-    global.project.as_deref().filter(|value| !value.is_empty()).ok_or_else(|| {
-        CliError::Other("no project selected; pass --project <NAME> or set PRK_PROJECT".to_owned())
-    })
 }
 
 /// Runs an environment subcommand.
@@ -71,9 +75,7 @@ pub fn run(command: &EnvCommand, global: &GlobalArgs, out: Output) -> Result<(),
 
     match command {
         EnvCommand::List => {
-            let url = client.url(&["projects", project, "environments"]);
-            let environments: Vec<prick_api::models::Environment> =
-                context.block_on(client.get_json(&url))?;
+            let environments = context.block_on(ops::list_environments(client, project))?;
 
             if global.json {
                 let rows: Vec<serde_json::Value> = environments
@@ -81,8 +83,11 @@ pub fn run(command: &EnvCommand, global: &GlobalArgs, out: Output) -> Result<(),
                     .map(|environment| {
                         serde_json::json!({
                             "id": environment.id,
+                            "project_id": environment.project_id,
+                            "slug": environment.slug,
                             "name": environment.name,
                             "rev": environment.rev,
+                            "secret_count": environment.secret_count,
                         })
                     })
                     .collect();
@@ -91,39 +96,51 @@ pub fn run(command: &EnvCommand, global: &GlobalArgs, out: Output) -> Result<(),
                 out.note("No environments. Create one with `prk env create <NAME>`.");
             } else {
                 for environment in &environments {
-                    out.data(&format!("{}\trev {}", environment.name, environment.rev));
+                    out.data(&format!(
+                        "{}\t{}\trev {}\t{} secret(s)",
+                        environment.slug,
+                        environment.name,
+                        environment.rev,
+                        environment.secret_count
+                    ));
                 }
             }
         }
 
-        EnvCommand::Create { name } => {
-            let url = client.url(&["projects", project, "environments"]);
-            let body = serde_json::json!({ "name": name });
-            let environment: prick_api::models::Environment =
-                context.block_on(client.post_json(&url, &body))?;
+        EnvCommand::Create { name, slug } => {
+            // Both halves are required: the server stores them separately and
+            // will not derive one from the other.
+            let slug = resolve_slug("environment", slug.as_deref(), name)?;
+            let environment =
+                context.block_on(ops::create_environment(client, project, &slug, name, None))?;
 
             if global.json {
                 out.json(&serde_json::json!({
                     "id": environment.id,
+                    "project_id": environment.project_id,
+                    "slug": environment.slug,
                     "name": environment.name,
                     "rev": environment.rev,
                 }));
             } else {
-                out.data(&format!("Created environment `{}`.", environment.name));
+                out.data(&format!(
+                    "Created environment `{}` ({}).",
+                    environment.name, environment.slug
+                ));
             }
         }
 
-        EnvCommand::Remove { name } => {
-            if !confirm(global, out, &format!("Delete environment `{name}` and all its secrets"))? {
+        EnvCommand::Remove { slug } => {
+            naming::require_slug("environment", slug)?;
+            if !confirm(global, out, &format!("Delete environment `{slug}` and all its secrets"))? {
                 return Err(CliError::Other("cancelled".to_owned()));
             }
-            let url = client.url(&["projects", project, "environments", name]);
-            context.block_on(client.delete(&url))?;
+            context.block_on(ops::delete_environment(client, project, slug))?;
 
             if global.json {
-                out.json(&serde_json::json!({ "deleted": name }));
+                out.json(&serde_json::json!({ "deleted": slug }));
             } else {
-                out.data(&format!("Deleted environment `{name}`."));
+                out.data(&format!("Deleted environment `{slug}`."));
             }
         }
     }
@@ -177,8 +194,8 @@ mod tests {
     fn every_subcommand_reports_a_path() {
         for command in [
             EnvCommand::List,
-            EnvCommand::Create { name: "eu:west".to_owned() },
-            EnvCommand::Remove { name: "eu:west".to_owned() },
+            EnvCommand::Create { name: "EU West".to_owned(), slug: None },
+            EnvCommand::Remove { slug: "eu-west".to_owned() },
         ] {
             assert!(command.path().starts_with("env "));
         }

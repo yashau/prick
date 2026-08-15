@@ -44,6 +44,7 @@ pub struct ApiError {
     kind: ErrorKind,
     message: String,
     request_id: Option<String>,
+    server_hint: Option<String>,
     // Boxed so the common `ApiError` stays small; a failure carrying nine
     // optional strings by value would widen every `Result` in the crate.
     facts: Option<Box<ResponseFacts>>,
@@ -52,7 +53,7 @@ pub struct ApiError {
 impl ApiError {
     /// Builds an error of a given kind.
     pub fn new(kind: ErrorKind, message: impl Into<String>) -> Self {
-        Self { kind, message: message.into(), request_id: None, facts: None }
+        Self { kind, message: message.into(), request_id: None, server_hint: None, facts: None }
     }
 
     /// Builds an error from a transport outcome.
@@ -69,6 +70,7 @@ impl ApiError {
             kind: classified.kind,
             message: classified.message,
             request_id: facts.request_id.clone(),
+            server_hint: None,
             facts: Some(Box::new(facts)),
         }
     }
@@ -82,6 +84,7 @@ impl ApiError {
             kind: ErrorKind::from_status(facts.status),
             message: message.into(),
             request_id: facts.request_id.clone(),
+            server_hint: None,
             facts: Some(Box::new(facts)),
         }
     }
@@ -90,6 +93,18 @@ impl ApiError {
     #[must_use]
     pub fn with_request_id(mut self, request_id: impl Into<String>) -> Self {
         self.request_id = Some(request_id.into());
+        self
+    }
+
+    /// Attaches the `hint` from the server's error envelope.
+    ///
+    /// Kept apart from [`ApiError::hint`], which is the client's own static
+    /// advice for a *kind* of failure. The server's is about this one request
+    /// -- which route to use instead, which variable to set -- and is therefore
+    /// the better of the two whenever it exists.
+    #[must_use]
+    pub fn with_server_hint(mut self, hint: impl Into<String>) -> Self {
+        self.server_hint = Some(hint.into());
         self
     }
 
@@ -108,9 +123,17 @@ impl ApiError {
         self.facts.as_deref()
     }
 
-    /// The actionable next step for this failure.
+    /// The actionable next step for this *kind* of failure.
+    ///
+    /// Static, because it is this client's advice rather than the server's. See
+    /// [`ApiError::server_hint`] for what the failing request itself said.
     pub fn hint(&self) -> Option<&'static str> {
         self.kind.hint()
+    }
+
+    /// The `hint` the server's error envelope carried, if any.
+    pub fn server_hint(&self) -> Option<&str> {
+        self.server_hint.as_deref()
     }
 
     /// The process exit code this failure should produce.
@@ -184,6 +207,20 @@ mod tests {
         assert_eq!(err.kind(), ErrorKind::Conflict);
         assert_eq!(err.to_string(), "another writer changed this environment");
         assert!(err.is_retryable());
+    }
+
+    #[test]
+    fn the_servers_own_hint_is_kept_apart_from_this_clients() {
+        let facts = ResponseFacts { status: 400, ..ResponseFacts::default() };
+        let err = ApiError::from_server(facts, "This operation does not support a precondition.")
+            .with_server_hint("Only `secrets:batch` and `secrets:import` evaluate If-Match.");
+
+        assert_eq!(
+            err.server_hint(),
+            Some("Only `secrets:batch` and `secrets:import` evaluate If-Match.")
+        );
+        // Validation carries no static hint, so the server's is the only one.
+        assert_eq!(err.hint(), None);
     }
 
     #[test]

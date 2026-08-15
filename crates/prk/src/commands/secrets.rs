@@ -14,14 +14,31 @@
 //! - **A decryption failure is loud.** A row that will not decrypt is reported;
 //!   it is never quietly dropped, because a silently shorter `.env` is how a
 //!   deploy goes out without `DATABASE_URL`.
+//!
+//! # Every write goes through one route
+//!
+//! `POST …/secrets:batch`. There is no per-key `PUT` or `DELETE`, and that is
+//! not an omission: a batch is one D1 transaction with its audit row as the
+//! last statement inside it, so an un-audited or half-applied write is not
+//! expressible. `set` and `rm` each send a one-entry batch.
+//!
+//! # What this cannot do yet
+//!
+//! Write a secret's **description**. `SecretsMap` carries key and value only,
+//! and no route on the server accepts one, so there is no flag for it here --
+//! a flag that silently discarded its argument would be worse than its absence.
+//! Descriptions are readable in a listing.
 
 use std::collections::BTreeMap;
 use std::io::Read as _;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use clap::{Args, Subcommand};
 use secrecy::{ExposeSecret as _, SecretString};
 
+use prick_api::models::SecretExport;
+use prick_api::ops;
+use prick_api::{BatchRequest, ImportFormat, ImportRequest, RevealReason, WriteMode};
 use prick_core::format::OutputFormat;
 
 use crate::cli::GlobalArgs;
@@ -71,8 +88,9 @@ pub enum SecretsCommand {
 
     /// Restore a secret to an earlier version.
     ///
-    /// Re-encrypts the old plaintext as a new version. The old ciphertext is
-    /// never resurrected, so a rolled-back value is bound to its new version.
+    /// Re-encrypts the old plaintext as a **new** version. The old ciphertext is
+    /// never resurrected: its AAD binds it to the version it was sealed at, so
+    /// writing those bytes back as current would fail the next read's tag check.
     Rollback {
         /// The secret's key.
         #[arg(value_name = "KEY")]
@@ -81,6 +99,10 @@ pub enum SecretsCommand {
         /// The version to restore.
         #[arg(long, value_name = "N")]
         to: u32,
+
+        /// Recorded verbatim in the audit row.
+        #[arg(long, value_name = "TEXT")]
+        reason: Option<String>,
     },
 }
 
@@ -114,15 +136,19 @@ pub struct SetArgs {
     #[arg(long)]
     pub stdin: bool,
 
-    /// A human-readable description stored alongside the secret.
+    /// Recorded verbatim in the audit row. Never contains a value.
     #[arg(long, value_name = "TEXT")]
-    pub description: Option<String>,
+    pub reason: Option<String>,
 }
 
 /// Arguments to `prk secrets upload`.
 #[derive(Debug, Clone, Args)]
 pub struct UploadArgs {
-    /// The `.env` file to read.
+    /// The file to upload. A `.json` extension is sent as JSON; anything else
+    /// is sent as a `.env` document.
+    ///
+    /// The file is sent as a blob and parsed **by the server**, so what the
+    /// server accepts is exactly what this command accepts.
     #[arg(value_name = "FILE")]
     pub file: PathBuf,
 
@@ -133,8 +159,20 @@ pub struct UploadArgs {
     /// Fail unless the environment is still at this revision.
     ///
     /// Guards against overwriting a change made between reading and writing.
+    /// `prk env list` reports the current revision.
     #[arg(long, value_name = "REV")]
     pub expected_rev: Option<u64>,
+
+    /// Merge into the environment instead of replacing it.
+    ///
+    /// Without this, keys the file does not name are deleted -- which is what
+    /// "upload this environment" means, and why `--expected-rev` exists.
+    #[arg(long)]
+    pub merge: bool,
+
+    /// Recorded verbatim in the audit row.
+    #[arg(long, value_name = "TEXT")]
+    pub reason: Option<String>,
 }
 
 /// Arguments to `prk secrets download`.
@@ -188,26 +226,31 @@ pub fn run(command: &SecretsCommand, global: &GlobalArgs, out: Output) -> Result
     let mut context = Context::new(global)?;
     context.authenticate(out)?;
     let client = context.client();
-    let base = client.url(&["projects", project, "environments", environment, "secrets"]);
 
     match command {
         SecretsCommand::List => {
-            let secrets: Vec<prick_api::models::SecretMeta> =
-                context.block_on(client.get_json(&base))?;
+            let secrets = context.block_on(ops::list_secrets(client, project, environment))?;
             list(&secrets, global, out);
         }
 
         SecretsCommand::Get { key } => {
-            // One secret, not the whole environment filtered down to one.
-            let url = prick_core::urlpath::join(&base, &[key]);
-            let secret: prick_api::models::SecretValue = context.block_on(client.get_json(&url))?;
+            // One secret, not the whole environment filtered down to one. The
+            // reason is recorded in the audit row: this value is written to
+            // stdout, so it has left the system whether or not anyone read it.
+            let secret = context.block_on(ops::reveal_secret(
+                client,
+                project,
+                environment,
+                key,
+                RevealReason::Copy,
+            ))?;
 
             if global.json {
                 // The value is the answer to the question that was asked, so it
-                // goes to stdout as the sole document.
+                // goes to stdout as the sole document. There is no version:
+                // the reveal route returns the key and the plaintext.
                 out.json(&serde_json::json!({
                     "key": secret.key,
-                    "version": secret.version,
                     "value": secret.value.expose_secret(),
                 }));
             } else {
@@ -215,63 +258,50 @@ pub fn run(command: &SecretsCommand, global: &GlobalArgs, out: Output) -> Result
             }
         }
 
-        SecretsCommand::Set(args) => {
-            let value = read_value(args, global, out)?;
-            let url = prick_core::urlpath::join(&base, &[&args.key]);
-            let mut body = serde_json::json!({ "value": value.expose_secret() });
-            if let Some(description) = args.description.as_deref() {
-                body["description"] = serde_json::Value::String(description.to_owned());
-            }
-            let meta: prick_api::models::SecretMeta =
-                context.block_on(client.put_json(&url, &body))?;
-
-            if global.json {
-                out.json(&serde_json::json!({ "key": meta.key, "version": meta.version }));
-            } else {
-                out.data(&format!("Set `{}` (version {}).", meta.key, meta.version));
-            }
-        }
+        SecretsCommand::Set(args) => set(&context, project, environment, args, global, out)?,
 
         SecretsCommand::Remove { key } => {
-            if !confirm(global, out, &format!("Delete secret `{key}`"))? {
-                return Err(CliError::Other("cancelled".to_owned()));
-            }
-            let url = prick_core::urlpath::join(&base, &[key]);
-            context.block_on(client.delete(&url))?;
-
-            if global.json {
-                out.json(&serde_json::json!({ "deleted": key }));
-            } else {
-                out.data(&format!("Deleted `{key}`."));
-            }
+            remove(&context, project, environment, key, global, out)?;
         }
 
         SecretsCommand::Download(args) => {
-            let export: prick_api::models::SecretExport =
-                context.block_on(client.get_json(&format!("{base}:export")))?;
+            let export = context.block_on(ops::export_secrets(client, project, environment))?;
             download(&export, args, global, out)?;
         }
 
-        SecretsCommand::Upload(args) => upload(&context, &base, args, global, out)?,
-
-        SecretsCommand::History { key } => {
-            let url = prick_core::urlpath::join(&base, &[key, "versions"]);
-            let versions: serde_json::Value = context.block_on(client.get_json(&url))?;
-            out.json(&versions);
+        SecretsCommand::Upload(args) => {
+            upload(&context, project, environment, args, global, out)?;
         }
 
-        SecretsCommand::Rollback { key, to } => {
-            let url = format!("{}:rollback", prick_core::urlpath::join(&base, &[key]));
-            let body = serde_json::json!({ "to": to });
-            let meta: prick_api::models::SecretMeta =
-                context.block_on(client.post_json(&url, &body))?;
+        SecretsCommand::History { key } => {
+            let versions =
+                context.block_on(ops::secret_versions(client, project, environment, key))?;
+            history(key, &versions, global, out);
+        }
+
+        SecretsCommand::Rollback { key, to, reason } => {
+            // Collection-level, with the key in the body: there is no
+            // `…/secrets/{key}:rollback`.
+            let result = context.block_on(ops::rollback_secret(
+                client,
+                project,
+                environment,
+                key,
+                *to,
+                reason.as_deref(),
+            ))?;
 
             if global.json {
-                out.json(&serde_json::json!({ "key": meta.key, "version": meta.version }));
+                out.json(&serde_json::json!({
+                    "key": key,
+                    "restored_from": to,
+                    "version": result.version,
+                    "rev": result.rev,
+                }));
             } else {
                 out.data(&format!(
-                    "Restored `{}` from version {to} as version {}.",
-                    meta.key, meta.version
+                    "Restored `{key}` from version {to} as version {} (rev {}).",
+                    result.version, result.rev
                 ));
             }
         }
@@ -280,43 +310,203 @@ pub fn run(command: &SecretsCommand, global: &GlobalArgs, out: Output) -> Result
     Ok(())
 }
 
-/// Replaces an environment's secrets from a `.env` file.
+/// Writes one secret.
 ///
-/// The whole file goes to the server in one request, because a bulk write is
-/// one transaction there: splitting it would destroy the atomicity that makes a
+/// A one-entry `:batch`, because that is the only write path there is: the
+/// batch is one transaction with its audit row inside it, and a per-key route
+/// would be a second write path without one.
+fn set(
+    context: &Context,
+    project: &str,
+    environment: &str,
+    args: &SetArgs,
+    global: &GlobalArgs,
+    out: Output,
+) -> Result<(), CliError> {
+    let value = read_value(args, global, out)?;
+
+    let result = context.block_on(ops::write_secrets(
+        context.client(),
+        project,
+        environment,
+        &BatchRequest {
+            mode: WriteMode::Merge,
+            set: vec![(args.key.as_str(), &value)],
+            reason: args.reason.as_deref(),
+            ..BatchRequest::default()
+        },
+    ))?;
+
+    // The diff says which it was, so the CLI does not have to guess or ask.
+    let created = result.added.iter().any(|key| key == &args.key);
+
+    if global.json {
+        out.json(&serde_json::json!({
+            "key": args.key,
+            "rev": result.rev,
+            "created": created,
+        }));
+    } else {
+        let verb = if created { "Added" } else { "Updated" };
+        out.data(&format!("{verb} `{}` (rev {}).", args.key, result.rev));
+    }
+
+    Ok(())
+}
+
+/// Deletes one secret.
+///
+/// A one-entry `delete` in a batch. The old versions stay in history as
+/// tombstones, which is what makes delete-then-recreate continue the sequence.
+fn remove(
+    context: &Context,
+    project: &str,
+    environment: &str,
+    key: &str,
+    global: &GlobalArgs,
+    out: Output,
+) -> Result<(), CliError> {
+    if !confirm(global, out, &format!("Delete secret `{key}`"))? {
+        return Err(CliError::Other("cancelled".to_owned()));
+    }
+
+    let result = context.block_on(ops::write_secrets(
+        context.client(),
+        project,
+        environment,
+        &BatchRequest { delete: vec![key], ..BatchRequest::default() },
+    ))?;
+
+    if global.json {
+        out.json(&serde_json::json!({ "deleted": key, "rev": result.rev }));
+    } else {
+        out.data(&format!("Deleted `{key}` (rev {}).", result.rev));
+    }
+
+    Ok(())
+}
+
+/// Replaces an environment's secrets from a file.
+///
+/// The file goes to the server **as a blob**, and the server parses it. That is
+/// the shape `:import` takes, and it is the right one: one parser means this
+/// command cannot reject a file the server would accept, or accept one it would
+/// reject.
+///
+/// The whole document goes in one request, because a bulk write is one
+/// transaction there: splitting it would destroy the atomicity that makes a
 /// failed import leave the environment exactly as it was.
 fn upload(
     context: &Context,
-    base: &str,
+    project: &str,
+    environment: &str,
     args: &UploadArgs,
     global: &GlobalArgs,
     out: Output,
 ) -> Result<(), CliError> {
+    // Names the path and never the contents: this file is full of values.
     let document = std::fs::read_to_string(&args.file)
         .map_err(|err| CliError::Other(format!("could not read {}: {err}", args.file.display())))?;
-    let parsed = prick_core::dotenv::parse(&document)?;
 
-    let entries: Vec<serde_json::Value> = parsed
-        .iter()
-        .map(|(key, value)| serde_json::json!({ "key": key, "value": value }))
-        .collect();
-    let mut body = serde_json::json!({ "secrets": entries, "dry_run": args.dry_run });
-    if let Some(rev) = args.expected_rev {
-        body["expected_rev"] = serde_json::json!(rev);
-    }
-
-    let response: serde_json::Value =
-        context.block_on(context.client().post_json(&format!("{base}:import"), &body))?;
+    let result = context.block_on(ops::import_secrets(
+        context.client(),
+        project,
+        environment,
+        &ImportRequest {
+            format: import_format(&args.file),
+            content: &document,
+            mode: if args.merge { WriteMode::Merge } else { WriteMode::Replace },
+            dry_run: args.dry_run,
+            expected_rev: args.expected_rev,
+            reason: args.reason.as_deref(),
+        },
+    ))?;
 
     if global.json {
-        out.json(&response);
-    } else if args.dry_run {
-        out.data(&format!("{} secrets would be written (dry run).", parsed.len()));
+        out.json(&serde_json::json!({
+            "applied": result.applied,
+            "added": result.added,
+            "changed": result.changed,
+            "removed": result.removed,
+            "warnings": result.warnings.iter().map(|warning| serde_json::json!({
+                "line": warning.line,
+                "key": warning.key,
+                "message": warning.message,
+            })).collect::<Vec<_>>(),
+        }));
+        return Ok(());
+    }
+
+    for warning in &result.warnings {
+        out.warn(&format!("line {}: {} ({})", warning.line, warning.message, warning.key));
+    }
+
+    let summary = format!(
+        "{} added, {} changed, {} removed",
+        result.added.len(),
+        result.changed.len(),
+        result.removed.len()
+    );
+    if result.applied {
+        out.data(&format!("{summary}."));
     } else {
-        out.data(&format!("Wrote {} secrets.", parsed.len()));
+        out.data(&format!("{summary} (dry run; nothing was written)."));
     }
 
     Ok(())
+}
+
+/// Which parser the server should use for an uploaded file.
+///
+/// By extension, because the alternative is sniffing the contents of a file of
+/// secrets. `.json` is JSON; everything else is a `.env` document, which is
+/// what an extensionless `.env` or a `production.env` is.
+fn import_format(path: &Path) -> ImportFormat {
+    let json = path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("json"));
+
+    if json { ImportFormat::Json } else { ImportFormat::Env }
+}
+
+/// Prints a key's version history.
+///
+/// A tombstone is shown rather than skipped: "this key was deleted at version
+/// 4" is the answer to half the questions this command is asked.
+fn history(
+    key: &str,
+    versions: &[prick_api::models::SecretVersion],
+    global: &GlobalArgs,
+    out: Output,
+) {
+    if global.json {
+        let rows: Vec<serde_json::Value> = versions
+            .iter()
+            .map(|entry| {
+                serde_json::json!({
+                    "version": entry.version,
+                    "op": entry.op,
+                    "created_at": entry.created_at,
+                    "created_by": entry.created_by,
+                    "kid": entry.kid,
+                    "deleted": entry.deleted,
+                })
+            })
+            .collect();
+        out.json(&serde_json::Value::Array(rows));
+        return;
+    }
+
+    if versions.is_empty() {
+        out.note(&format!("No history for `{key}`."));
+        return;
+    }
+
+    for entry in versions {
+        let marker = if entry.deleted { "\tDELETED" } else { "" };
+        out.data(&format!("v{}\t{}\t{}{marker}", entry.version, entry.op, entry.created_by));
+    }
 }
 
 /// Prints a listing.
@@ -331,7 +521,11 @@ fn list(secrets: &[prick_api::models::SecretMeta], global: &GlobalArgs, out: Out
             .map(|meta| {
                 serde_json::json!({
                     "key": meta.key,
+                    "description": meta.description,
                     "version": meta.version,
+                    "updated_at": meta.updated_at,
+                    "updated_by": meta.updated_by,
+                    "kid": meta.kid,
                     "unreadable": meta.unreadable,
                 })
             })
@@ -349,7 +543,7 @@ fn list(secrets: &[prick_api::models::SecretMeta], global: &GlobalArgs, out: Out
         if meta.unreadable {
             out.data(&format!("{}\tv{}\tUNREADABLE", meta.key, meta.version));
         } else {
-            out.data(&format!("{}\tv{}", meta.key, meta.version));
+            out.data(&format!("{}\tv{}\t{}", meta.key, meta.version, meta.updated_by));
         }
     }
 
@@ -364,17 +558,17 @@ fn list(secrets: &[prick_api::models::SecretMeta], global: &GlobalArgs, out: Out
 
 /// Renders an export and writes it where it was asked to go.
 fn download(
-    export: &prick_api::models::SecretExport,
+    export: &SecretExport,
     args: &DownloadArgs,
     global: &GlobalArgs,
     out: Output,
 ) -> Result<(), CliError> {
     // A BTreeMap, so the rendering is byte-identical for identical input and
     // `prk secrets download | diff` is meaningful.
-    let mut values: BTreeMap<String, String> = BTreeMap::new();
-    for secret in &export.secrets {
-        values.insert(secret.key.clone(), secret.value.expose_secret().to_owned());
-    }
+    let values: BTreeMap<String, String> = export
+        .entries()
+        .map(|(key, value)| (key.to_owned(), value.expose_secret().to_owned()))
+        .collect();
 
     let rendered = prick_core::format::render(args.format.into(), &values)?;
 
@@ -398,7 +592,7 @@ fn download(
 /// The mode is set at creation on Unix rather than afterwards, so there is no
 /// window in which a file of secrets is world-readable. On Windows the DACL is
 /// replaced with a single entry for the current user.
-fn write_private(path: &std::path::Path, bytes: &[u8]) -> Result<(), CliError> {
+fn write_private(path: &Path, bytes: &[u8]) -> Result<(), CliError> {
     use std::io::Write as _;
 
     let mut options = std::fs::OpenOptions::new();
@@ -483,10 +677,19 @@ mod tests {
     fn set_has_no_way_to_pass_a_value_as_an_argument() {
         // Structural, not a rule: there is no field for it, so a value cannot
         // reach the shell history or `ps` however the command is invoked.
-        let args = SetArgs { key: "K".to_owned(), stdin: true, description: None };
+        let args = SetArgs { key: "K".to_owned(), stdin: true, reason: None };
         let rendered = format!("{args:?}");
         assert!(rendered.contains('K'));
         assert_eq!(size_of_val(&args.stdin), 1);
+    }
+
+    #[test]
+    fn an_upload_names_the_parser_by_extension() {
+        assert_eq!(import_format(Path::new(".env")), ImportFormat::Env);
+        assert_eq!(import_format(Path::new("production.env")), ImportFormat::Env);
+        assert_eq!(import_format(Path::new("secrets")), ImportFormat::Env);
+        assert_eq!(import_format(Path::new("secrets.json")), ImportFormat::Json);
+        assert_eq!(import_format(Path::new("SECRETS.JSON")), ImportFormat::Json);
     }
 
     #[test]
@@ -528,7 +731,7 @@ mod tests {
             SecretsCommand::Get { key: "K".to_owned() },
             SecretsCommand::Remove { key: "K".to_owned() },
             SecretsCommand::History { key: "K".to_owned() },
-            SecretsCommand::Rollback { key: "K".to_owned(), to: 1 },
+            SecretsCommand::Rollback { key: "K".to_owned(), to: 1, reason: None },
         ] {
             assert!(command.path().starts_with("secrets "));
         }

@@ -8,9 +8,18 @@
 //! | [`credential`] | What a request authenticates as |
 //! | [`error`] | [`ApiError`], and the mapping from transport and status outcomes to [`prick_core::classify::ErrorKind`] |
 //! | [`models`] | Typed request and response bodies |
+//! | [`ops`] | One typed function per route, and the request shapes they send |
 //! | [`response`] | Reading a response in the order that produces a useful error |
 //! | [`tls`] | rustls with ring, and the platform trust store |
 //! | [`client`] | The transport itself |
+//!
+//! # Where a route lives
+//!
+//! In [`ops`], never in a command. A route is a fact about the server, and
+//! `docs/openapi.json` -- generated from the router and kept fresh by a CI gate
+//! -- is what it is checked against. Keeping paths and request bodies in one
+//! module is what lets a test assert the method, the path and the body of every
+//! call this client can make.
 //!
 //! # The defect this crate is shaped around
 //!
@@ -45,6 +54,7 @@ pub mod config;
 pub mod credential;
 pub mod error;
 pub mod models;
+pub mod ops;
 pub mod response;
 pub mod tls;
 
@@ -52,6 +62,7 @@ pub use client::{Body, Client, Received};
 pub use config::Config;
 pub use credential::Credential;
 pub use error::{ApiError, Transport};
+pub use ops::{BatchRequest, GrantScope, ImportFormat, ImportRequest, RevealReason, WriteMode};
 pub use response::ResponseFacts;
 
 /// Builds the runtime the CLI drives every request from.
