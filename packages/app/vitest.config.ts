@@ -1,6 +1,18 @@
 import { cloudflareTest } from "@cloudflare/vitest-pool-workers";
 import { defineConfig } from "vitest/config";
 
+import { createAccessHarness } from "./test/auth/harness/origin.js";
+
+/**
+ * The mock Cloudflare Access origin.
+ *
+ * Built once for the whole run, in Node, because miniflare's `outboundService`
+ * runs in the Vitest host process. See `test/auth/harness/origin.ts` for why
+ * this is an `outboundService` and not a `fetchMock`, and for why the verifier
+ * is exercised for real rather than replaced by a stub.
+ */
+const accessHarness = await createAccessHarness();
+
 /**
  * Worker integration tests: the real Hono app, against a real D1, in miniflare.
  *
@@ -24,9 +36,13 @@ import { defineConfig } from "vitest/config";
  * so it is the last thing that should be mocked out. A sentinel grep on the
  * built Worker ensures the test URL never ships.
  *
- * OPEN ITEM (plan, "Open items to resolve during build" #3): confirm whether
- * this pinned pool exposes `fetchMock` or `outboundService` before building the
- * JWKS harness on either.
+ * RESOLVED (plan, "Open items to resolve during build" #3): this pinned pool
+ * exposes `outboundService`, NOT `fetchMock`. `cloudflare:test` in 0.21 no
+ * longer exports a `fetchMock` MockAgent (the undici mock TYPES survive in the
+ * .d.ts, but nothing exports an instance), and miniflare 5 has no `fetchMock`
+ * worker option either. The JWKS harness is therefore built on
+ * `outboundService` -- which runs in NODE, so key material and fetch counters
+ * cross into workerd as JSON. See `test/auth/harness/`.
  */
 export default defineConfig({
   plugins: [
@@ -40,6 +56,12 @@ export default defineConfig({
         compatibilityDate: "2026-08-01",
         compatibilityFlags: ["nodejs_compat"],
         d1Databases: ["DB"],
+        // EVERY outbound fetch from the Worker under test -- and from the test
+        // files, which share its isolate -- lands here. The harness serves the
+        // Access certs endpoint and refuses everything else with a 403, so a
+        // test that loses its interception fails immediately and loudly rather
+        // than reaching the real internet.
+        outboundService: (request: Request) => accessHarness.fetch(request),
         bindings: {
           ACCESS_TEAM: "test-team",
           ACCESS_AUD: "test-aud",
@@ -53,6 +75,11 @@ export default defineConfig({
     }),
   ],
   test: {
-    include: ["src/**/*.test.ts"],
+    // `test/` holds the suites that are about a LAYER rather than about a
+    // module -- the crypto tamper matrix is the first of them. It lives outside
+    // `src/` because it is deliberately written against the public surface of
+    // `lib/server/crypto`, the same one the write path will use, rather than
+    // against internals it could be quietly co-adapted with.
+    include: ["src/**/*.test.ts", "test/**/*.test.ts"],
   },
 });
