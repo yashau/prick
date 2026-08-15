@@ -654,7 +654,7 @@
                 }
               }
             },
-            "description": "`FORBIDDEN` — this endpoint currently requires **global admin**. The domain layer performs no scope narrowing on the log yet, so the transport fails closed rather than serving a project admin the whole installation's events."
+            "description": "`FORBIDDEN` — the caller holds no admin grant at any scope. Admins see the log narrowed to what they administer: global admins see everything, a project or environment admin sees only rows within their own scope."
           },
           "404": {
             "content": {

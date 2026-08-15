@@ -64,16 +64,20 @@ describe("the audit log", () => {
     for (const entry of second.body.entries) expect(ids.has(entry.id)).toBe(false);
   });
 
-  it("returns an EMPTY PAGE for an unknown project filter, not a 404", async () => {
-    // The alternative distinguishes "no such project" from "no events", which is
-    // the same existence oracle the NOT_FOUND rule closes everywhere else.
-    const page = await api.json<{ entries: unknown[]; cursor: string | null }>(
-      "/api/v1/audit?project=does-not-exist",
-      { token: owner },
-    );
+  it("404s an unknown project filter rather than serving an empty page", async () => {
+    // Not an oracle: a project that does not exist and one the caller cannot see
+    // both answer 404, which is the rule applied to every other resource. The
+    // oracle would be 404 for one and 403 for the other.
+    //
+    // And not an empty page, because an empty page is a wrong answer that looks
+    // like a right one -- someone auditing an incident who mistypes the slug
+    // reads "no events" and stops looking.
+    const page = await api.json<{ code: string }>("/api/v1/audit?project=does-not-exist", {
+      token: owner,
+    });
 
-    expect(page.status).toBe(200);
-    expect(page.body).toEqual({ entries: [], cursor: null });
+    expect(page.status).toBe(404);
+    expect(page.body.code).toBe("NOT_FOUND");
   });
 
   it("filters by actor, action and outcome", async () => {

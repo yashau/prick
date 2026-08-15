@@ -2,7 +2,7 @@ import { env } from "cloudflare:test";
 
 import type { Actor, CoreContext, RuntimeConfig } from "../../src/lib/server/core/context.js";
 import { buildKeyring, type Keyring } from "../../src/lib/server/crypto/index.js";
-import { createDatabase, type Database } from "../../src/lib/server/db/client.js";
+import type { Database } from "../../src/lib/server/db/client.js";
 import { uuidv7 } from "../../src/lib/server/db/ids.js";
 import { auditLog, environments, secrets, secretVersions } from "../../src/lib/server/db/schema.js";
 import {

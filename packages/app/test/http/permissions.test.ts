@@ -388,12 +388,22 @@ const OPERATIONS: Operation[] = [
   },
   {
     name: "GET /audit",
-    // GLOBAL admin only, and deliberately stricter than the rest of the access
-    // graph: `queryAudit` performs no scope narrowing, so a project admin would
-    // receive the whole installation's events. See the note in
-    // `http/routes/audit.ts` -- this row moves once the narrowing lands.
+    // Admin at ANY scope, because `queryAudit` narrows the query to what the
+    // caller administers rather than gating yes/no at the door. A global admin
+    // sees the whole log; a project admin sees their project's rows and its
+    // environments'; an environment admin sees that environment's.
+    //
+    // Everyone below admin is refused, and it is worth being explicit about why
+    // a global READER is 403 here while being 200 on most reads: audit rows
+    // carry actor email addresses and secret KEY NAMES across every project at
+    // once, which is a strictly broader disclosure than any single resource
+    // this role can already see.
+    //
+    // That the 200s stop at admin is the gate; that each admin sees only their
+    // own rows is asserted separately in test/core/audit.test.ts, which can
+    // inspect the entries rather than only the status.
     request: () => ({ path: "/api/v1/audit", init: {} }),
-    expect: row([403, 403, 403, 200, 403, 403, 403, 403, 403, 403]),
+    expect: row([403, 403, 403, 200, 403, 403, 200, 403, 403, 200]),
   },
 ];
 

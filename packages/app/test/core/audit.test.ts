@@ -139,15 +139,26 @@ describe("filters", () => {
     expect(denials.entries).toHaveLength(0);
   });
 
-  it("returns an EMPTY PAGE for a project filter naming something invisible", async () => {
+  it("REFUSES a project filter naming something invisible, rather than returning an empty page", async () => {
     await createProject(ctx(), { slug: "acme", name: "Acme" });
 
-    // Not a 404. Distinguishing "no such project" from "no events" would be the
-    // same existence oracle the NOT_FOUND rule closes everywhere else.
-    const result = await queryAudit(ctx(), query({ project: "no-such-project" }));
-
-    expect(result.entries).toEqual([]);
-    expect(result.cursor).toBeNull();
+    /*
+     * NOT_FOUND, and deliberately not an empty page.
+     *
+     * An empty page is the same class of answer as a silently skipped
+     * undecryptable row: indistinguishable from the truth, and wrong. Somebody
+     * auditing an incident who mistypes the project slug would read "no events"
+     * and conclude nothing happened.
+     *
+     * This is not an existence oracle. The oracle would be 404 for a project
+     * that does not exist and 403 for one the actor cannot see -- the pair is
+     * what leaks. Returning NOT_FOUND for both is exactly the rule applied to
+     * every other resource in the API, and it tells an honest caller their
+     * filter is wrong while telling an attacker nothing.
+     */
+    await expect(queryAudit(ctx(), query({ project: "no-such-project" }))).rejects.toMatchObject({
+      code: "NOT_FOUND",
+    });
   });
 
   it("parses stored detail back into an object", async () => {

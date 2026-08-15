@@ -1,7 +1,6 @@
 import { Hono } from "hono";
 
 import { queryAudit } from "../../core/audit.js";
-import { assertRole } from "../../core/guards.js";
 import { core } from "../context.js";
 import type { ApiEnv } from "../env.js";
 import { describe, jsonResponse } from "../openapi.js";
@@ -37,44 +36,18 @@ export function auditRoutes(): Hono<ApiEnv> {
       operationId: "queryAudit",
       responses: { 200: jsonResponse("One page of the log.", AuditPageResponse) },
       errors: {
-        403: "`FORBIDDEN` — this endpoint currently requires **global admin**. The domain layer performs no scope narrowing on the log yet, so the transport fails closed rather than serving a project admin the whole installation's events.",
+        403: "`FORBIDDEN` — the caller holds no admin grant at any scope. Admins see the log narrowed to what they administer: global admins see everything, a project or environment admin sees only rows within their own scope.",
       },
     }),
     validate("query", AuditQueryParams),
     async (c) => {
-      const ctx = core(c);
-
-      /*
-       * THE ONE AUTHORIZATION CHECK IN THIS ENTIRE TREE, AND IT IS A STOPGAP.
-       *
-       * Every other route in `http/` is a pure transport because the `core`
-       * function behind it performs its own check -- `requireProject`,
-       * `requireEnvironment`, `assertAnyAdmin`, `assertRole`. `queryAudit` is
-       * the single exception: it performs NONE. It reads the log, it resolves a
-       * `?project=` filter through a bare slug lookup with no visibility check,
-       * and it returns.
-       *
-       * Mounted unguarded, that endpoint hands every authenticated subject --
-       * including a service token that has just been refused everything else and
-       * exists only as a denial row -- the project ids, environment ids, secret
-       * KEY NAMES and actor email addresses of the entire installation. It is
-       * the broadest read in the API and it was the only one with no gate.
-       *
-       * So this line exists, and it is deliberately the MOST restrictive reading
-       * rather than the most useful one: global admin, nothing less. Being too
-       * restrictive is a bug an operator reports; being too permissive is a
-       * disclosure nobody reports because nobody notices.
-       *
-       * IT IS IN THE WRONG PLACE AND IT SHOULD BE DELETED. The check belongs
-       * inside `queryAudit`, alongside the per-scope narrowing this cannot
-       * express: a project admin ought to see their own project's events, which
-       * requires filtering the query by the visible set the way `listProjects`
-       * does, not a yes/no gate at the door. When that lands in `core`, this
-       * call goes with it.
-       */
-      await assertRole(ctx, { type: "global" }, "admin");
-
-      return c.json(await queryAudit(ctx, c.req.valid("query")));
+      // A pure transport, like every other route here: `queryAudit` resolves
+      // its own view and narrows the query to it. A global admin sees the whole
+      // log; an admin of a project or environment sees only rows within it; an
+      // actor with no admin grant anywhere is refused through the standard
+      // denial path, so the attempt is audited and the subject shows up under
+      // "Seen but not granted".
+      return c.json(await queryAudit(core(c), c.req.valid("query")));
     },
   );
 

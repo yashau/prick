@@ -1,9 +1,11 @@
 import type { AuditQuery } from "@prick/shared";
-import { and, desc, eq, gte, lt, lte } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, lt, lte, or, type SQL } from "drizzle-orm";
 
+import { assertCan, resolveAuthorization } from "../auth/authorize.js";
 import { uuidv7 } from "../db/ids.js";
 import { auditLog, environments, projects, type NewAuditEntry } from "../db/schema.js";
 import type { CoreContext, Scope } from "./context.js";
+import { notFound } from "./errors.js";
 
 /**
  * The audit log.
@@ -257,7 +259,259 @@ export interface AuditPage {
 }
 
 /**
+ * ---------------------------------------------------------------------------
+ * WHO MAY READ THE LOG, AND HOW MUCH OF IT
+ * ---------------------------------------------------------------------------
+ *
+ * THE LINE IS ADMIN, AT A SCOPE. Not reader, not writer, and this is the one
+ * decision in this file worth arguing with, so here is the argument.
+ *
+ * An audit row is not a secret value -- the `AuditDetail` union is built so that
+ * it cannot be. But it is three other things: the roster of humans and service
+ * tokens that touched a scope, the times at which each of them did, and the
+ * `access.denied` rows naming subjects that were refused. A reader on one
+ * environment already knows its key names, because reading the values is what
+ * their grant is for; what their grant is NOT for is enumerating the people and
+ * the machine credentials around it, or learning which subjects have been
+ * probing it and failing. "May read the secrets" and "may audit who read the
+ * secrets" are different sentences, and only the second is a statement about
+ * other people.
+ *
+ * Admin is also the line the rest of the access graph already draws:
+ * `listIdentities` and `listGrants` gate on admin-at-any-scope and then narrow
+ * per row to what the actor administers. The log is the same information viewed
+ * from the other end -- what was done with the access, rather than who holds it
+ * -- so it takes the same rule rather than inventing a second one.
+ *
+ * Erring restrictive is deliberate. Too restrictive is a bug an operator
+ * reports on the first afternoon; too permissive is a disclosure nobody reports
+ * because nobody notices.
+ *
+ * The resulting matrix:
+ *
+ *   global admin        every row, unfiltered.
+ *   project admin       rows carrying that project, AND rows carrying one of
+ *                       its environments. Nothing else.
+ *   environment admin   rows carrying that environment. Not its project's
+ *                       other environments, and not the project's own rows --
+ *                       grants inherit downwards only.
+ *   below admin         403, audited like every other denial.
+ *   disabled identity   403. The kill switch outranks every grant.
+ */
+type AuditView =
+  | { kind: "all" }
+  | {
+      kind: "scoped";
+      /** Projects administered outright. Their rows are visible wholesale. */
+      projectIds: readonly string[];
+      /**
+       * Every environment whose rows are visible: administered directly, or
+       * belonging to an administered project.
+       */
+      environmentIds: readonly string[];
+      /**
+       * Projects `?project=` may NAME. A superset of `projectIds`: it also holds
+       * the project of every directly-administered environment, so an
+       * environment admin can still address their own environment's history --
+       * which the UI does as `{project, environment}`. Naming the project widens
+       * nothing, because the view condition is ANDed with the filter: it selects
+       * within what is already visible.
+       */
+      addressableProjectIds: readonly string[];
+    };
+
+/**
+ * Resolve what this actor may see, or refuse.
+ *
+ * Built from the authorization snapshot that has ALREADY been resolved for this
+ * request, plus at most ONE query. That query does double duty: it expands
+ * administered projects into their environment ids and, in the same pass, finds
+ * the project of every administered environment.
+ */
+async function resolveAuditView(ctx: CoreContext): Promise<AuditView> {
+  const snapshot = await resolveAuthorization(ctx);
+
+  if (!snapshot.disabled) {
+    if (snapshot.bootstrap || snapshot.globalRole === "admin") return { kind: "all" };
+
+    const adminProjects = adminScopes(snapshot.byProject);
+    const adminEnvironments = adminScopes(snapshot.byEnvironment);
+
+    if (adminProjects.length > 0 || adminEnvironments.length > 0) {
+      const rows = await ctx.db
+        .select({ id: environments.id, projectId: environments.projectId })
+        .from(environments)
+        .where(
+          or(
+            adminProjects.length > 0 ? inArray(environments.projectId, adminProjects) : undefined,
+            adminEnvironments.length > 0 ? inArray(environments.id, adminEnvironments) : undefined,
+          ),
+        );
+
+      const directly = new Set(adminEnvironments);
+      // Seeded with the grants themselves, so a grant naming an environment that
+      // has since been deleted still cannot be widened by its absence.
+      const environmentIds = new Set(adminEnvironments);
+      const addressable = new Set(adminProjects);
+
+      for (const row of rows) {
+        environmentIds.add(row.id);
+        if (directly.has(row.id)) addressable.add(row.projectId);
+      }
+
+      return {
+        kind: "scoped",
+        projectIds: adminProjects,
+        environmentIds: [...environmentIds],
+        addressableProjectIds: [...addressable],
+      };
+    }
+  }
+
+  /*
+   * No admin anywhere. Routed through the standard denial path rather than a
+   * bare throw, so the refusal is audited and the subject appears in "Seen but
+   * not granted" exactly as it would for any other route -- a grantless service
+   * token pointed at `/audit` is how that token first becomes visible to an
+   * operator.
+   *
+   * The scope named is `global`, which is honest: what the actor lacks is admin
+   * anywhere at all. It also names no resource, so the 403 is not an existence
+   * oracle the way a resource-addressed one would be.
+   */
+  await assertCan(ctx, { type: "global" }, "admin");
+
+  /* istanbul ignore next -- assertCan always throws once we are in this branch */
+  throw notFound("audit");
+}
+
+/** The ids from a snapshot map whose role is exactly `admin`. */
+function adminScopes(roles: ReadonlyMap<string, string>): string[] {
+  const out: string[] = [];
+  for (const [id, role] of roles) if (role === "admin") out.push(id);
+  return out;
+}
+
+/**
+ * `project_id IN (...) OR environment_id IN (...)`, dropping either half when
+ * its list is empty.
+ *
+ * The environment half is not redundant, and removing it is the mistake this
+ * comment exists to prevent. A denial recorded at an environment scope carries
+ * `environment_id` and a NULL `project_id` -- there is no project on that scope
+ * to record -- so filtering a project admin's view on `project_id` alone would
+ * silently drop exactly the rows they most need: the refusals inside their own
+ * project. Teaching the writers to backfill `project_id` would fix new rows and
+ * not the log, which is append-only and historical; the read side has to be
+ * right for every row ever written.
+ */
+function coversAnyOf(
+  projectIds: readonly string[],
+  environmentIds: readonly string[],
+): SQL | undefined {
+  const parts: SQL[] = [];
+
+  if (projectIds.length > 0) parts.push(inArray(auditLog.projectId, [...projectIds]));
+  if (environmentIds.length > 0) parts.push(inArray(auditLog.environmentId, [...environmentIds]));
+
+  return or(...parts);
+}
+
+/**
+ * Resolve `?project=` THROUGH THE VIEW, so an unauthorized slug is `NOT_FOUND`.
+ *
+ * Both failures -- no such project, and a project this actor may not audit --
+ * end at the same zero-argument `notFound("project")`, built the same way, with
+ * the same hint. Splitting them would make the filter an oracle for which
+ * project names are in use: a caller with an admin grant on one small project
+ * could walk a slug dictionary and read the difference between 403 and 404 off
+ * an organisation they have nothing to do with. Slugs are things like
+ * `acme-payroll-migration`.
+ *
+ * Only the unauthorized branch records a denial. There is nothing to be denied
+ * about a project that does not exist, and auditing one would fill "Seen but
+ * not granted" with the noise of mistyped slugs.
+ */
+async function resolveProjectFilter(
+  ctx: CoreContext,
+  view: AuditView,
+  slug: string,
+): Promise<string> {
+  const rows = await ctx.db
+    .select({ id: projects.id })
+    .from(projects)
+    .where(eq(projects.slug, slug))
+    .limit(1);
+
+  const id = rows[0]?.id;
+  if (id === undefined) throw notFound("project");
+
+  if (view.kind === "all" || view.addressableProjectIds.includes(id)) return id;
+
+  await recordDenial(ctx, {
+    scope: { type: "project", projectId: id },
+    required: "admin",
+    resource: "audit",
+  });
+
+  throw notFound("project");
+}
+
+/**
+ * Resolve `?environment=` to EVERY matching environment, within the view.
+ *
+ * Never a bare `WHERE slug = ? LIMIT 1`. Environment slugs are unique only
+ * WITHIN a project -- `environments_project_slug_uniq` is a composite index --
+ * so a global lookup for `prod` finds an arbitrary project's production
+ * environment and answers a question nobody asked. Paired with `?project=` this
+ * resolves the slug PAIR exactly, which is what every caller in the UI sends;
+ * unpaired it means "every environment by that name that you may audit", which
+ * is the only reading of an ambiguous slug that is not a coin toss.
+ *
+ * An environment outside the view is `NOT_FOUND`, for the same reason the
+ * project filter is.
+ */
+async function resolveEnvironmentFilter(
+  ctx: CoreContext,
+  view: AuditView,
+  projectId: string | null,
+  slug: string,
+): Promise<string[]> {
+  const rows = await ctx.db
+    .select({ id: environments.id })
+    .from(environments)
+    .where(
+      projectId === null
+        ? eq(environments.slug, slug)
+        : and(eq(environments.projectId, projectId), eq(environments.slug, slug)),
+    );
+
+  const ids = rows
+    .map((row) => row.id)
+    .filter((id) => view.kind === "all" || view.environmentIds.includes(id));
+
+  if (ids.length === 0) throw notFound("environment");
+
+  return ids;
+}
+
+/**
  * Keyset-paginated audit query.
+ *
+ * AUTHORIZATION IS THE FIRST STATEMENT, and it lives here rather than in a
+ * route guard for the reason the whole `core` layer exists: a Hono handler and a
+ * SvelteKit server load both enter through this function, and a check written in
+ * one of those transports is a check the other does not have. It also could not
+ * be written there even if that were acceptable -- a yes/no gate at the door
+ * cannot express "this project admin sees their own project", which needs the
+ * visible set folded into the WHERE clause the way `listProjects` does.
+ *
+ * SCOPED IN THE QUERY, never filtered afterwards. A post-filter over "all
+ * events" has, at the moment it runs, already loaded rows the actor may not see,
+ * and every subsequent addition -- a count, a total, a facet -- is then computed
+ * over the wrong set by default. The pagination is the immediate proof: a page
+ * of 50 filtered down to 3 would report a cursor derived from rows the caller
+ * was never entitled to.
  *
  * Paginates on the UUIDv7 primary key (`WHERE id < :cursor ORDER BY id DESC`)
  * and NEVER on OFFSET. The log is append-only and grows under the reader, so
@@ -269,32 +523,45 @@ export interface AuditPage {
  * have no temporal order, so `id < cursor` would select an arbitrary subset.
  */
 export async function queryAudit(ctx: CoreContext, query: AuditQuery): Promise<AuditPage> {
-  const conditions = [];
+  const view = await resolveAuditView(ctx);
+
+  const conditions: SQL[] = [];
+
+  if (view.kind === "scoped") {
+    const scoped = coversAnyOf(view.projectIds, view.environmentIds);
+
+    // `resolveAuditView` only returns `scoped` when at least one admin grant
+    // produced an id, so this is never the whole log unfiltered.
+    /* istanbul ignore next -- unreachable; a scoped view always has one id */
+    if (scoped === undefined) return { entries: [], cursor: null };
+
+    conditions.push(scoped);
+  }
+
+  let projectId: string | null = null;
 
   if (query.project !== undefined) {
-    const rows = await ctx.db
-      .select({ id: projects.id })
-      .from(projects)
-      .where(eq(projects.slug, query.project))
-      .limit(1);
+    projectId = await resolveProjectFilter(ctx, view, query.project);
 
-    // A filter naming a project that does not exist (or that this actor cannot
-    // see) yields an EMPTY PAGE, not a 404. The alternative distinguishes
-    // "no such project" from "no events", which is the same existence oracle
-    // the NOT_FOUND rule closes everywhere else.
-    if (rows[0] === undefined) return { entries: [], cursor: null };
-    conditions.push(eq(auditLog.projectId, rows[0].id));
+    // The project's own rows AND its environments'. Anything else would hide an
+    // environment-scoped denial from the admin of the project it happened in.
+    const environmentRows = await ctx.db
+      .select({ id: environments.id })
+      .from(environments)
+      .where(eq(environments.projectId, projectId));
+
+    const covered = coversAnyOf(
+      [projectId],
+      environmentRows.map((row) => row.id),
+    );
+
+    /* istanbul ignore else -- the project id alone always produces a condition */
+    if (covered !== undefined) conditions.push(covered);
   }
 
   if (query.environment !== undefined) {
-    const rows = await ctx.db
-      .select({ id: environments.id })
-      .from(environments)
-      .where(eq(environments.slug, query.environment))
-      .limit(1);
-
-    if (rows[0] === undefined) return { entries: [], cursor: null };
-    conditions.push(eq(auditLog.environmentId, rows[0].id));
+    const ids = await resolveEnvironmentFilter(ctx, view, projectId, query.environment);
+    conditions.push(inArray(auditLog.environmentId, ids));
   }
 
   if (query.actor !== undefined) conditions.push(eq(auditLog.actorSubject, query.actor));
