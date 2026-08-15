@@ -33,7 +33,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { createServer } from "node:net";
 import { once } from "node:events";
 import { appendFile, mkdir, rm } from "node:fs/promises";
-import { createWriteStream } from "node:fs";
+import { appendFileSync, createWriteStream } from "node:fs";
 
 import { APP_ROOT, PATHS, WORK_ROOT } from "./paths";
 
@@ -41,13 +41,21 @@ import { APP_ROOT, PATHS, WORK_ROOT } from "./paths";
 function runNode(
   script: string,
   args: string[],
-  options: { cwd: string; env?: Record<string, string> },
+  options: { cwd: string; env?: Record<string, string>; detached?: boolean },
 ): ChildProcess {
   return spawn(process.execPath, [script, ...args], {
     cwd: options.cwd,
     env: { ...process.env, ...options.env },
     stdio: ["ignore", "pipe", "pipe"],
     windowsHide: true,
+    /*
+     * POSIX only, and only for the dev server -- see `killTree`. A detached
+     * child leads its own process group, which is the only handle POSIX offers
+     * on "wrangler AND the workerd it spawned". `detached` on Windows means
+     * something else entirely (a new console), so it is never set there; that
+     * platform gets `taskkill /T` instead.
+     */
+    detached: options.detached === true && process.platform !== "win32",
   });
 }
 
@@ -226,6 +234,8 @@ export async function startDevServer(options: {
         CI: "1",
         WRANGLER_SEND_METRICS: "false",
       },
+      // So `killTree` can reach `workerd` and not just its parent.
+      detached: true,
     },
   );
 
@@ -234,17 +244,38 @@ export async function startDevServer(options: {
 
   const baseUrl = `http://127.0.0.1:${String(options.port)}`;
 
-  let exited: { code: number | null } | null = null;
-  child.once("exit", (code) => {
-    exited = { code };
+  /*
+   * This listener outlives the boot loop below, and that is the point.
+   *
+   * It used to exist only to break the readiness wait, so nothing was watching
+   * once the suite started. When the server then died mid-run -- which it did,
+   * on Linux, roughly twenty tests in -- every remaining spec failed with
+   * `net::ERR_CONNECTION_REFUSED` and all three attempts of each retry failed
+   * the same way. Seventy identical failures, none of them naming the actual
+   * event, and `wrangler dev`'s own log ends wherever it happened to end.
+   *
+   * So record the death where the evidence already is, with the two fields that
+   * decide the diagnosis: a `signal` of SIGKILL is the OOM killer, a non-zero
+   * `code` is workerd deciding to stop on its own.
+   */
+  let exited: { code: number | null; signal: NodeJS.Signals | null } | null = null;
+  child.once("exit", (code, signal) => {
+    exited = { code, signal };
+    appendFileSync(
+      PATHS.devLog,
+      `\n# wrangler dev EXITED — code=${String(code)} signal=${String(signal)} at ` +
+        `${new Date().toISOString()}\n`,
+    );
   });
 
   const deadline = Date.now() + 120_000;
 
   for (;;) {
     if (exited !== null) {
+      const { code, signal } = exited as { code: number | null; signal: NodeJS.Signals | null };
       throw new Error(
-        `wrangler dev exited with code ${String(exited.code)} before it was ready. See ${PATHS.devLog}.`,
+        `wrangler dev exited before it was ready (code=${String(code)} signal=${String(signal)}). ` +
+          `See ${PATHS.devLog}.`,
       );
     }
 
@@ -271,6 +302,18 @@ export async function startDevServer(options: {
  * `wrangler dev` is a Node process that runs `workerd` as a child. Killing only
  * the parent leaves `workerd` holding the port, and the next run fails to bind
  * with an error that names neither process.
+ *
+ * That statement was true on both platforms, but only Windows acted on it. The
+ * POSIX branch signalled the PID alone, which is precisely the parent-only kill
+ * the paragraph above warns about -- so on Linux, where CI runs, every run left
+ * a `workerd` behind. Nothing local ever noticed, because the dev machine is
+ * Windows and takes the other branch.
+ *
+ * The child is spawned detached, so it leads a process group and a NEGATIVE pid
+ * signals the whole group -- wrangler and the `workerd` under it, together.
+ * SIGTERM first so miniflare can close its SQLite files cleanly, then SIGKILL if
+ * the group is still there, because a teardown that can block forever turns a
+ * failing suite into a job timeout with no report attached.
  */
 export async function killTree(pid: number): Promise<void> {
   if (pid <= 0) return;
@@ -284,10 +327,34 @@ export async function killTree(pid: number): Promise<void> {
     return;
   }
 
+  const group = -pid;
+
   try {
-    process.kill(pid, "SIGTERM");
+    process.kill(group, "SIGTERM");
   } catch {
-    // Already gone.
+    return; // Already gone.
+  }
+
+  const escalateAt = Date.now() + 5_000;
+
+  for (;;) {
+    try {
+      // Signal 0 tests for existence without delivering anything.
+      process.kill(group, 0);
+    } catch {
+      return; // The whole group is gone.
+    }
+
+    if (Date.now() > escalateAt) {
+      try {
+        process.kill(group, "SIGKILL");
+      } catch {
+        // Raced us to it.
+      }
+      return;
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 100));
   }
 }
 

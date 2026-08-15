@@ -316,6 +316,45 @@ jobs:
 
       - run: mise run e2e
 
+      # ---------------------------------------------------------------------
+      # When the suite fails, say why IN THE FAILING JOB.
+      #
+      # The first time e2e ran to completion here, `wrangler dev` died about
+      # twenty tests in and every remaining spec failed with
+      # `net::ERR_CONNECTION_REFUSED` -- seventy identical failures, not one of
+      # which named the actual event. The only file that could have explained it
+      # is `wrangler dev`'s own log, and it was not collected: it lives in
+      # `e2e/.playwright/`, and the upload below takes `playwright-report/` and
+      # `test-results/`.
+      #
+      # Printing it here rather than only uploading it matters, because the
+      # question "did the Worker die, and was it killed or did it stop" should
+      # be answerable from the job page, not from downloading a zip.
+      #
+      # The dmesg grep is the other half: a SIGKILL with no exit code is the OOM
+      # killer, and that is a different fix from a crash.
+      #
+      # ON PUBLISHING THIS LOG, since `playwright.config.ts` turns screenshots
+      # off over exactly this concern: the e2e Worker holds no secret. Its
+      # `MASTER_KEY` and every seeded value are committed constants in
+      # `e2e/harness/constants.ts` in a public repository, and `wrangler dev`
+      # logs request lines rather than bodies in any case. That is what makes
+      # this safe to print, and it stops being safe the moment the harness is
+      # pointed at a real key -- which is why the reasoning is written down here
+      # rather than left to be re-derived.
+      - name: Why e2e failed
+        if: failure()
+        run: |
+          echo "::group::wrangler dev log (last 200 lines)"
+          tail -n 200 e2e/.playwright/wrangler-dev.log 2>/dev/null || echo "no wrangler-dev.log"
+          echo "::endgroup::"
+          echo "::group::Kernel OOM kills"
+          sudo dmesg 2>/dev/null | grep -iE "killed process|out of memory|oom-kill" || echo "none recorded"
+          echo "::endgroup::"
+          echo "::group::Memory"
+          free -m
+          echo "::endgroup::"
+
       - if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -323,6 +362,7 @@ jobs:
           path: |
             e2e/playwright-report/
             e2e/test-results/
+            e2e/.playwright/wrangler-dev.log
           retention-days: 7
           if-no-files-found: ignore
 
