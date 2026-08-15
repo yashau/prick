@@ -44,20 +44,27 @@ const GCM_TAG_BITS = TAG_BYTES * 8;
 
 export interface EncryptSecretValueInput {
   /**
-   * The active DEK, and the kid that names it.
+   * The key to seal under, as ONE object carrying both the `CryptoKey` and the
+   * `kid` that names it. Pass `keyring.active`.
    *
-   * PASS BOTH FROM THE SAME `KeyringKey` -- `keyring.active.dek` with
-   * `keyring.active.kid`, never one from the active key and one from a retired
-   * one. Nothing here can detect a mismatch: the DEK is non-extractable, so
-   * there is no way to re-derive its id and compare. A mismatched pair encrypts
-   * and stores perfectly happily and produces a row that names a key which
-   * cannot open it -- undetectable until someone tries to read it, and by then
-   * every write since has the same defect.
+   * THIS IS ONE PARAMETER ON PURPOSE. An earlier shape took `dek` and `kid`
+   * separately, and nothing could check that they agreed: the DEK is
+   * non-extractable, so there is no way to re-derive its id and compare. A
+   * mismatched pair encrypts and stores perfectly happily, and produces a row
+   * that names a key which cannot open it. Nothing notices until someone reads
+   * it, by which time every write since has the same defect, and the plaintext
+   * is gone -- unrecoverable, not merely broken.
    *
-   * Writes always use `keyring.active`. A retired key is decrypt-only.
+   * Every `KeyringKey` in existence is produced by the one derivation that
+   * computed the kid and the DEK from the same bytes, so there is no longer a
+   * way to wire this up wrongly by accident.
+   *
+   * Being precise about the remaining gap: `KeyringKey` is a structural type,
+   * so `{ kid: a.kid, dek: b.dek }` still satisfies it. That is a deliberate
+   * act of assembling a lie, not the parameter-ordering slip this change
+   * removes, and it is not worth branding the type to prevent.
    */
-  dek: CryptoKey;
-  kid: string;
+  ringKey: KeyringKey;
   environmentId: string;
   key: string;
   version: number;
@@ -81,6 +88,10 @@ export interface EncryptSecretValueInput {
  * ALWAYS emits format 0x01 with full AAD. There is no parameter that selects a
  * format and no code path that produces a 0x00 envelope; `formatEnvelope`
  * refuses one even if a caller assembled the parts by hand.
+ *
+ * Writes always use `keyring.active`. A retired key is decrypt-only -- sealing
+ * a new row under one would be writing fresh data that the next rekey has to
+ * migrate away from immediately.
  */
 export async function encryptSecretValue(input: EncryptSecretValueInput): Promise<string> {
   const maxBytes = input.maxBytes ?? SECRET_VALUE_MAX_BYTES;
@@ -105,20 +116,28 @@ export async function encryptSecretValue(input: EncryptSecretValueInput): Promis
 
   const sealed = await crypto.subtle.encrypt(
     { name: "AES-GCM", iv, additionalData: aad, tagLength: GCM_TAG_BITS },
-    input.dek,
+    input.ringKey.dek,
     plaintext,
   );
 
   return formatEnvelope({
     version: ENVELOPE_V1,
     alg: ALG_AES_256_GCM,
-    kid: input.kid,
+    // From the same object as the DEK above. There is no second source for it.
+    kid: input.ringKey.kid,
     iv,
     ciphertext: new Uint8Array(sealed),
   });
 }
 
 export interface DecryptSecretValueInput {
+  /**
+   * The whole ring, not a single key: the envelope names its own `kid` and this
+   * function looks it up. There is deliberately no way to tell it which key to
+   * use, so it cannot be told the wrong one -- an envelope whose kid is absent
+   * raises `UnknownKeyError` naming that kid, rather than silently failing
+   * against whatever key happened to be passed.
+   */
   keyring: Keyring;
   /** The stored `secret_versions.ciphertext`. */
   envelope: string;
@@ -128,13 +147,17 @@ export interface DecryptSecretValueInput {
   /** Defaults to `secret.value`. */
   purpose?: string;
   /**
-   * Whether to accept the legacy no-AAD format. Defaults to `true`, because
-   * the import path exists to read exactly those rows and re-seal them.
+   * Whether to accept the legacy no-AAD format. DEFAULTS TO `false`.
    *
-   * Pass `false` from a read path that should only ever see rows this
-   * deployment wrote. A v0 row is bound to nothing, so it IS transplantable --
-   * that is the property v0 lacks and the reason import re-encrypts
-   * immediately rather than leaving rows in place.
+   * A v0 row is bound to nothing -- no environment, no key name, no version --
+   * so it is exactly as transplantable as the ciphertexts the AAD exists to
+   * stop being. Accepting one by default would reintroduce that vulnerability
+   * per row, silently, on the normal read path.
+   *
+   * So the acceptance is opt-in, at the one call site where a human decided to
+   * take legacy data: the v0 import, which re-encrypts as 0x01 immediately
+   * rather than leaving the row in place. Everywhere else, a v0 envelope in
+   * this database is not a row to be read -- it is a row that should not exist.
    */
   allowLegacyV0?: boolean;
 }
@@ -183,9 +206,13 @@ export async function decryptSecretValue(input: DecryptSecretValueInput): Promis
   }
 
   if (parsed.version === ENVELOPE_V0_LEGACY) {
-    if (input.allowLegacyV0 === false) {
+    // Opt-in, not opt-out: an omitted flag refuses. A default of "accept"
+    // would mean every caller that had not thought about the legacy format
+    // accepted an unbound ciphertext, which is the wrong way round.
+    if (input.allowLegacyV0 !== true) {
       throw new CryptoFormatError(
-        "Envelope is in the legacy no-AAD format, which this read path does not accept.",
+        "Envelope is in the legacy no-AAD format, which this read path does not accept. " +
+          "Only the v0 import accepts it, and re-encrypts immediately.",
       );
     }
 

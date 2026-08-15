@@ -120,9 +120,13 @@ export class SecretTooLargeError extends CryptoError {
   readonly maxBytes: number;
 
   constructor(maxBytes: number) {
-    // The LIMIT is named; the actual size is not. A value's exact byte length
-    // is the most revealing metadata a value has, and this message travels to
-    // an HTTP response and a log line.
+    // DELIBERATE, AND NOT TO BE "IMPROVED": the LIMIT is named and the ACTUAL
+    // SIZE is not. A value's exact byte length is the most revealing metadata a
+    // value has, and this message travels into an HTTP response, a Worker log
+    // line and potentially an audit row. Naming the limit already tells the
+    // caller everything they need in order to act; adding "you sent N bytes"
+    // buys a little debuggability and leaks a measurement of a secret to
+    // everywhere the error goes.
     super("PAYLOAD_TOO_LARGE", `Secret value exceeds the ${maxBytes}-byte limit.`);
     this.maxBytes = maxBytes;
   }

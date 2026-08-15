@@ -810,7 +810,11 @@ describe("the v0 legacy format", () => {
 
   it("does not let a v1 row be downgraded to strip its AAD", async () => {
     // Reassembling a v1 body as a v0 blob is the obvious way to try to shed the
-    // binding. The GCM tag is computed over the AAD, so it fails.
+    // binding. `allowLegacyV0: true` is passed DELIBERATELY: the default would
+    // refuse this at the format check and the test would prove only that the
+    // flag works. Opting in forces the assertion onto the cryptography -- the
+    // GCM tag is computed over the AAD, so a body sealed with one cannot be
+    // opened without one, even by a caller that accepts the legacy format.
     const { keyring, envelope } = await sealed();
     const v1 = decodeBase64Url(envelope);
     const downgraded = new Uint8Array(v1.length - 9);
@@ -824,6 +828,7 @@ describe("the v0 legacy format", () => {
         environmentId: ENV_B,
         key: "ANYTHING",
         version: 999,
+        allowLegacyV0: true,
       }),
       DecryptFailedError,
     );
