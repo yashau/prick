@@ -89,8 +89,10 @@ rust = [
 "aqua:suzuki-shunsuke/pinact" = "4.1.1"
 "aqua:evilmartians/lefthook" = "2.1.10"
 
-# The GitHub CLI. Releases are cut by dispatching release.yml through it, so a
-# contributor without gh cannot release — pin it rather than assume it.
+# The GitHub CLI. Cutting a release needs only git — the tag push is the trigger
+# — but `cli:status`, `docs:status` and `cli:dry` all go through gh, so a
+# contributor without it cannot watch or rehearse a release. Pin it rather than
+# assume it.
 "aqua:cli/cli" = "2.97.0"
 
 # cargo-auditable embeds the dependency list inside the binary so
@@ -439,39 +441,57 @@ description = "Assert every manifest carries the same version"
 run = "node scripts/version.mjs check"
 
 # ---------------------------------------------------------------------------
-# RELEASE
+# RELEASE — two lines, one mechanism
 # ---------------------------------------------------------------------------
-# A release is cut by DISPATCHING release.yml, never by tagging locally.
-# release.yml's `plan` job pushes the tag itself and that push is the
-# concurrency lock — git refuses a duplicate ref, so two racing runs cannot both
-# claim the same N. A hand-made tag would take the lock the workflow depends on.
-# scripts/release.mjs therefore never touches a ref.
+# There are two release lines, `cli:*` and `docs:*`. They work identically and
+# differ only in their tag prefix: `v` for the CLI, `docs-v` for the
+# documentation site.
+#
+# CUTTING THE VERSION IS WHAT RELEASES IT. `*:cut` computes the next CalVer
+# version, requires a typed confirmation of the tag, then creates an annotated
+# tag and pushes it. That push is the workflow trigger; nothing else starts a
+# release, and neither workflow computes a version of its own.
+#
+# The tag is the lock. git refuses to push a ref that already exists, so two
+# people cutting in the same second cannot both take the same N: the loser's
+# push is rejected and scripts/version.mjs recomputes N against the tags that
+# then exist. There is no external mutex and nothing to leak.
+#
+# The two prefixes count N independently, so cutting docs three times in a day
+# does not make the next CLI release `.3`.
+#
+# `release:*` used to be the name of the CLI line. It was renamed because
+# "release" stopped having an unambiguous subject once the docs site had a
+# release line of its own.
 
-[tasks."release:preview"]
-description = "Print the version the next release would take. Read-only, never prompts"
-run = "node scripts/release.mjs preview"
+[tasks."cli:next"]
+description = "Print the version the next CLI release would take. Read-only, never prompts"
+run = "node scripts/cli-release.mjs next"
 
-[tasks."release:dry"]
-description = "Dispatch release.yml with dry_run=true — builds and stages everything, publishes nothing"
-run = "node scripts/release.mjs dry"
+[tasks."cli:dry"]
+description = "Dispatch cli-release.yml with dry_run=true — builds and stages everything, claims no version, publishes nothing"
+run = "node scripts/cli-release.mjs dry"
 
-[tasks."release:cut"]
-description = "Cut a real release: tag, build, publish to npm, GitHub Release. Requires a typed confirmation"
-# Pass --yes for automation: `mise run release:cut -- --yes`.
-run = "node scripts/release.mjs cut"
+[tasks."cli:cut"]
+description = "Release the CLI: tag and push, which builds, publishes to npm and creates the GitHub Release. Requires a typed confirmation"
+# Pass --yes for automation: `mise run cli:cut -- --yes`.
+run = "node scripts/cli-release.mjs cut"
 
-[tasks."release:status"]
-description = "Follow the most recent release.yml run. Read-only"
-run = "node scripts/release.mjs status"
+[tasks."cli:status"]
+description = "Follow the most recent cli-release.yml run. Read-only"
+run = "node scripts/cli-release.mjs status"
 
 # --- documentation site ----------------------------------------------------
 # The docs site is a SEPARATE Worker from the app: public, no secrets, no
-# access control. Deploying it is reversible -- a bad deploy is fixed by
-# deploying again -- so unlike release:cut it asks a plain y/N rather than
-# demanding a typed token.
+# access control. Cloudflare credentials live in GitHub repository secrets, so
+# the build and deploy run in CI; nothing here needs a Cloudflare token on a
+# developer machine.
 #
-# Cloudflare credentials live in GitHub repository secrets, so the deploy runs
-# in CI. Nothing here needs a Cloudflare token on a developer machine.
+# NAME COLLISION, resolved. `docs:preview` keeps the meaning `preview` has in
+# every JS toolchain -- serve the built output locally -- because breaking that
+# would be its own ambiguity. The version preview is `docs:next`, which says
+# what it prints, and `cli:next` is its counterpart. `preview` never means two
+# things.
 
 [tasks."docs:dev"]
 description = "Run the documentation site locally with hot reload"
@@ -487,13 +507,17 @@ description = "Serve the built documentation site locally"
 run = "pnpm --dir packages/docs run preview"
 raw = true
 
-[tasks."docs:deploy"]
-description = "Cut a docs release: dispatch deploy-docs.yml to build and deploy the docs Worker"
-# Pass --yes for automation: `mise run docs:deploy -- --yes`.
-run = "node scripts/docs.mjs deploy"
+[tasks."docs:next"]
+description = "Print the version the next docs release would take. Read-only, never prompts"
+run = "node scripts/docs.mjs next"
+
+[tasks."docs:cut"]
+description = "Release the docs site: tag and push, which builds, deploys the prick-docs Worker and creates the GitHub Release. Requires a typed confirmation"
+# Pass --yes for automation: `mise run docs:cut -- --yes`.
+run = "node scripts/docs.mjs cut"
 
 [tasks."docs:status"]
-description = "Follow the most recent deploy-docs.yml run. Read-only"
+description = "Follow the most recent docs-release.yml run. Read-only"
 run = "node scripts/docs.mjs status"
 
 # ---------------------------------------------------------------------------

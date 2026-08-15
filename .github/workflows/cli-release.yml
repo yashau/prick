@@ -1,10 +1,39 @@
-name: Release
+name: CLI release
 
+# CUTTING THE VERSION IS WHAT RELEASES.
+#
+# `mise run cli:cut` computes the CalVer version, takes a typed confirmation,
+# creates the annotated `v<version>` tag and pushes it. That push is the trigger
+# below. This workflow computes no version and claims nothing: it builds,
+# publishes and releases the commit it was handed.
+#
+# The tag is still the lock — git refuses to push a ref that already exists, so
+# two people cutting in the same second cannot both take the same N — but the
+# claim, and the retry when it is lost, now happen in scripts/version.mjs
+# (`claimTag`) before any runner starts. Consequences worth stating:
+#
+#   * this workflow needs no `contents: write` to plan and persists no git
+#     credential; the only write permission left is the one that creates the
+#     GitHub Release.
+#   * the version is a decision a human made, recorded in git, before CI ran --
+#     rather than something CI derived and the human read about afterwards.
+#   * docs-release.yml works identically. One mechanism, two release lines.
+#
+# `v*` cannot collide with the documentation line's `docs-v*`: a tag glob is
+# anchored at the start of the ref name, and `docs-v2026.815.0` does not begin
+# with `v`. Asserted in scripts/version.test.mjs rather than assumed.
 on:
+  push:
+    tags:
+      - "v*"
+  # Dry runs only. A dispatched run builds every binary and stages every npm
+  # package so the pipeline can be exercised without claiming a version; the
+  # publish and release jobs below are gated on the event being a tag push, so a
+  # dispatch can never publish however its inputs are set.
   workflow_dispatch:
     inputs:
       dry_run:
-        description: "Build and package everything, but claim no tag and publish nothing"
+        description: "Build and package everything, but publish nothing. A dispatched run cannot publish; leave this true"
         type: boolean
         default: true
 
@@ -15,7 +44,7 @@ permissions:
 # flip leaves the registry in a half-published state that no rerun can undo,
 # because npm versions are immutable.
 concurrency:
-  group: release
+  group: cli-release
   cancel-in-progress: false
 
 env:
@@ -32,108 +61,109 @@ defaults:
 
 jobs:
   # ---------------------------------------------------------------------------
-  # Decide the version and CLAIM it.
+  # RESOLVE the version. It is not computed here and it is not claimed here.
   #
-  # The claim is the git tag itself. git refuses to create a ref that already
-  # exists, so pushing `vYYYY.MMDD.N` is an atomic compare-and-swap against the
-  # remote: two runs starting in the same second cannot both take the same N.
-  # There is no external mutex, no lock file and nothing to leak.
+  #   tag push  -> the version is the tag, minus its `v`. The claim already
+  #                happened, locally, in `mise run cli:cut`.
+  #   dispatch  -> nothing has been claimed, so a read-only prediction stands in
+  #                so that the packaging steps have a plausible version to stamp.
+  #                `version.mjs plan` reads tags and writes none.
+  #
+  # This job holds no write permission and persists no credential. That is the
+  # point of the inversion: nothing in CI can move a ref.
   # ---------------------------------------------------------------------------
-  plan:
-    name: plan
+  version:
+    name: version
     runs-on: ubuntu-24.04
     timeout-minutes: 10
-    permissions:
-      contents: write
     outputs:
-      # On a dry run nothing is claimed, so the planned version comes from the
-      # read-only step instead. Downstream jobs are identical either way.
-      version: ${{ steps.claim.outputs.version || steps.plan-only.outputs.version }}
-      tag: ${{ steps.claim.outputs.tag || format('v{0}', steps.plan-only.outputs.version) }}
+      version: ${{ steps.resolve.outputs.version }}
+      tag: ${{ steps.resolve.outputs.tag }}
     steps:
-      # zizmor: ignore[artipacked]
-      # The credential is deliberately persisted: this job pushes the tag that
-      # claims the version. It is the one place in the repository that needs it.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # N is derived from how many tags already exist for today, so the full
-          # tag list must be present -- a shallow clone silently computes N=0
-          # and the push then collides.
+          # The dispatch path predicts N from how many tags already exist for
+          # today, so the full tag list must be present -- a shallow clone
+          # silently predicts N=0.
           fetch-depth: 0
           fetch-tags: true
-          persist-credentials: true
+          persist-credentials: false
 
       - uses: jdx/mise-action@3c2e0cf82a5b2e5249f0d3635a4d83d0ae861518 # v4.2.5
+        with:
+          # Caching is off in BOTH directions. This workflow is reachable only
+          # by a tag push, and it publishes to npm and creates a GitHub Release
+          # -- so it is a publishing workflow in exactly the sense that makes a
+          # restored cache entry dangerous.
+          #
+          #   cache_save: false  would only stop us writing an entry a later
+          #                      privileged run consumes.
+          #   cache: false       also stops us READING one -- which is the
+          #                      actual cache-poisoning path: a lower-privilege
+          #                      workflow (e.g. a fork PR) writes a malicious
+          #                      entry, and this job restores it and ships the
+          #                      result to the registry.
+          #
+          # A cold toolchain install costs ~30s. Releases are not hot-path.
+          cache: false
 
-      - name: Compute version (dry run)
-        if: inputs.dry_run
-        id: plan-only
+      # A dispatched run can never publish (see the `if:` on publish-npm and
+      # github-release). Saying so out loud beats letting somebody dispatch with
+      # dry_run=false and wonder why nothing reached npm.
+      - name: Refuse a non-dry dispatch
+        if: github.event_name == 'workflow_dispatch' && !inputs.dry_run
         run: |
-          set -euo pipefail
-          node scripts/version.mjs plan --github-output
-          echo "No tag is claimed on a dry run."
+          echo '::error::A dispatched run cannot publish. Releasing is "mise run cli:cut", which pushes the tag that triggers this workflow.'
+          exit 1
 
-      - name: Compute and claim version
-        if: ${{ !inputs.dry_run }}
-        id: claim
+      - name: Resolve version
+        id: resolve
         env:
-          GIT_AUTHOR_NAME: github-actions[bot]
-          GIT_AUTHOR_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
-          GIT_COMMITTER_NAME: github-actions[bot]
-          GIT_COMMITTER_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
+          # Through the environment, never interpolated into the script body: a
+          # ref name is chosen by whoever pushed the tag.
+          EVENT: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref_name }}
         run: |
           set -euo pipefail
 
-          claimed=""
-          for attempt in 1 2 3 4 5; do
-            # Re-read the remote every attempt. A collision means somebody else
-            # took this N between our read and our push, so N must be recomputed
-            # against the tags that now exist rather than merely incremented.
-            git fetch --tags --force --prune --quiet origin
-
-            version="$(node scripts/version.mjs plan)"
-            tag="v${version}"
-            echo "attempt ${attempt}: trying to claim ${tag}"
-
-            git tag -- "$tag" || {
-              echo "local tag ${tag} already exists; re-reading remote"
-              git tag -d -- "$tag" >/dev/null 2>&1 || true
-              sleep $(( attempt * 3 ))
-              continue
-            }
-
-            if git push origin "refs/tags/${tag}"; then
-              claimed="$version"
-              break
+          if [ "$EVENT" = "push" ]; then
+            version="${REF_NAME#v}"
+            # The tag is the only input, so it is validated rather than trusted.
+            # `version.mjs set` would reject a bad one later; failing here says
+            # why, before six build legs have run.
+            if ! printf '%s' "$version" | grep -Eq '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'; then
+              echo "::error::${REF_NAME} is not a CalVer release tag (expected vYYYY.MMDD.N with no leading zeros)."
+              exit 1
             fi
-
-            # Lost the race. Drop the local tag and try the next N.
-            echo "push of ${tag} was rejected -- another run claimed it first"
-            git tag -d -- "$tag" >/dev/null 2>&1 || true
-            sleep $(( attempt * 3 ))
-          done
-
-          if [ -z "$claimed" ]; then
-            echo "::error::Could not claim a version tag after 5 attempts."
-            exit 1
+            tag="$REF_NAME"
+            echo "released version ${version} from tag ${tag}"
+          else
+            version="$(node scripts/version.mjs plan | awk '$1 == "version" { print $2 }')"
+            tag="v${version}"
+            echo "dry run: predicted ${tag}. No tag is claimed and nothing is published."
           fi
 
-          echo "claimed ${claimed}"
           {
-            echo "version=${claimed}"
-            echo "tag=v${claimed}"
+            echo "version=${version}"
+            echo "tag=${tag}"
           } >> "$GITHUB_OUTPUT"
 
       - name: Summary
         env:
-          DRY_RUN: ${{ inputs.dry_run }}
-          VERSION: ${{ steps.claim.outputs.version || steps.plan-only.outputs.version }}
+          EVENT: ${{ github.event_name }}
+          VERSION: ${{ steps.resolve.outputs.version }}
+          TAG: ${{ steps.resolve.outputs.tag }}
         run: |
           {
-            echo "### Release plan"
+            echo "### CLI release"
             echo
-            echo "- dry run: \`${DRY_RUN}\`"
+            echo "- trigger: \`${EVENT}\`"
             echo "- version: \`${VERSION}\`"
+            echo "- tag: \`${TAG}\`"
+            if [ "$EVENT" != "push" ]; then
+              echo
+              echo "Dry run — no tag was claimed and nothing will be published."
+            fi
           } >> "$GITHUB_STEP_SUMMARY"
 
   # ---------------------------------------------------------------------------
@@ -146,7 +176,7 @@ jobs:
   # ---------------------------------------------------------------------------
   build:
     name: build (${{ matrix.name }})
-    needs: plan
+    needs: version
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     strategy:
@@ -182,6 +212,22 @@ jobs:
           persist-credentials: false
 
       - uses: jdx/mise-action@3c2e0cf82a5b2e5249f0d3635a4d83d0ae861518 # v4.2.5
+        with:
+          # Caching is off in BOTH directions. This workflow is reachable only
+          # by a tag push, and it publishes to npm and creates a GitHub Release
+          # -- so it is a publishing workflow in exactly the sense that makes a
+          # restored cache entry dangerous.
+          #
+          #   cache_save: false  would only stop us writing an entry a later
+          #                      privileged run consumes.
+          #   cache: false       also stops us READING one -- which is the
+          #                      actual cache-poisoning path: a lower-privilege
+          #                      workflow (e.g. a fork PR) writes a malicious
+          #                      entry, and this job restores it and ships the
+          #                      result to the registry.
+          #
+          # A cold toolchain install costs ~30s. Releases are not hot-path.
+          cache: false
 
       - name: Install musl toolchain
         if: contains(matrix.targets, 'musl')
@@ -204,7 +250,7 @@ jobs:
       # second string somebody has to remember to update.
       - name: Stamp version
         env:
-          VERSION: ${{ needs.plan.outputs.version || '0.0.0-dev' }}
+          VERSION: ${{ needs.version.outputs.version || '0.0.0-dev' }}
         run: node scripts/version.mjs set "$VERSION"
 
       - name: Build
@@ -262,7 +308,7 @@ jobs:
   # ---------------------------------------------------------------------------
   package:
     name: package
-    needs: [plan, build]
+    needs: [version, build]
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
@@ -279,6 +325,22 @@ jobs:
           persist-credentials: false
 
       - uses: jdx/mise-action@3c2e0cf82a5b2e5249f0d3635a4d83d0ae861518 # v4.2.5
+        with:
+          # Caching is off in BOTH directions. This workflow is reachable only
+          # by a tag push, and it publishes to npm and creates a GitHub Release
+          # -- so it is a publishing workflow in exactly the sense that makes a
+          # restored cache entry dangerous.
+          #
+          #   cache_save: false  would only stop us writing an entry a later
+          #                      privileged run consumes.
+          #   cache: false       also stops us READING one -- which is the
+          #                      actual cache-poisoning path: a lower-privilege
+          #                      workflow (e.g. a fork PR) writes a malicious
+          #                      entry, and this job restores it and ships the
+          #                      result to the registry.
+          #
+          # A cold toolchain install costs ~30s. Releases are not hot-path.
+          cache: false
 
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
@@ -343,12 +405,12 @@ jobs:
       # generated in this job.
       - name: Stamp version
         env:
-          VERSION: ${{ needs.plan.outputs.version || '0.0.0-dev' }}
+          VERSION: ${{ needs.version.outputs.version || '0.0.0-dev' }}
         run: node scripts/version.mjs set "$VERSION"
 
       - name: Build archives and checksums
         env:
-          VERSION: ${{ needs.plan.outputs.version || '0.0.0-dev' }}
+          VERSION: ${{ needs.version.outputs.version || '0.0.0-dev' }}
         run: |
           set -euo pipefail
           mkdir -p dist/assets
@@ -399,7 +461,7 @@ jobs:
       # -----------------------------------------------------------------------
       - name: Assemble npm packages
         env:
-          VERSION: ${{ needs.plan.outputs.version || '0.0.0-dev' }}
+          VERSION: ${{ needs.version.outputs.version || '0.0.0-dev' }}
         run: |
           set -euo pipefail
           node scripts/npm-package.mjs \
@@ -460,8 +522,12 @@ jobs:
   # ---------------------------------------------------------------------------
   publish-npm:
     name: publish-npm
-    needs: [plan, package]
-    if: ${{ !inputs.dry_run }}
+    needs: [version, package]
+    # The TRIGGER is the gate, not an input. A dispatched run has claimed no
+    # version, so publishing from one would put a version on npm that no tag
+    # points at -- and npm versions are immutable. `dry_run` is documentation;
+    # this line is enforcement.
+    if: github.event_name == 'push'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
@@ -476,6 +542,22 @@ jobs:
           persist-credentials: false
 
       - uses: jdx/mise-action@3c2e0cf82a5b2e5249f0d3635a4d83d0ae861518 # v4.2.5
+        with:
+          # Caching is off in BOTH directions. This workflow is reachable only
+          # by a tag push, and it publishes to npm and creates a GitHub Release
+          # -- so it is a publishing workflow in exactly the sense that makes a
+          # restored cache entry dangerous.
+          #
+          #   cache_save: false  would only stop us writing an entry a later
+          #                      privileged run consumes.
+          #   cache: false       also stops us READING one -- which is the
+          #                      actual cache-poisoning path: a lower-privilege
+          #                      workflow (e.g. a fork PR) writes a malicious
+          #                      entry, and this job restores it and ships the
+          #                      result to the registry.
+          #
+          # A cold toolchain install costs ~30s. Releases are not hot-path.
+          cache: false
 
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
@@ -555,7 +637,7 @@ jobs:
 
       - name: Verify registry propagation
         env:
-          VERSION: ${{ needs.plan.outputs.version }}
+          VERSION: ${{ needs.version.outputs.version }}
         run: |
           set -euo pipefail
           for manifest in dist/npm/*/package.json; do
@@ -578,7 +660,7 @@ jobs:
 
       - name: Install smoke test # zizmor: ignore[adhoc-packages]
         env:
-          VERSION: ${{ needs.plan.outputs.version }}
+          VERSION: ${{ needs.version.outputs.version }}
         run: |
           set -euo pipefail
           work="$(mktemp -d)"
@@ -635,7 +717,7 @@ jobs:
       # the server reports over MCP is the one being released.
       - name: MCP install smoke test # zizmor: ignore[adhoc-packages]
         env:
-          VERSION: ${{ needs.plan.outputs.version }}
+          VERSION: ${{ needs.version.outputs.version }}
         run: |
           set -euo pipefail
           work="$(mktemp -d)"
@@ -682,7 +764,7 @@ jobs:
           # dist-tag mutation, an optional granular token is used for this step
           # alone; absent the secret, the OIDC session is attempted.
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
-          VERSION: ${{ needs.plan.outputs.version }}
+          VERSION: ${{ needs.version.outputs.version }}
         run: |
           set -euo pipefail
           if [ -n "${NPM_TOKEN:-}" ]; then
@@ -718,8 +800,9 @@ jobs:
   # ---------------------------------------------------------------------------
   github-release:
     name: github-release
-    needs: [plan, package, publish-npm]
-    if: ${{ !inputs.dry_run }}
+    needs: [version, package, publish-npm]
+    # Same gate as publish-npm: only a tag push has a tag to release.
+    if: github.event_name == 'push'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
@@ -728,6 +811,9 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.sha }}
+          # The tag list is needed to pin the notes range -- see below.
+          fetch-depth: 0
+          fetch-tags: true
           persist-credentials: false
 
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -735,20 +821,40 @@ jobs:
           name: release-assets
           path: dist
 
+      # Two release lines share this repository's releases, so the "previous
+      # release" GitHub would pick on its own may be a docs release, which would
+      # generate notes over a commit range that has nothing to do with the CLI.
+      # The range is therefore pinned to the previous `v*` tag explicitly.
+      - name: Find the previous CLI tag
+        id: previous
+        env:
+          TAG: ${{ needs.version.outputs.tag }}
+        run: |
+          set -euo pipefail
+          previous="$(git tag --list 'v*' --sort=-v:refname | grep -v -x -F -- "$TAG" | head -n 1 || true)"
+          echo "previous tag: ${previous:-<none>}"
+          echo "tag=${previous}" >> "$GITHUB_OUTPUT"
+
       - name: Create draft release
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ needs.plan.outputs.tag }}
+          TAG: ${{ needs.version.outputs.tag }}
+          PREVIOUS_TAG: ${{ steps.previous.outputs.tag }}
         run: |
           set -euo pipefail
           if gh release view "$TAG" >/dev/null 2>&1; then
             echo "release ${TAG} already exists; refreshing assets"
             gh release upload "$TAG" dist/assets/* dist/prick-sbom.spdx.json --clobber
           else
+            notes_range=()
+            if [ -n "$PREVIOUS_TAG" ]; then
+              notes_range=(--notes-start-tag "$PREVIOUS_TAG")
+            fi
             gh release create "$TAG" \
               --draft \
               --title "$TAG" \
               --generate-notes \
+              "${notes_range[@]}" \
               --verify-tag \
               dist/assets/* dist/prick-sbom.spdx.json
           fi
@@ -756,7 +862,7 @@ jobs:
       - name: Undraft
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ needs.plan.outputs.tag }}
+          TAG: ${{ needs.version.outputs.tag }}
           SERVER_URL: ${{ github.server_url }}
           REPO: ${{ github.repository }}
         run: |

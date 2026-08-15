@@ -16,13 +16,21 @@
 // UTC is mandatory. A maintainer in UTC+5 running this after 19:00 local would
 // otherwise compute tomorrow's date and be a day ahead of CI.
 //
+// There are two independent release lines, distinguished only by their tag
+// prefix: `v` for the CLI, `docs-v` for the documentation site. Each counts N
+// against its own prefix, so cutting docs three times in a day does not make the
+// next CLI release `.3`.
+//
 // Subcommands:
 //   plan  [--github-output]      compute today's version, tag and human CalVer
 //   set   <version>              stamp <version> into every manifest that exists
 //   check                        assert every manifest carries the same version
 //
 // Everything above the CLI layer is a pure function so it can be unit-tested
-// without a git repository or a filesystem. See scripts/version.test.mjs.
+// without a git repository or a filesystem. The one exception is `claimTag`,
+// which is the tag-as-lock primitive both release lines share; its git access is
+// injected, so it too is tested without a repository.
+// See scripts/version.test.mjs.
 
 import { appendFileSync, existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
@@ -38,6 +46,50 @@ export const VERSION_RE = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
 
 /** The placeholder every in-repo manifest carries; the git tag is the truth. */
 export const DEV_VERSION = '0.0.0-dev';
+
+/**
+ * The two release lines. A tag prefix is the *whole* identity of a line: it
+ * selects which tags count towards N, which tag `cut` pushes, and which workflow
+ * that push triggers.
+ *
+ * The two must not overlap in either direction, because the workflow triggers
+ * are `push: tags: [<prefix>*]` globs. `docs-v2026.815.0` does not match `v*`
+ * (it starts with `d`), and `v2026.815.0` does not match `docs-v*`. That
+ * non-overlap is asserted in version.test.mjs rather than assumed.
+ */
+export const CLI_TAG_PREFIX = 'v';
+export const DOCS_TAG_PREFIX = 'docs-v';
+
+/**
+ * The `on.push.tags` glob a release line's workflow triggers on.
+ *
+ * @param {string} tagPrefix
+ * @returns {string}
+ */
+export function tagGlob(tagPrefix) {
+  return `${tagPrefix}*`;
+}
+
+/**
+ * Whether a tag name matches an `on.push.tags` glob, using the subset of glob
+ * syntax this repository actually uses: a literal prefix and a trailing `*`.
+ *
+ * Exists so the "the two lines cannot cross" claim is a test rather than a
+ * comment. GitHub's matcher is more capable than this; nothing here needs the
+ * rest of it.
+ *
+ * @param {string} pattern
+ * @param {string} tag
+ * @returns {boolean}
+ */
+export function tagMatchesGlob(pattern, tag) {
+  const parts = String(pattern).split('*');
+  if (parts.length > 2) throw new Error(`tagMatchesGlob supports at most one *, got ${pattern}`);
+  const [head, tail = null] = parts;
+  const name = String(tag);
+  if (tail === null) return name === head;
+  return name.length >= head.length + tail.length && name.startsWith(head) && name.endsWith(tail);
+}
 
 // ---------------------------------------------------------------------------
 // Date -> version
@@ -92,10 +144,14 @@ export function dateToCalver(isoDate) {
  *
  * @param {readonly string[]} tags  every tag known to the repository
  * @param {{ major: number, minor: number }} parts
+ * @param {string} [tagPrefix]  `"v"` for the CLI, `"docs-v"` for the docs site.
+ *   Separate namespaces so the two release lines cannot consume each other's N
+ *   -- cutting docs must not make the next CLI release skip a number, and a
+ *   shared prefix would do exactly that.
  * @returns {number}
  */
-export function computePatch(tags, { major, minor }) {
-  const prefix = `v${major}.${minor}.`;
+export function computePatch(tags, { major, minor }, tagPrefix = CLI_TAG_PREFIX) {
+  const prefix = `${tagPrefix}${major}.${minor}.`;
   const patches = [];
   for (const raw of tags ?? []) {
     const tag = String(raw).trim();
@@ -112,8 +168,11 @@ export function computePatch(tags, { major, minor }) {
 
   if (next !== highest + 1) {
     const sorted = [...patches].sort((a, b) => a - b);
+    // The prefix is named because the two release lines fail independently: a
+    // hole in `docs-v2026.815.*` says nothing about `v2026.815.*`, and an
+    // operator sent to inspect the wrong namespace finds nothing wrong.
     throw new Error(
-      `refusing to compute N for ${major}.${minor}: ` +
+      `refusing to compute N for ${tagPrefix}${major}.${minor}: ` +
         `found ${next} tag(s) ${JSON.stringify(sorted)} but the highest is ${highest}, ` +
         `so the next free N is ${highest + 1}, not ${next}. ` +
         'The tag sequence has a hole or a duplicate. ' +
@@ -137,11 +196,12 @@ export function formatVersion({ major, minor, patch }) {
 
 /**
  * @param {string} version
- * @returns {string} e.g. "v2026.815.0"
+ * @param {string} [tagPrefix]
+ * @returns {string} e.g. "v2026.815.0", or "docs-v2026.815.0"
  */
-export function formatTag(version) {
+export function formatTag(version, tagPrefix = CLI_TAG_PREFIX) {
   assertVersion(version);
-  return `v${version}`;
+  return `${tagPrefix}${version}`;
 }
 
 /**
@@ -173,12 +233,20 @@ export function assertVersion(version) {
 /**
  * The whole plan, from a date and the repository's tags.
  *
- * @param {{ tags?: readonly string[], now?: Date, date?: string }} [input]
+ * @param {{ tags?: readonly string[], now?: Date, date?: string, tagPrefix?: string }} [input]
+ *   `tagPrefix` selects the release line: `"v"` for the CLI, `"docs-v"` for the
+ *   documentation site. The two count N independently, so cutting docs three
+ *   times in a day does not make the next CLI release `.3`.
  */
-export function planVersion({ tags = [], now = new Date(), date } = {}) {
+export function planVersion({
+  tags = [],
+  now = new Date(),
+  date,
+  tagPrefix = CLI_TAG_PREFIX,
+} = {}) {
   const isoDate = date ?? utcDateString(now);
   const { major, minor, month, day } = dateToCalver(isoDate);
-  const patch = computePatch(tags, { major, minor });
+  const patch = computePatch(tags, { major, minor }, tagPrefix);
   const version = formatVersion({ major, minor, patch });
   return {
     date: isoDate,
@@ -188,7 +256,7 @@ export function planVersion({ tags = [], now = new Date(), date } = {}) {
     day,
     patch,
     version,
-    tag: formatTag(version),
+    tag: formatTag(version, tagPrefix),
     calver: formatCalver({ major, month, day, patch }),
   };
 }
@@ -459,6 +527,151 @@ export function discoverManifests(root) {
   add('e2e/package.json', 'package');
 
   return targets;
+}
+
+// ---------------------------------------------------------------------------
+// Claiming a version — the tag IS the lock
+// ---------------------------------------------------------------------------
+//
+// git refuses to create a ref that already exists on the remote, so pushing
+// `<prefix><major>.<minor>.<N>` is an atomic compare-and-swap: two people cutting
+// in the same second cannot both take the same N. There is no external mutex, no
+// lock file and nothing to leak.
+//
+// Both release lines cut this way, so the primitive lives here rather than being
+// written twice. The loser of a race must RECOMPUTE N against the tags that now
+// exist rather than merely incrementing, because the winner may have taken more
+// than one.
+
+/**
+ * @param {string} tag
+ * @param {string} message
+ * @returns {string[]} argv for `git`
+ */
+export function tagCreateArgs(tag, message) {
+  // Annotated (`--annotate`), not lightweight: an annotated tag carries an
+  // author, a date and a message, so `git show <tag>` says who cut it and when.
+  // `--` guards a tag name that begins with a dash from being read as an option.
+  return ['tag', '--annotate', '--message', message, '--', tag];
+}
+
+/**
+ * @param {string} tag
+ * @param {string} [remote]
+ * @returns {string[]}
+ */
+export function tagPushArgs(tag, remote = 'origin') {
+  // The fully qualified refspec, never the bare name: `git push origin v1` with
+  // a branch also called `v1` is ambiguous, and this is the one command whose
+  // meaning must not depend on what else happens to exist.
+  return ['push', remote, `refs/tags/${tag}`];
+}
+
+/**
+ * @param {string} tag
+ * @returns {string[]}
+ */
+export function tagDeleteArgs(tag) {
+  return ['tag', '--delete', '--', tag];
+}
+
+/**
+ * @param {string} [remote]
+ * @returns {string[]}
+ */
+export function fetchTagsArgs(remote = 'origin') {
+  // --force --prune so a local view that has drifted (a deleted tag, a partial
+  // fetch) is corrected rather than merged with. N is counted from this list;
+  // a stale list computes a duplicate N and the push then bounces.
+  return ['fetch', '--tags', '--force', '--prune', '--quiet', remote];
+}
+
+/** @param {number} ms */
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * Compute the next version on a release line and claim it by pushing its tag.
+ *
+ * Every git invocation is injected, so this is unit-testable without a
+ * repository and without a network.
+ *
+ * @param {object} io
+ * @param {(args: readonly string[]) => string} io.git  runs git; throws on failure
+ * @param {string} [io.tagPrefix]
+ * @param {Date} [io.now]
+ * @param {string} [io.remote]
+ * @param {number} [io.attempts]
+ * @param {(plan: object) => string} [io.message]  the annotation message
+ * @param {(s: string) => void} [io.log]
+ * @param {(ms: number) => Promise<void>} [io.sleep]
+ * @returns {Promise<{ plan: object, attempt: number }>}
+ */
+export async function claimTag({
+  git,
+  tagPrefix = CLI_TAG_PREFIX,
+  now = new Date(),
+  remote = 'origin',
+  attempts = 5,
+  message = (plan) => plan.tag,
+  log = () => {},
+  sleep = wait,
+}) {
+  if (typeof git !== 'function') throw new TypeError('claimTag requires an injected git runner');
+  if (!Number.isInteger(attempts) || attempts < 1) {
+    throw new RangeError(`attempts must be a positive integer, got ${String(attempts)}`);
+  }
+
+  const readTags = () =>
+    String(git(['tag', '--list']))
+      .split('\n')
+      .map((t) => t.trim())
+      .filter(Boolean);
+
+  /** Best effort: a failure to drop a local-only tag must not mask the real error. */
+  const dropLocal = (tag) => {
+    try {
+      git(tagDeleteArgs(tag));
+    } catch {
+      /* ignore */
+    }
+  };
+
+  let last = null;
+
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    git(fetchTagsArgs(remote));
+
+    const plan = planVersion({ tags: readTags(), now, tagPrefix });
+    last = plan;
+    log(`attempt ${attempt}: claiming ${plan.tag}`);
+
+    try {
+      git(tagCreateArgs(plan.tag, message(plan)));
+    } catch {
+      // A local tag the remote does not have — it was never published, so it is
+      // stale by definition. Drop it and recompute.
+      log(`local tag ${plan.tag} already exists; dropping it and re-reading the remote`);
+      dropLocal(plan.tag);
+      await sleep(attempt * 1000);
+      continue;
+    }
+
+    try {
+      git(tagPushArgs(plan.tag, remote));
+      return { plan, attempt };
+    } catch {
+      log(`push of ${plan.tag} was rejected — somebody else claimed it first`);
+      dropLocal(plan.tag);
+      await sleep(attempt * 1000);
+    }
+  }
+
+  throw new Error(
+    `could not claim a ${tagPrefix}* tag after ${attempts} attempts ` +
+      `(last tried ${last ? last.tag : 'nothing'}). ` +
+      'Somebody else is cutting at the same time; re-run when they are done. ' +
+      'Never delete and re-push a tag to make room — roll forward instead.',
+  );
 }
 
 // ---------------------------------------------------------------------------

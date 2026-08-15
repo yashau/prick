@@ -55,6 +55,10 @@ Breaking these fails the build, not review.
   three releases (add nullable + backfill → require → drop).
 - Versions are CalVer and machine-managed. Every manifest reads `0.0.0-dev`; the git tag is the
   source of truth. **Never hand-edit a version.**
+- Two release lines, one mechanism: `cli:*` on the `v` tag prefix and `docs:*` on `docs-v`.
+  **Cutting the version is what releases it** — `mise run cli:cut` / `docs:cut` push the tag, and
+  that push is the only trigger for `cli-release.yml` / `docs-release.yml`. Neither workflow
+  computes a version, and nothing in CI moves a ref. See `docs/contributing/releasing.md`.
 - Conventional Commits. We squash-merge, so the PR title becomes the commit message.
 - `unsafe` belongs only in `prick-exec`, needs a `// SAFETY:` comment, and needs integration tests —
   miri cannot reach it.

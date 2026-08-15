@@ -1,24 +1,35 @@
 #!/usr/bin/env node
-// scripts/release.mjs — cut a release by dispatching release.yml.
+// scripts/cli-release.mjs — cut a release of the `prk` CLI.
 //
-//   node scripts/release.mjs preview          what the next release would be
-//   node scripts/release.mjs dry              dispatch with dry_run=true
-//   node scripts/release.mjs cut [--yes]      dispatch with dry_run=false
-//   node scripts/release.mjs status           follow the most recent run
+//   node scripts/cli-release.mjs next             what the next release would be
+//   node scripts/cli-release.mjs dry              dispatch with dry_run=true
+//   node scripts/cli-release.mjs cut [--yes]      tag and push — this releases
+//   node scripts/cli-release.mjs status           follow the most recent run
 //
-// WHY THIS DISPATCHES A WORKFLOW INSTEAD OF TAGGING LOCALLY
+// CUTTING THE VERSION IS WHAT RELEASES.
 //
-// release.yml's `plan` job computes the CalVer version and pushes the tag
-// itself, and that push IS the concurrency lock: git refuses a duplicate ref, so
-// two racing runs cannot both claim the same N. There is no external mutex.
-// Creating the tag here would take the lock the workflow depends on and make the
-// `plan` job fail against its own release — so `cut` never touches a ref. The
-// version this script prints is a *prediction*, computed the same way `plan`
-// computes it; the workflow remains the authority.
+// `cut` computes the CalVer version, requires a typed confirmation of the tag,
+// then creates an annotated tag and pushes it. That push is the trigger for
+// cli-release.yml; nothing else starts a release. The workflow computes no
+// version — it builds, publishes and releases the commit it was handed.
+//
+// The tag is still the lock. git refuses to push a ref that already exists, so
+// two people cutting in the same second cannot both take the same N; the loser's
+// push bounces and `claimTag` recomputes N against the tags that now exist. That
+// retry used to live in the workflow and now lives in scripts/version.mjs, which
+// is where the docs line gets it from too.
+//
+// The version is therefore a decision a human makes, at cut time, recorded in
+// git before any CI runs — rather than something CI derives and the human finds
+// out about afterwards.
+//
+// `dry` is the one thing that still dispatches: it builds all eight platform
+// binaries and stages the ten npm packages without claiming a version, so it
+// needs a workflow_dispatch and no tag.
 //
 // The pure parts (package list, summary formatting, confirmation matching,
-// argument construction) are exported for scripts/release.test.mjs, and every
-// side effect is injectable, so the tests never invoke gh or git.
+// argument construction) are exported for scripts/cli-release.test.mjs, and every
+// side effect is injectable, so the tests never invoke gh, git or a terminal.
 
 import { execFileSync, spawnSync } from 'node:child_process';
 import path from 'node:path';
@@ -26,10 +37,16 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { parseArgs } from 'node:util';
 
 import { MCP_PACKAGE, PARENT_PACKAGE, PLATFORMS } from './npm-package.mjs';
-import { gitTags, planVersion } from './version.mjs';
+import { CLI_TAG_PREFIX, claimTag, gitTags, planVersion, tagGlob } from './version.mjs';
 
-/** The workflow this script drives. */
-export const WORKFLOW = 'release.yml';
+/** The workflow this release line drives. */
+export const WORKFLOW = 'cli-release.yml';
+
+/** The tag prefix that identifies this release line. */
+export const TAG_PREFIX = CLI_TAG_PREFIX;
+
+/** The `on.push.tags` glob cli-release.yml triggers on. */
+export const TAG_GLOB = tagGlob(TAG_PREFIX);
 
 /**
  * The ten packages a real release publishes, in publish order.
@@ -79,6 +96,16 @@ export function workflowRunArgs(dryRun) {
 }
 
 /**
+ * The annotation carried by the tag `cut` pushes.
+ *
+ * @param {object} plan
+ * @returns {string}
+ */
+export function tagMessage(plan) {
+  return `${plan.tag}\n\nprk ${plan.calver} — release ${plan.patch} of ${plan.date} (UTC).`;
+}
+
+/**
  * @param {object} plan
  * @returns {string[]}
  */
@@ -112,8 +139,11 @@ export function formatCutSummary(plan) {
     'rolled back by moving the `latest` dist-tag and deprecating, never deleted.',
     'Recovery is roll-forward — cut the next N. Never delete and re-push a tag.',
     '',
-    `The tag ${plan.tag} is pushed by the workflow, not by this command.`,
-    'The version above is a prediction; release.yml recomputes it and wins.',
+    `Confirming pushes the tag ${plan.tag}, and that push is what starts`,
+    `${WORKFLOW}. Nothing else does.`,
+    '',
+    'If somebody else claims this N between now and the push, the tag is',
+    'recomputed against the tags that then exist and the claimed tag is printed.',
     '',
   ];
 }
@@ -123,32 +153,59 @@ export function formatCutSummary(plan) {
 // ---------------------------------------------------------------------------
 
 /**
+ * @param {string} program
+ * @param {readonly string[]} args
+ * @param {{ capture?: boolean, cwd?: string, hint: string }} options
+ * @returns {string}
+ */
+function run(program, args, { capture = false, cwd, hint }) {
+  try {
+    if (capture) {
+      return execFileSync(program, [...args], {
+        cwd,
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+    }
+    const result = spawnSync(program, [...args], { cwd, stdio: 'inherit' });
+    if (result.error) throw result.error;
+    if (result.status !== 0) {
+      throw new Error(`${program} ${args.join(' ')} exited with status ${result.status}`);
+    }
+    return '';
+  } catch (error) {
+    if (error && error.code === 'ENOENT') throw new Error(hint);
+    throw error;
+  }
+}
+
+/**
  * @param {readonly string[]} args
  * @param {{ capture?: boolean }} [options]
  * @returns {string}
  */
 function runGh(args, { capture = false } = {}) {
-  try {
-    if (capture) {
-      return execFileSync('gh', [...args], {
-        encoding: 'utf8',
-        stdio: ['ignore', 'pipe', 'pipe'],
-      });
-    }
-    const result = spawnSync('gh', [...args], { stdio: 'inherit' });
-    if (result.error) throw result.error;
-    if (result.status !== 0) {
-      throw new Error(`gh ${args.join(' ')} exited with status ${result.status}`);
-    }
-    return '';
-  } catch (error) {
-    if (error && error.code === 'ENOENT') {
-      throw new Error(
-        'the GitHub CLI (gh) was not found. It is pinned in mise.toml — run `mise install`.',
-      );
-    }
-    throw error;
-  }
+  return run('gh', args, {
+    capture,
+    hint: 'the GitHub CLI (gh) was not found. It is pinned in mise.toml — run `mise install`.',
+  });
+}
+
+/**
+ * git, always captured: `git fetch` and `git push` write progress to stderr, and
+ * a claim attempt that loses a race is expected rather than exceptional, so its
+ * noise must not reach the operator's terminal.
+ *
+ * @param {string} root
+ * @returns {(args: readonly string[]) => string}
+ */
+function makeGit(root) {
+  return (args) =>
+    run('git', args, {
+      capture: true,
+      cwd: root,
+      hint: 'git was not found on PATH.',
+    });
 }
 
 /**
@@ -170,49 +227,61 @@ async function promptTty(question) {
 // ---------------------------------------------------------------------------
 
 /** @param {object} ctx */
-function cmdPreview({ plan, log }) {
-  log('Next release:');
+function cmdNext({ plan, log }) {
+  log('Next CLI release:');
   log('');
   for (const line of formatPlanSummary(plan)) log(line);
   log('');
-  log(`Dry run:  mise run release:dry`);
-  log(`Cut it:   mise run release:cut`);
+  log(`Dry run:  mise run cli:dry`);
+  log(`Cut it:   mise run cli:cut`);
   return 0;
 }
 
 /** @param {object} ctx */
 function cmdDry({ plan, gh, log }) {
-  log(`Dispatching ${WORKFLOW} with dry_run=true (predicted ${plan.tag}).`);
+  log(`Dispatching ${WORKFLOW} with dry_run=true (today's next version is ${plan.tag}).`);
   log(`Builds all 8 platform binaries and stages the ${publishedPackages().length} npm packages.`);
-  log('Publishes nothing, pushes no tag.');
+  log('Publishes nothing, pushes no tag, claims no version.');
   log('');
   gh(workflowRunArgs(true));
   log('');
-  log('Dispatched. Follow it with: mise run release:status');
+  log('Dispatched. Follow it with: mise run cli:status');
   return 0;
 }
 
 /** @param {object} ctx */
-async function cmdCut({ plan, gh, log, logErr, prompt, assumeYes, interactive }) {
+async function cmdCut({ plan, git, log, logErr, prompt, assumeYes, interactive, now, sleep }) {
   for (const line of formatCutSummary(plan)) log(line);
 
   if (!assumeYes) {
     if (!interactive) {
       logErr('refusing to cut a release without a confirmation.');
       logErr('Re-run attached to a terminal, or pass --yes for automation:');
-      logErr('  mise run release:cut -- --yes');
+      logErr('  mise run cli:cut -- --yes');
       return 1;
     }
     const answer = await prompt(`Type ${confirmationToken(plan)} to confirm: `);
     if (!isConfirmed(answer, plan)) {
-      logErr('aborted — nothing was dispatched.');
+      logErr('aborted — no tag was created and nothing was pushed.');
       return 1;
     }
   }
 
-  gh(workflowRunArgs(false));
+  const claimed = await claimTag({
+    git,
+    tagPrefix: TAG_PREFIX,
+    now,
+    message: tagMessage,
+    log,
+    ...(sleep ? { sleep } : {}),
+  });
+
   log('');
-  log('Dispatched. Follow it with: mise run release:status');
+  if (claimed.plan.tag !== plan.tag) {
+    log(`NOTE: ${plan.tag} was taken while you were reading. Claimed ${claimed.plan.tag} instead.`);
+  }
+  log(`Pushed ${claimed.plan.tag}. That push started ${WORKFLOW}.`);
+  log('Follow it with: mise run cli:status');
   return 0;
 }
 
@@ -223,29 +292,36 @@ function cmdStatus({ gh, log, logErr }) {
     capture: true,
   });
 
-  const runs = JSON.parse(raw || '[]');
-  if (runs.length === 0) {
+  let runs;
+  try {
+    runs = JSON.parse(raw || '[]');
+  } catch {
+    logErr(`could not parse the run list returned by gh: ${String(raw).slice(0, 200)}`);
+    return 1;
+  }
+
+  if (!Array.isArray(runs) || runs.length === 0) {
     log(`no ${WORKFLOW} runs yet.`);
     return 0;
   }
 
-  const [run] = runs;
-  log(`${WORKFLOW} #${run.databaseId} — ${run.displayTitle}`);
-  log(`  branch     ${run.headBranch}`);
-  log(`  started    ${run.createdAt}`);
-  log(`  status     ${run.status}${run.conclusion ? ` (${run.conclusion})` : ''}`);
-  log(`  url        ${run.url}`);
+  const [entry] = runs;
+  log(`${WORKFLOW} #${entry.databaseId} — ${entry.displayTitle}`);
+  log(`  ref        ${entry.headBranch}`);
+  log(`  started    ${entry.createdAt}`);
+  log(`  status     ${entry.status}${entry.conclusion ? ` (${entry.conclusion})` : ''}`);
+  log(`  url        ${entry.url}`);
   log('');
 
-  if (run.status !== 'completed') {
+  if (entry.status !== 'completed') {
     // --exit-status makes a failed run a failed command, so this is usable as a
     // gate. Still read-only: watching mutates nothing.
-    gh(['run', 'watch', String(run.databaseId), '--exit-status']);
+    gh(['run', 'watch', String(entry.databaseId), '--exit-status']);
     return 0;
   }
 
-  if (run.conclusion !== 'success') {
-    logErr(`the most recent run finished with: ${run.conclusion}`);
+  if (entry.conclusion !== 'success') {
+    logErr(`the most recent run finished with: ${entry.conclusion}`);
     return 1;
   }
   return 0;
@@ -255,25 +331,25 @@ function cmdStatus({ gh, log, logErr }) {
 // CLI
 // ---------------------------------------------------------------------------
 
-const USAGE = `usage: node scripts/release.mjs <command>
+const USAGE = `usage: node scripts/cli-release.mjs <command>
 
-  preview          print the version the next release would take. Read-only.
-  dry              dispatch ${WORKFLOW} with dry_run=true
-  cut [--yes]      dispatch ${WORKFLOW} with dry_run=false — publishes for real
+  next             print the version the next cut would take. Read-only.
+  dry              dispatch ${WORKFLOW} with dry_run=true — publishes nothing
+  cut [--yes]      tag and push — the push is what releases
   status           follow the most recent ${WORKFLOW} run. Read-only.
 
 options:
   --yes            skip the typed confirmation (cut only, for automation)
   --root <dir>     repository root (default: the parent of scripts/)
 
-The git tag is pushed by the workflow, never by this command: that push is the
-concurrency lock the workflow depends on.
+Cutting the version is what deploys it: ${WORKFLOW} triggers on a
+${TAG_GLOB} tag push and on nothing else, and computes no version of its own.
 `;
 
 /**
  * @param {readonly string[]} argv
- * @param {object} [io] injection points: log, logErr, gh, prompt, tags, now,
- *   interactive, root
+ * @param {object} [io] injection points: log, logErr, gh, git, prompt, tags,
+ *   now, sleep, interactive, root
  * @returns {Promise<number>} process exit code
  */
 export async function main(argv, io = {}) {
@@ -304,25 +380,28 @@ export async function main(argv, io = {}) {
 
   if (command === 'status') return cmdStatus({ gh, log, logErr });
 
-  // preview/dry/cut all need the predicted version. `status` deliberately does
-  // not, so it keeps working in a checkout where tags are unavailable.
+  // next/dry/cut all need today's version. `status` deliberately does not, so it
+  // keeps working in a checkout where tags are unavailable.
+  const now = io.now ?? new Date();
   const tags = io.tags ?? gitTags(root);
-  const plan = planVersion({ tags, now: io.now ?? new Date() });
+  const plan = planVersion({ tags, now, tagPrefix: TAG_PREFIX });
 
   switch (command) {
-    case 'preview':
-      return cmdPreview({ plan, log });
+    case 'next':
+      return cmdNext({ plan, log });
     case 'dry':
       return cmdDry({ plan, gh, log });
     case 'cut':
       return cmdCut({
         plan,
-        gh,
+        git: io.git ?? makeGit(root),
         log,
         logErr,
         prompt,
         assumeYes: values.yes,
         interactive,
+        now,
+        sleep: io.sleep,
       });
     default:
       logErr(`unknown command ${JSON.stringify(command)}\n\n${USAGE}`);

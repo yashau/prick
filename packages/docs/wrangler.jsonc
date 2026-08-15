@@ -2,8 +2,9 @@
   "$schema": "./node_modules/wrangler/config-schema.json",
 
   // A SEPARATE Worker from the application. Different name, different
-  // deployment workflow (.github/workflows/deploy-docs.yml), different
-  // hostname. Nothing here touches D1, MASTER_KEY or Cloudflare Access.
+  // release workflow (.github/workflows/docs-release.yml, triggered by a
+  // `docs-v*` tag push from `mise run docs:cut`), different hostname. Nothing
+  // here touches D1, MASTER_KEY or Cloudflare Access.
   "name": "prick-docs",
   "compatibility_date": "2026-08-01",
 

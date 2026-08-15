@@ -1,0 +1,218 @@
+name: Docs release
+
+# CUTTING THE VERSION IS WHAT DEPLOYS IT.
+#
+# `mise run docs:cut` computes the next CalVer version on the documentation
+# line, takes a typed confirmation of the tag, then creates and pushes the
+# annotated `docs-v<version>` tag. That push is the trigger below, and it is the
+# only one: this workflow does NOT run on a push to main, on a docs edit, or on a
+# manual dispatch. So there is exactly one way the site ships, every shipped
+# state has a version, and `git show docs-v2026.815.0` says who shipped it.
+#
+# This workflow computes no version. It deploys the commit it was handed and
+# reads the version out of the tag it was triggered by.
+#
+# The documentation site is a SEPARATE Cloudflare Worker from the application,
+# which is why it gets a separate workflow: a typo in a Markdown file cannot
+# trigger a production deploy of the secrets manager, and a schema migration
+# cannot be blocked behind a docs build.
+#
+# `docs-v*` cannot collide with the CLI line's `v*`: a tag glob is anchored at
+# the start of the ref name, and `docs-v2026.815.0` does not begin with `v`.
+# Asserted in scripts/version.test.mjs rather than assumed.
+on:
+  push:
+    tags:
+      - "docs-v*"
+
+permissions:
+  contents: read
+
+# Docs releases serialise but are never cancelled. There is no migration step to
+# be interrupted here, but `wrangler deploy` uploads the asset manifest and then
+# the assets themselves; killing a run between the two publishes a version whose
+# manifest references assets that were never uploaded.
+concurrency:
+  group: docs-release
+  cancel-in-progress: false
+
+env:
+  # The version is derived from the tag, in UTC like everything else.
+  TZ: UTC
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Build and deploy. Holds the Cloudflare credentials and therefore nothing
+  # else: no write permission, no cache, no git credential.
+  # ---------------------------------------------------------------------------
+  deploy:
+    name: deploy
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment:
+      name: docs
+      url: ${{ steps.deploy.outputs.deployment-url }}
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      pages: ${{ steps.verify.outputs.pages }}
+      url: ${{ steps.deploy.outputs.deployment-url }}
+    steps:
+      # The trigger is a tag push, so the default ref IS the tagged commit.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: jdx/mise-action@3c2e0cf82a5b2e5249f0d3635a4d83d0ae861518 # v4.2.5
+        with:
+          # Caching is off in BOTH directions because this workflow holds
+          # Cloudflare deploy credentials.
+          #
+          #   cache_save: false  would only stop us writing an entry that a
+          #                      later privileged run consumes.
+          #   cache: false       also stops us READING one -- which is the
+          #                      actual cache-poisoning path: a lower-privilege
+          #                      workflow writes a malicious entry, and this
+          #                      job restores it and publishes the result.
+          #
+          # A cold toolchain install costs ~30s. Deploys are not hot-path.
+          cache: false
+
+      - name: Read the version from the tag
+        id: version
+        env:
+          # Through the environment, never interpolated into the script body: a
+          # ref name is chosen by whoever pushed the tag.
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          version="${REF_NAME#docs-v}"
+          # The tag is the only input, so it is validated rather than trusted.
+          if ! printf '%s' "$version" | grep -Eq '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'; then
+            echo "::error::${REF_NAME} is not a CalVer docs tag (expected docs-vYYYY.MMDD.N with no leading zeros)."
+            exit 1
+          fi
+          echo "releasing docs ${version}"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Build
+        run: pnpm --filter @prick/docs run build
+
+      # Fail loudly if the build produced nothing. `wrangler deploy` on an empty
+      # assets directory succeeds and replaces a working site with a blank one,
+      # so the emptiness has to be caught here rather than discovered by a
+      # reader.
+      - name: Verify build output
+        id: verify
+        run: |
+          set -euo pipefail
+          dist=packages/docs/dist
+          if [ ! -f "$dist/index.html" ]; then
+            echo "::error::${dist}/index.html is missing. The docs build produced no home page."
+            exit 1
+          fi
+          pages=$(find "$dist" -name '*.html' | wc -l)
+          echo "built ${pages} HTML page(s)"
+          if [ "$pages" -lt 2 ]; then
+            echo "::error::Only ${pages} HTML page(s) were built. Expected the 404 page plus content from docs/."
+            exit 1
+          fi
+          if [ ! -d "$dist/pagefind" ]; then
+            echo "::error::${dist}/pagefind is missing. Site search would be dead on arrival."
+            exit 1
+          fi
+          echo "pages=${pages}" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy
+        id: deploy
+        uses: cloudflare/wrangler-action@ebbaa1584979971c8614a24965b4405ff95890e0 # v4.0.0
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: packages/docs
+          packageManager: pnpm
+          command: deploy
+
+      - name: Summary
+        env:
+          # Through the environment, never interpolated into the script body:
+          # DEPLOY_URL is an action output and so is not ours to trust.
+          COMMIT: ${{ github.sha }}
+          DEPLOY_URL: ${{ steps.deploy.outputs.deployment-url }}
+          PAGES: ${{ steps.verify.outputs.pages }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          {
+            echo "### Docs ${VERSION} deployed"
+            echo
+            echo "- commit: \`${COMMIT}\`"
+            echo "- pages: ${PAGES}"
+            echo "- url: ${DEPLOY_URL}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ---------------------------------------------------------------------------
+  # The GitHub Release for the tag. A separate job purely so that `contents:
+  # write` is scoped to the two `gh release` calls and is nowhere near the
+  # Cloudflare credentials above.
+  #
+  # It runs after the deploy, not before: a release announcing a site that failed
+  # to publish would be a lie, and the tag alone is enough to retry from.
+  #
+  # NOT marked a pre-release. A docs release is a finished, shipped thing; there
+  # is no later "final" it precedes, and `--prerelease` would say otherwise.
+  # `--latest=false` is the accurate statement: it exists in the history, and it
+  # is not what the repository's "Latest" badge should point at -- that belongs to
+  # the newest `v*` release, which is what people come here to download.
+  # ---------------------------------------------------------------------------
+  release:
+    name: release
+    needs: deploy
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Create the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+          VERSION: ${{ needs.deploy.outputs.version }}
+          PAGES: ${{ needs.deploy.outputs.pages }}
+          DEPLOY_URL: ${{ needs.deploy.outputs.url }}
+          COMMIT: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          # Notes are written rather than generated. `--generate-notes` would
+          # diff against whatever GitHub decides the previous release was, and
+          # with two tag namespaces in one repository that is as likely to be a
+          # CLI release as a docs one -- producing a changelog of Rust commits on
+          # a documentation release.
+          notes="$(
+            printf '%s\n' \
+              "Documentation site \`${VERSION}\`, built from \`${COMMIT}\`." \
+              "" \
+              "- pages: ${PAGES}" \
+              "- url: ${DEPLOY_URL}" \
+              "" \
+              "Cut with \`mise run docs:cut\`; the tag push is what deployed it."
+          )"
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "release ${TAG} already exists; updating its notes"
+            gh release edit "$TAG" --notes "$notes" --latest=false
+          else
+            gh release create "$TAG" \
+              --title "Docs ${VERSION}" \
+              --notes "$notes" \
+              --latest=false \
+              --verify-tag
+          fi
+
+          echo "### Released \`${TAG}\`" >> "$GITHUB_STEP_SUMMARY"

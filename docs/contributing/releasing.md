@@ -1,6 +1,6 @@
 ---
 title: Releasing
-description: CalVer, how the version is stamped, and what the release workflow does in what order.
+description: CalVer, how the version is stamped, and what the release workflows do in what order.
 sidebar:
   order: 3
 ---
@@ -10,6 +10,25 @@ Nothing is published to npm yet, and the one-time trusted-publishing bootstrap
 described below has not been done. Treat this page as the procedure, not as a
 history.
 :::
+
+## Two release lines, one mechanism
+
+There are two things to release, and they work identically:
+
+| Line          | Tasks    | Tag prefix | Workflow           | Ships                              |
+| ------------- | -------- | ---------- | ------------------ | ---------------------------------- |
+| The `prk` CLI | `cli:*`  | `v`        | `cli-release.yml`  | Eight binaries, ten npm packages   |
+| The docs site | `docs:*` | `docs-v`   | `docs-release.yml` | The `prick-docs` Cloudflare Worker |
+
+**Cutting the version is what releases it.** `cli:cut` and `docs:cut` compute the
+next version, take a typed confirmation, then create an annotated tag and push
+it. That push is the workflow trigger. Neither workflow computes a version, and
+neither runs on a push to `main`.
+
+The two prefixes count `N` independently, so cutting docs three times in a day
+does not make the next CLI release `.3`. `v*` and `docs-v*` cannot cross: a tag
+glob is anchored at the start of the ref name, and `docs-v2026.815.0` does not
+begin with `v`.
 
 ## Versioning
 
@@ -44,9 +63,11 @@ checkout reproducibility at the cost of a bot commit racing merges into a
 protected branch. For CalVer, where the version carries no information, stamping
 is the better trade.
 
-**The tag is also the lock.** The `plan` job pushes the tag to claim `N`, and git
-refuses a duplicate, so two racing runs cannot both take it. There is no external
-mutex.
+**The tag is also the lock.** `*:cut` pushes the tag to claim `N`, and git refuses
+a duplicate, so two people cutting in the same second cannot both take it. The
+loser's push is rejected, and `scripts/version.mjs` recomputes `N` against the
+tags that then exist rather than merely incrementing — the winner may have taken
+more than one. There is no external mutex.
 
 ```bash
 mise run version:plan
@@ -58,33 +79,34 @@ mise run version:check
 
 `version:check` asserts every manifest carries the same version.
 
-## Cutting a release
+## Cutting a CLI release
 
-Releases are cut through mise tasks, which dispatch the release workflow with
-`gh`. They must **not** create the tag locally: the workflow's `plan` job pushes
-it, and a hand-made tag would collide with the lock it depends on.
-
-| Task                       | Does                                                                                                         |
-| -------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| `mise run release:preview` | Print the version and tag the next release would take. Read-only, never prompts, works at zero tags          |
-| `mise run release:dry`     | Dispatch with `dry_run=true` — builds all eight binaries and stages the nine npm packages, publishes nothing |
-| `mise run release:cut`     | Tag, build, publish, create the GitHub Release                                                               |
-| `mise run release:status`  | Follow the latest run. Read-only                                                                             |
+| Task                  | Does                                                                                                        |
+| --------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `mise run cli:next`   | Print the version and tag the next release would take. Read-only, never prompts, works at zero tags         |
+| `mise run cli:dry`    | Dispatch with `dry_run=true` — builds all eight binaries and stages the ten npm packages, publishes nothing |
+| `mise run cli:cut`    | Tag and push, which builds, publishes to npm and creates the GitHub Release                                 |
+| `mise run cli:status` | Follow the latest run. Read-only                                                                            |
 
 ```bash
-mise run release:preview
+mise run cli:next
 ```
 
 ```bash
-mise run release:dry
+mise run cli:dry
 ```
 
 ```bash
-mise run release:cut
+mise run cli:cut
 ```
 
-`release:cut` requires a typed confirmation — `--yes` for non-interactive use —
-and prints the resolved version and all nine package names before prompting.
+`cli:cut` requires a typed confirmation of the **tag** — not "yes", so it cannot
+be typed from muscle memory, and typing it means you read the version. Pass
+`--yes` for non-interactive use. It prints the resolved version and all ten
+package names before prompting.
+
+The tag it pushes is the trigger. Nothing else starts a release: `cli-release.yml`
+has no branch trigger, and its `workflow_dispatch` can only ever dry-run.
 
 :::danger[It is not undoable]
 npm versions are immutable. Recovery is limited to rolling the `latest` dist-tag
@@ -92,15 +114,56 @@ back and deprecating. The fix for a bad release is to roll **forward**:
 `2026.815.1`. **Never** delete and re-push a tag.
 :::
 
-## What the workflow does
+## Cutting a docs release
+
+| Task                   | Does                                                                          |
+| ---------------------- | ----------------------------------------------------------------------------- |
+| `mise run docs:next`   | Print the version and tag the next docs release would take. Read-only         |
+| `mise run docs:cut`    | Tag and push, which builds, deploys the Worker and creates the GitHub Release |
+| `mise run docs:status` | Follow the latest run. Read-only                                              |
+
+```bash
+mise run docs:cut
+```
+
+Identical to `cli:cut`, on the `docs-v` prefix, with the same typed-tag
+confirmation. The site therefore ships in exactly one way, every shipped state
+has a version, and `git show docs-v2026.815.0` says who shipped it and when.
+
+`docs-release.yml` does **not** run on a push to `main` or on a docs edit. Editing
+Markdown changes nothing that is live until somebody cuts.
+
+The deploy itself is reversible — fix the source and cut the next `N`. The tag is
+not.
+
+`docs:preview` is unrelated: it serves the built site locally, which is what
+`preview` means in every JS toolchain. The version preview is `docs:next`.
+
+## Local docs tasks
+
+| Task                    | Does                                     |
+| ----------------------- | ---------------------------------------- |
+| `mise run docs:dev`     | Astro dev server with hot reload         |
+| `mise run docs:build`   | Build the site from the `docs/` Markdown |
+| `mise run docs:preview` | Serve the built output locally           |
+
+## What cli-release.yml does
 
 ```
-plan → build (6 runner legs → 8 artefacts) → package → publish-npm → github-release
+version → build (6 runner legs → 8 artefacts) → package → publish-npm → github-release
 ```
 
-### plan
+### version
 
-Computes the version and pushes the tag, which claims it.
+Resolves the version. On a tag push it is the tag minus its `v`, validated
+against the CalVer shape; on a dispatched dry run it is a read-only prediction
+that claims nothing.
+
+This job holds **no** write permission and persists no git credential. Nothing in
+CI can move a ref — the claim already happened, locally, in `cli:cut`.
+
+`publish-npm` and `github-release` are gated on the trigger being a tag push, so
+a dispatched run cannot publish however its inputs are set.
 
 ### build
 
@@ -122,7 +185,7 @@ Binaries are built with `cargo auditable`, which embeds the dependency list
 
 ### package
 
-Assembles the archives, checksums and the nine npm packages, generates SBOMs, and
+Assembles the archives, checksums and the ten npm packages, generates SBOMs, and
 attests the artefacts.
 
 The embedded audit data is verified here as a **hard failure gate**:
@@ -157,7 +220,32 @@ its OIDC path regressed, so npm is the vendor-supported path.
 
 ### github-release
 
-Creates a draft release with the archives, checksums and SBOMs, then undrafts it.
+Creates a draft release with the archives, checksums and SBOMs, then undrafts it
+and marks it `--latest`.
+
+The notes range is pinned to the previous `v*` tag rather than left to GitHub's
+own "previous release" guess. Two release lines share this repository's releases,
+and the guess is as likely to land on a docs release — which would generate a
+changelog of Rust commits on a documentation release, or vice versa.
+
+## What docs-release.yml does
+
+```
+deploy (build → verify → wrangler deploy) → release (GitHub Release for the tag)
+```
+
+Two jobs so that `contents: write` is scoped to the two `gh release` calls and is
+nowhere near the Cloudflare credentials. The release runs **after** the deploy: a
+release announcing a site that failed to publish would be a lie, and the tag alone
+is enough to retry from.
+
+The build output is verified before `wrangler deploy` runs. `wrangler deploy` on
+an empty assets directory succeeds and replaces a working site with a blank one,
+so an empty build has to fail here rather than be discovered by a reader.
+
+Docs releases are created with `--latest=false`. They are not pre-releases —
+nothing later supersedes them — but the repository's "Latest" badge belongs to the
+newest `v*` release, which is what people come here to download.
 
 ## Why not a single npm package with a postinstall
 
@@ -183,10 +271,10 @@ ourselves means the diagnosis is ours to make.
 ## One-time npm bootstrap
 
 Trusted publishing (OIDC) cannot be configured for a package that has never been
-published, and there are nine of them.
+published, and there are ten of them.
 
 1. Publish once with a 1-day granular token.
-2. Configure the trusted publisher for all nine packages.
+2. Configure the trusted publisher for all ten packages.
 3. Revoke the token.
 
 After that no token exists to leak, and provenance is automatic — drop

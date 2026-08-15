@@ -9,12 +9,16 @@ import path from 'node:path';
 import test, { describe } from 'node:test';
 
 import {
+  CLI_TAG_PREFIX,
   DEV_VERSION,
+  DOCS_TAG_PREFIX,
   VERSION_RE,
   assertVersion,
+  claimTag,
   computePatch,
   dateToCalver,
   discoverManifests,
+  fetchTagsArgs,
   formatCalver,
   formatTag,
   formatVersion,
@@ -24,6 +28,11 @@ import {
   readPackageJsonVersions,
   setCargoVersion,
   setPackageJsonVersion,
+  tagCreateArgs,
+  tagDeleteArgs,
+  tagGlob,
+  tagMatchesGlob,
+  tagPushArgs,
   utcDateString,
 } from './version.mjs';
 
@@ -148,7 +157,7 @@ describe('N is zero-based and counted from the tags', () => {
     assert.throws(
       () => planOn('2026-08-15', ['v2026.815.0', 'v2026.815.2']),
       (error) => {
-        assert.match(error.message, /refusing to compute N for 2026\.815/);
+        assert.match(error.message, /refusing to compute N for v2026\.815/);
         assert.match(error.message, /the next free N is 3, not 2/);
         assert.match(error.message, /never delete and re-push a tag/);
         return true;
@@ -168,6 +177,296 @@ describe('N is zero-based and counted from the tags', () => {
       computePatch(['  v2026.815.0  ', '\tv2026.815.1'], { major: 2026, minor: 815 }),
       2,
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+
+describe('the two release lines count N independently', () => {
+  const docsPlan = (date, tags = []) => planVersion({ date, tags, tagPrefix: DOCS_TAG_PREFIX });
+
+  test('the prefixes are what they claim to be', () => {
+    assert.equal(CLI_TAG_PREFIX, 'v');
+    assert.equal(DOCS_TAG_PREFIX, 'docs-v');
+  });
+
+  test('a docs cut at zero docs tags is docs-v…0', () => {
+    const plan = docsPlan('2026-08-15');
+    assert.equal(plan.patch, 0);
+    assert.equal(plan.version, '2026.815.0');
+    assert.equal(plan.tag, 'docs-v2026.815.0');
+    assert.equal(plan.calver, '2026.08.15.0');
+  });
+
+  test('CLI tags do not advance the docs N', () => {
+    const cliTags = ['v2026.815.0', 'v2026.815.1', 'v2026.815.2'];
+    assert.equal(docsPlan('2026-08-15', cliTags).patch, 0, 'three CLI cuts, still docs N = 0');
+    assert.equal(docsPlan('2026-08-15', cliTags).tag, 'docs-v2026.815.0');
+  });
+
+  test('docs tags do not advance the CLI N — the scenario from the brief', () => {
+    // Cut docs three times in a day. The next CLI release must still be .0.
+    const tags = [];
+    for (let i = 0; i < 3; i += 1) tags.push(docsPlan('2026-08-15', tags).tag);
+    assert.deepEqual(tags, ['docs-v2026.815.0', 'docs-v2026.815.1', 'docs-v2026.815.2']);
+    assert.equal(planOn('2026-08-15', tags).patch, 0);
+    assert.equal(planOn('2026-08-15', tags).tag, 'v2026.815.0');
+  });
+
+  test('both lines advance side by side without interfering', () => {
+    const tags = ['v2026.815.0', 'docs-v2026.815.0', 'docs-v2026.815.1', 'v2026.815.1'];
+    assert.equal(planOn('2026-08-15', tags).tag, 'v2026.815.2');
+    assert.equal(docsPlan('2026-08-15', tags).tag, 'docs-v2026.815.2');
+  });
+
+  test('computePatch takes the prefix positionally too', () => {
+    const tags = ['docs-v2026.815.0', 'v2026.815.0', 'v2026.815.1'];
+    assert.equal(computePatch(tags, { major: 2026, minor: 815 }, DOCS_TAG_PREFIX), 1);
+    assert.equal(computePatch(tags, { major: 2026, minor: 815 }), 2);
+  });
+
+  test('formatTag prefixes without validating the prefix into the version', () => {
+    assert.equal(formatTag('2026.815.3', DOCS_TAG_PREFIX), 'docs-v2026.815.3');
+    assert.equal(formatTag('2026.815.3'), 'v2026.815.3');
+  });
+
+  test('a hole in one line names that line, not the other', () => {
+    // Same numbers, two namespaces: the message must say which one is broken,
+    // or the operator inspects the wrong set of tags and finds nothing wrong.
+    assert.throws(
+      () => docsPlan('2026-08-15', ['docs-v2026.815.0', 'docs-v2026.815.2']),
+      /refusing to compute N for docs-v2026\.815/,
+    );
+    assert.throws(
+      () => planOn('2026-08-15', ['v2026.815.0', 'v2026.815.2']),
+      /refusing to compute N for v2026\.815/,
+    );
+  });
+
+  test('a broken docs sequence does not break the CLI line', () => {
+    const tags = ['docs-v2026.815.0', 'docs-v2026.815.2'];
+    assert.equal(planOn('2026-08-15', tags).tag, 'v2026.815.0');
+  });
+});
+
+// ---------------------------------------------------------------------------
+
+describe('the workflow tag globs cannot cross', () => {
+  const CLI_GLOB = tagGlob(CLI_TAG_PREFIX);
+  const DOCS_GLOB = tagGlob(DOCS_TAG_PREFIX);
+
+  test('the globs are what the workflows declare', () => {
+    assert.equal(CLI_GLOB, 'v*');
+    assert.equal(DOCS_GLOB, 'docs-v*');
+  });
+
+  test('a docs tag does not trigger the CLI workflow', () => {
+    // The whole safety of `v*` rests on a glob being anchored at the start of
+    // the ref name. Asserted, not assumed.
+    assert.equal(tagMatchesGlob(CLI_GLOB, 'docs-v2026.815.0'), false);
+    assert.equal(tagMatchesGlob(CLI_GLOB, 'docs-v2026.1231.9'), false);
+  });
+
+  test('a CLI tag does not trigger the docs workflow', () => {
+    assert.equal(tagMatchesGlob(DOCS_GLOB, 'v2026.815.0'), false);
+    assert.equal(tagMatchesGlob(DOCS_GLOB, 'v2026.1231.9'), false);
+  });
+
+  test('each glob matches its own line', () => {
+    assert.equal(tagMatchesGlob(CLI_GLOB, 'v2026.815.0'), true);
+    assert.equal(tagMatchesGlob(DOCS_GLOB, 'docs-v2026.815.0'), true);
+  });
+
+  test('no tag either line can produce matches both globs', () => {
+    for (const date of ['2026-01-05', '2026-08-15', '2026-10-01', '2026-12-31']) {
+      for (const prefix of [CLI_TAG_PREFIX, DOCS_TAG_PREFIX]) {
+        const { tag } = planVersion({ date, tags: [], tagPrefix: prefix });
+        const matches = [CLI_GLOB, DOCS_GLOB].filter((g) => tagMatchesGlob(g, tag));
+        assert.deepEqual(matches, [tagGlob(prefix)], `${tag} matched ${matches.join(' and ')}`);
+      }
+    }
+  });
+
+  test('the globs in the workflow files are the ones tested here', () => {
+    // Ties the constants above to the YAML. A workflow edited to `**` or to
+    // `*v*` would pass every test above and still cross the lines.
+    const read = (name) =>
+      readFileSync(path.join(import.meta.dirname, '..', '.github', 'workflows', name), 'utf8');
+    assert.match(read('cli-release.yml'), /^\s+-\s+"v\*"\s*$/m);
+    assert.match(read('docs-release.yml'), /^\s+-\s+"docs-v\*"\s*$/m);
+  });
+});
+
+// ---------------------------------------------------------------------------
+
+describe('claimTag — the tag is the lock', () => {
+  /**
+   * An in-memory git. `remote` is the shared truth; `local` is this clone's
+   * view, refreshed only by `fetch`.
+   *
+   * `onReject` is what the race winner had already pushed by the time our push
+   * bounced — which may be more than the one tag we tried for.
+   *
+   * @param {{ remote?: string[], local?: string[], rejectPush?: string[], failCreate?: string[], onReject?: string[] }} [setup]
+   */
+  function fakeGit({
+    remote = [],
+    local = remote,
+    rejectPush = [],
+    failCreate = [],
+    onReject = [],
+  } = {}) {
+    const remoteTags = new Set(remote);
+    const localTags = new Set(local);
+    const reject = new Set(rejectPush);
+    const fail = new Set(failCreate);
+    const calls = [];
+
+    const git = (args) => {
+      calls.push([...args]);
+      const [command, second] = args;
+
+      if (command === 'fetch') {
+        for (const tag of remoteTags) localTags.add(tag);
+        return '';
+      }
+      if (command === 'tag' && second === '--list') {
+        return `${[...localTags].join('\n')}\n`;
+      }
+      if (command === 'tag' && second === '--annotate') {
+        const tag = args.at(-1);
+        if (fail.delete(tag)) throw new Error(`fatal: tag '${tag}' already exists`);
+        localTags.add(tag);
+        return '';
+      }
+      if (command === 'tag' && second === '--delete') {
+        localTags.delete(args.at(-1));
+        return '';
+      }
+      if (command === 'push') {
+        const tag = String(args[2]).replace('refs/tags/', '');
+        if (reject.delete(tag)) {
+          // Losing the race means the winner's tags now exist on the remote.
+          remoteTags.add(tag);
+          for (const claimed of onReject) remoteTags.add(claimed);
+          throw new Error(`! [rejected] ${tag} (already exists)`);
+        }
+        remoteTags.add(tag);
+        return '';
+      }
+      throw new Error(`unexpected git invocation: ${args.join(' ')}`);
+    };
+
+    return { git, calls, remoteTags, localTags };
+  }
+
+  const NEVER_SLEEP = async () => {};
+  const AUG15 = new Date('2026-08-15T12:00:00Z');
+
+  const claim = (fake, extra = {}) =>
+    claimTag({ git: fake.git, now: AUG15, sleep: NEVER_SLEEP, ...extra });
+
+  test('claims N = 0 in a repository with no tags', async () => {
+    const fake = fakeGit();
+    const { plan, attempt } = await claim(fake);
+    assert.equal(plan.tag, 'v2026.815.0');
+    assert.equal(attempt, 1);
+    assert.ok(fake.remoteTags.has('v2026.815.0'), 'the tag reached the remote');
+  });
+
+  test('fetches before computing, so N is counted from the remote', async () => {
+    // The tag exists on the remote but not locally: without the fetch this
+    // would compute N = 0 and the push would bounce.
+    const fake = fakeGit({ remote: ['v2026.815.0'], local: [] });
+    const { plan } = await claim(fake);
+    assert.equal(plan.tag, 'v2026.815.1');
+    assert.deepEqual(fake.calls[0], fetchTagsArgs('origin'));
+  });
+
+  test('pushes an annotated tag by its full refspec', async () => {
+    const fake = fakeGit();
+    await claim(fake, { message: (p) => `msg for ${p.tag}` });
+    const create = fake.calls.find((c) => c[0] === 'tag' && c[1] === '--annotate');
+    const push = fake.calls.find((c) => c[0] === 'push');
+    assert.deepEqual(create, tagCreateArgs('v2026.815.0', 'msg for v2026.815.0'));
+    assert.deepEqual(push, tagPushArgs('v2026.815.0', 'origin'));
+    assert.ok(create.includes('--annotate'), 'a lightweight tag records no author');
+    assert.equal(push[2], 'refs/tags/v2026.815.0');
+  });
+
+  test('a rejected push recomputes N rather than incrementing it', async () => {
+    // The race winner took .0 AND .1 — one run can only claim one, but two
+    // racing runs can land between our read and our push. Merely incrementing
+    // would try .1 and bounce again; recomputing lands on .2.
+    const fake = fakeGit({
+      rejectPush: ['v2026.815.0'],
+      onReject: ['v2026.815.0', 'v2026.815.1'],
+    });
+    const { plan, attempt } = await claim(fake);
+    assert.equal(plan.tag, 'v2026.815.2');
+    assert.equal(attempt, 2);
+  });
+
+  test('a lost race leaves no local tag behind', async () => {
+    const fake = fakeGit({ rejectPush: ['v2026.815.0'] });
+    await claim(fake);
+    assert.deepEqual(
+      fake.calls.filter((c) => c[0] === 'tag' && c[1] === '--delete'),
+      [tagDeleteArgs('v2026.815.0')],
+    );
+    assert.ok(fake.localTags.has('v2026.815.1'), 'only the claimed tag survives locally');
+  });
+
+  test('a stale local-only tag is dropped and the claim retried', async () => {
+    const fake = fakeGit({ failCreate: ['v2026.815.0'] });
+    const { plan, attempt } = await claim(fake);
+    assert.equal(plan.tag, 'v2026.815.0');
+    assert.equal(attempt, 2);
+  });
+
+  test('gives up after the attempt budget rather than looping forever', async () => {
+    const fake = fakeGit({ rejectPush: ['v2026.815.0', 'v2026.815.1'] });
+    await assert.rejects(
+      () => claim(fake, { attempts: 2 }),
+      (error) => {
+        assert.match(error.message, /could not claim a v\* tag after 2 attempts/);
+        assert.match(error.message, /Never delete and re-push a tag/);
+        return true;
+      },
+    );
+    // Every tag still in the clone came back from the remote. Nothing this
+    // process created survives a failed claim, so the next run recomputes N
+    // from the truth rather than from its own debris.
+    for (const tag of fake.localTags) {
+      assert.ok(fake.remoteTags.has(tag), `${tag} was left behind locally`);
+    }
+    assert.deepEqual([...fake.localTags], ['v2026.815.0'], 'only the tag that won remains');
+  });
+
+  test('claims on the docs line without seeing the CLI line', async () => {
+    const fake = fakeGit({ remote: ['v2026.815.0', 'v2026.815.1', 'v2026.815.2'] });
+    const { plan } = await claim(fake, { tagPrefix: DOCS_TAG_PREFIX });
+    assert.equal(plan.tag, 'docs-v2026.815.0');
+  });
+
+  test('claims on the CLI line without seeing the docs line', async () => {
+    const fake = fakeGit({ remote: ['docs-v2026.815.0', 'docs-v2026.815.1'] });
+    const { plan } = await claim(fake, { tagPrefix: CLI_TAG_PREFIX });
+    assert.equal(plan.tag, 'v2026.815.0');
+  });
+
+  test('refuses a missing git runner or a nonsensical budget', async () => {
+    await assert.rejects(() => claimTag({}), TypeError);
+    await assert.rejects(() => claim(fakeGit(), { attempts: 0 }), RangeError);
+  });
+
+  test('the argument builders end options before the tag name', () => {
+    // A tag called `--force` is absurd but a tag read as an option is a bug.
+    assert.equal(tagCreateArgs('x', 'm').at(-2), '--');
+    assert.equal(tagDeleteArgs('x').at(-2), '--');
+    assert.deepEqual(fetchTagsArgs('upstream').at(-1), 'upstream');
+    assert.ok(fetchTagsArgs().includes('--force'), 'a drifted local view must be corrected');
+    assert.ok(fetchTagsArgs().includes('--prune'));
   });
 });
 
