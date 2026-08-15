@@ -235,7 +235,7 @@ wait_for = ["bootstrap:js"]
 # ---------------------------------------------------------------------------
 [tasks.test]
 description = "Rust, JS and repo-script test suites"
-depends = ["test:rust", "test:doc", "test:js", "test:scripts", "test:action"]
+depends = ["test:rust", "test:doc", "test:js", "test:scripts", "test:action", "test:mcp"]
 
 [tasks."test:rust"]
 description = "cargo nextest over the workspace"
@@ -272,6 +272,17 @@ description = "node:test suite for the composite GitHub Action"
 dir = "{{config_root}}/action"
 run = "node --test"
 
+[tasks."test:mcp"]
+description = "node:test suite for the MCP server package"
+# node:test rather than vitest: this package runs under plain Node, not workerd,
+# and test:js is scoped to packages/app.
+dir = "{{config_root}}/packages/mcp"
+run = "node --test"
+
+[tasks."build:mcp"]
+description = "tsc build of the MCP server package"
+run = "pnpm --dir packages/mcp run build"
+
 [tasks.miri]
 description = "Machine-checked proof that prick-core is pure (no I/O, no unsafe)"
 # The pinned nightly is activated for this task only, so `cargo` stays stable
@@ -307,7 +318,7 @@ wait_for = ["bootstrap:js", "build:js", "e2e:install"]
 # ---------------------------------------------------------------------------
 [tasks.build]
 description = "Build the CLI and the Worker bundle"
-depends = ["build:rust", "build:js"]
+depends = ["build:rust", "build:js", "build:mcp"]
 
 [tasks."build:rust"]
 description = "cargo build --release for the host target"

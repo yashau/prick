@@ -1,0 +1,4 @@
+# The root .gitignore ignores `/dist/` at the repository root only. This
+# package emits its own, one level down.
+dist/
+*.tsbuildinfo

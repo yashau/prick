@@ -12,6 +12,7 @@
 packages:
   - packages/app
   - packages/docs
+  - packages/mcp
   - packages/shared
   - packages/npm/prick
   - e2e

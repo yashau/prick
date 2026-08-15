@@ -1,0 +1,57 @@
+{
+  "name": "@yashau/prick-mcp",
+  "version": "0.0.0-dev",
+  "description": "Model Context Protocol server for a self-hosted secrets manager on Cloudflare Workers and D1. Lets an AI coding assistant list and write secrets without a value ever entering the conversation.",
+  "keywords": [
+    "ai",
+    "cloudflare",
+    "mcp",
+    "modelcontextprotocol",
+    "secrets",
+    "secrets-manager"
+  ],
+  "homepage": "https://github.com/yashau/prick/tree/main/packages/mcp",
+  "bugs": {
+    "url": "https://github.com/yashau/prick/issues"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/yashau/prick.git",
+    "directory": "packages/mcp"
+  },
+  "bin": {
+    "prick-mcp": "./dist/main.js"
+  },
+  "files": [
+    "dist/",
+    "README.md"
+  ],
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node --test",
+    "start": "node src/main.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.30.0",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "^26.2.0",
+    "typescript": "catalog:"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

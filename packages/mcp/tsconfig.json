@@ -1,0 +1,32 @@
+{
+  // Typecheck config: the whole package, source and tests, emitting nothing.
+  // `tsconfig.build.json` is the one that emits, and it deliberately sees only
+  // `src/` so that `dist/` never grows a `test/` subtree.
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    // NodeNext, not `bundler`. This package is published to npm and executed by
+    // `node` directly -- there is no bundler between the emitted `dist/` and the
+    // runtime, so the module resolution the compiler models has to be the one
+    // Node actually performs.
+    "module": "NodeNext",
+    "moduleResolution": "nodenext",
+
+    "lib": ["ES2023"],
+    "types": ["node"],
+
+    // Relative imports in this package are written with a `.ts` extension.
+    //
+    // That is what lets ONE set of source files be both (a) run directly by
+    // `node --test` via Node's built-in type stripping -- which does NOT map a
+    // `./foo.js` specifier onto `./foo.ts`, verified against the pinned Node --
+    // and (b) compiled by `tsc`, which rewrites the specifier to `./foo.js` in
+    // the emitted output. Without the rewrite the two are mutually exclusive and
+    // the test suite has to run against `dist/`, i.e. against build output
+    // rather than against source.
+    "allowImportingTsExtensions": true,
+    "rewriteRelativeImportExtensions": true,
+
+    "noEmit": true
+  },
+  "include": ["src/**/*.ts", "test/**/*.ts"]
+}
