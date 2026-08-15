@@ -1,0 +1,18 @@
+[profile.default]
+retries = 0
+fail-fast = false
+slow-timeout = { period = "30s", terminate-after = 4 }
+final-status-level = "slow"
+
+[profile.ci]
+retries = { backoff = "exponential", count = 2, delay = "1s" }
+fail-fast = false
+failure-output = "immediate-final"
+status-level = "retry"
+final-status-level = "flaky"
+
+# miri is 10-100x slower than native; the default timeout would fire constantly.
+[profile.miri]
+retries = 0
+fail-fast = false
+slow-timeout = { period = "120s", terminate-after = 10 }

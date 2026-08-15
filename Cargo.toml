@@ -1,0 +1,86 @@
+[workspace]
+resolver = "3"
+members = ["crates/*", "xtask"]
+# The pnpm side of the repo lives under packages/ and e2e/. Cargo must never
+# walk into it: a stray Cargo.toml in a node_modules tree would otherwise be
+# picked up as a workspace member.
+exclude = ["packages", "e2e", "node_modules", "dist"]
+
+[workspace.package]
+# The git tag is the source of truth for the release version. Everything in the
+# tree reads 0.0.0-dev; scripts/version.mjs stamps the real CalVer immediately
+# before compiling, so env!("CARGO_PKG_VERSION") is correct by construction.
+# Do not hand-edit this into a real version.
+version = "0.0.0-dev"
+edition = "2024"
+rust-version = "1.97"
+license = "MIT"
+repository = "https://github.com/yashau/prick"
+homepage = "https://github.com/yashau/prick"
+authors = ["yashau"]
+
+[workspace.dependencies]
+prk = { path = "crates/prk", version = "0.0.0-dev" }
+prick-api = { path = "crates/prick-api", version = "0.0.0-dev" }
+prick-auth = { path = "crates/prick-auth", version = "0.0.0-dev" }
+prick-core = { path = "crates/prick-core", version = "0.0.0-dev" }
+prick-exec = { path = "crates/prick-exec", version = "0.0.0-dev" }
+
+base64 = "0.22"
+clap = { version = "4.5", features = ["derive", "env"] }
+clap_complete = "4.5"
+clap_mangen = "0.2"
+percent-encoding = "2.3"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# default-features = false keeps the `asm` feature (and its cc/FFI build) off.
+# prick-core must stay FFI-free so `cargo miri test -p prick-core` is meaningful.
+sha2 = { version = "0.10", default-features = false, features = ["std"] }
+thiserror = "2"
+
+[workspace.lints.rust]
+missing_docs = "warn"
+missing_debug_implementations = "warn"
+rust_2018_idioms = { level = "warn", priority = -1 }
+trivial_casts = "warn"
+trivial_numeric_casts = "warn"
+unreachable_pub = "warn"
+unsafe_code = "warn"
+unused_qualifications = "warn"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+
+# stdout/stderr discipline. Only crates/prk/src/output/mod.rs is allowed to
+# write to a stream. This is the mechanism that turns "a secret leaked to
+# stderr" into a build failure rather than something a reviewer has to notice.
+print_stdout = "deny"
+print_stderr = "deny"
+
+# Nothing in a secrets manager gets to abort on a bad assumption.
+dbg_macro = "deny"
+exit = "deny"
+mem_forget = "deny"
+panic = "deny"
+todo = "deny"
+unimplemented = "deny"
+unwrap_used = "deny"
+
+# Pedantic lints that fight the house style rather than improving it.
+module_name_repetitions = "allow"
+must_use_candidate = "allow"
+
+[profile.release]
+lto = "thin"
+codegen-units = 16
+strip = "debuginfo"
+
+# Used for published artefacts only. Slower to build, smaller and faster to run.
+[profile.dist]
+inherits = "release"
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = "symbols"

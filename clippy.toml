@@ -1,0 +1,14 @@
+msrv = "1.97"
+
+# The workspace denies unwrap/expect/panic so that shipped code cannot abort on
+# a bad assumption. Test code is exactly where those are the right tool.
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-panic-in-tests = true
+
+# dbg! is never acceptable, including in tests -- it writes to stderr.
+allow-dbg-in-tests = false
+
+# Proper nouns that clippy::doc_markdown would otherwise demand be written in
+# backticks. ".." keeps clippy's own default list.
+doc-valid-idents = ["CalVer", "OpenAPI", "PowerShell", "SvelteKit", "UUIDv7", ".."]

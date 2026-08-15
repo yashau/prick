@@ -1,0 +1,20 @@
+[package]
+name = "prick-api"
+description = "HTTP client and typed models for the prick API."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+
+# Intentionally light. reqwest (rustls + ring + rustls-platform-verifier) and
+# tokio arrive with the first real request, not before.
+[dependencies]
+prick-core = { workspace = true }
+serde = { workspace = true }
+thiserror = { workspace = true }
+
+[lints]
+workspace = true

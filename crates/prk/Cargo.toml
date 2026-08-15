@@ -1,0 +1,35 @@
+[package]
+name = "prk"
+description = "Command-line client for prick, a self-hosted secrets manager."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+
+# lib + bin: the library exposes the clap `Command` so xtask can generate shell
+# completions and man pages from the single source of truth, and so integration
+# tests can exercise argument parsing without spawning a process.
+[lib]
+name = "prk"
+path = "src/lib.rs"
+
+[[bin]]
+name = "prk"
+path = "src/main.rs"
+
+[dependencies]
+prick-api = { workspace = true }
+prick-auth = { workspace = true }
+prick-core = { workspace = true }
+prick-exec = { workspace = true }
+
+clap = { workspace = true }
+clap_complete = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+
+[lints]
+workspace = true

@@ -1,0 +1,6 @@
+[toolchain]
+# Current stable as of 2026-07-14. Kept in lockstep with the `rust` pin in
+# mise.toml; both must move together.
+channel = "1.97.1"
+components = ["clippy", "rustfmt"]
+profile = "minimal"

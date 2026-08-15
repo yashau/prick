@@ -1,0 +1,11 @@
+edition = "2024"
+max_width = 100
+# Let anything that fits in max_width stay on one line, rather than applying the
+# much narrower per-construct defaults. Keeps small struct literals and match
+# arms compact instead of exploding them across five lines each.
+use_small_heuristics = "Max"
+# Load-bearing on Windows: .gitattributes gives LF on disk, and rustfmt must not
+# reintroduce CRLF when it rewrites a file.
+newline_style = "Unix"
+use_field_init_shorthand = true
+use_try_shorthand = true

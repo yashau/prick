@@ -1,0 +1,40 @@
+[package]
+name = "prick-core"
+description = "Pure logic shared by the prick CLI: scopes, versions, encodings and output formats."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+
+# Every dependency here must be pure Rust and FFI-free. No getrandom, no time,
+# no reqwest, no tokio, nothing with a build script that invokes cc.
+#
+# This is not a style preference: `cargo miri test -p prick-core` is a
+# machine-checked proof that the crate is genuinely pure, and it stops passing
+# the moment someone adds a file read, a clock call or an FFI dependency.
+#
+# Known caveat, verified with
+#   cargo tree -p prick-core -e normal --target <triple> -i libc
+# On aarch64-linux ONLY, sha2 pulls cpufeatures, which pulls libc for a single
+# getauxval call to read HWCAP. No other target family has it, and miri runs on
+# x86_64-linux where the tree is genuinely FFI-free. Re-check this if the sha2
+# major version moves.
+[dependencies]
+base64 = { workspace = true }
+percent-encoding = { workspace = true }
+serde = { workspace = true }
+sha2 = { workspace = true }
+thiserror = { workspace = true }
+
+# serde_json is a test-only dependency here: the crate defines Serialize and
+# Deserialize impls but never picks a wire format. Keeping it out of the
+# shipped tree is what lets `cargo tree -p prick-core` stay small enough to
+# read in one screen.
+[dev-dependencies]
+serde_json = { workspace = true }
+
+[lints]
+workspace = true

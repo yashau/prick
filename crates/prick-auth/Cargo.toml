@@ -1,0 +1,20 @@
+[package]
+name = "prick-auth"
+description = "Cloudflare Access authentication for prick: managed OAuth with PKCE, service tokens, token storage."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+
+# Intentionally light. The CSPRNG, the loopback listener, the browser opener and
+# the 0600 token file all arrive with the first real handshake.
+[dependencies]
+prick-core = { workspace = true }
+serde = { workspace = true }
+thiserror = { workspace = true }
+
+[lints]
+workspace = true

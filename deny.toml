@@ -1,0 +1,95 @@
+# Supply-chain policy for the Rust workspace.
+#
+# The highest-value section here is [sources]. Everything else is hygiene; that
+# one is structural: with `allow-git = []` and `unknown-git = "deny"` it is
+# impossible for a git dependency to reach the release binary, no matter what a
+# transitive crate declares.
+
+[graph]
+# The eight targets the release matrix actually produces. Restricting the graph
+# keeps platform-specific crates from being audited on platforms we never ship.
+targets = [
+    "x86_64-unknown-linux-gnu",
+    "aarch64-unknown-linux-gnu",
+    "x86_64-unknown-linux-musl",
+    "aarch64-unknown-linux-musl",
+    "x86_64-apple-darwin",
+    "aarch64-apple-darwin",
+    "x86_64-pc-windows-msvc",
+    "aarch64-pc-windows-msvc",
+]
+all-features = false
+no-default-features = false
+exclude-dev = false
+
+[output]
+feature-depth = 1
+
+[advisories]
+db-urls = ["https://github.com/rustsec/advisory-db"]
+# A yanked crate in the lockfile is a release blocker, not a warning.
+yanked = "deny"
+# "workspace" flags crates this workspace depends on directly. Raise to "all"
+# to include transitive ones -- worth doing periodically, but as a hard gate it
+# blocks releases on crates nobody here can fix.
+unmaintained = "workspace"
+# Every entry needs a dated justification. An empty list is the goal state.
+ignore = []
+
+[licenses]
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-3.0",
+    "Zlib",
+    "MPL-2.0",
+]
+confidence-threshold = 0.93
+exceptions = []
+
+[licenses.private]
+ignore = true
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+allow-wildcard-paths = true
+external-default-features = "allow"
+
+deny = [
+    # TLS is rustls + ring, everywhere, always. Cross-compiling openssl-sys to
+    # aarch64-musl is the single worst part of Rust release engineering, and a
+    # dynamically linked libssl defeats the point of a static binary.
+    { name = "openssl" },
+    { name = "openssl-sys" },
+    { name = "native-tls" },
+    { name = "hyper-tls" },
+
+    # Superseded rustls versions, so a transitive dependency cannot quietly pin
+    # the client to an older protocol implementation than the one we audit.
+    { name = "rustls", version = "<0.23" },
+]
+
+# Deliberately NOT banned, despite looking like the sort of thing that should
+# be. `rustls-platform-verifier` is required by the plan so that corporate TLS
+# proxies work, and it reaches the OS trust store through `security-framework`
+# on macOS and `schannel` / `windows-sys` on Windows. Those crates are
+# certificate *stores* here, not TLS implementations -- banning them would ban
+# the feature. `openssl-probe` is likewise only a filesystem search for a CA
+# bundle path and links nothing.
+
+skip = []
+skip-tree = []
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+# Empty, and deliberately so. A git dependency has no immutable version, no
+# yank mechanism, no crates.io audit trail, and no cargo-vet coverage. If one is
+# ever genuinely required it gets vendored and reviewed, not allowlisted here.
+allow-git = []

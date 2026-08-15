@@ -1,0 +1,20 @@
+[package]
+name = "prick-exec"
+description = "Child process launch, signal handling and environment guards for `prk run`."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+
+# Intentionally light. `libc` (for the SIGPIPE reset and exec), `which` (for
+# PATHEXT-aware resolution) and the Windows job-object bindings arrive with the
+# first real launch.
+[dependencies]
+prick-core = { workspace = true }
+thiserror = { workspace = true }
+
+[lints]
+workspace = true
