@@ -31,23 +31,23 @@ Running `prk` with no arguments prints help and exits 2.
 Every flag in this table is global: `prk --json secrets list` and
 `prk secrets list --json` are the same command.
 
-| Flag | Short | Value | Default | Environment |
-|---|---|---|---|---|
-| `--json` | | | off | |
-| `--color` | | `auto`, `always`, `never` | `auto` | |
-| `--quiet` | `-q` | | off | |
-| `--verbose` | `-v` | repeatable | off | |
-| `--no-input` | | | off | |
-| `--yes` | `-y` | | off | |
-| `--api-url` | | `<URL>` | | `PRK_API_URL` |
-| `--project` | `-P` | `<PROJECT>` | | `PRK_PROJECT` |
-| `--env` | `-E` | `<ENVIRONMENT>` | | `PRK_ENV` |
-| `--timeout` | | `<SECONDS>` | `30` | |
+| Flag         | Short | Value                     | Default | Environment   |
+| ------------ | ----- | ------------------------- | ------- | ------------- |
+| `--json`     |       |                           | off     |               |
+| `--color`    |       | `auto`, `always`, `never` | `auto`  |               |
+| `--quiet`    | `-q`  |                           | off     |               |
+| `--verbose`  | `-v`  | repeatable                | off     |               |
+| `--no-input` |       |                           | off     |               |
+| `--yes`      | `-y`  |                           | off     |               |
+| `--api-url`  |       | `<URL>`                   |         | `PRK_API_URL` |
+| `--project`  | `-P`  | `<PROJECT>`               |         | `PRK_PROJECT` |
+| `--env`      | `-E`  | `<ENVIRONMENT>`           |         | `PRK_ENV`     |
+| `--timeout`  |       | `<SECONDS>`               | `30`    |               |
 
 Notes:
 
 - **`-P` and `-E` are uppercase.** They are global arguments, so a lowercase
-  `-p`/`-e` would be consumed on *every* subcommand and could never be used for
+  `-p`/`-e` would be consumed on _every_ subcommand and could never be used for
   anything else. Uppercase keeps the lowercase letters free.
 - `--quiet` and `--verbose` are mutually exclusive; giving both is a usage error.
 - `--quiet` suppresses progress and diagnostics. It never suppresses results.
@@ -59,12 +59,12 @@ Notes:
 
 ## Environment variables
 
-| Variable | Fallback | Purpose |
-|---|---|---|
-| `PRK_API_URL` | | Base URL of the Worker |
-| `PRK_PROJECT` | | Default project |
-| `PRK_ENV` | | Default environment |
-| `PRK_ACCESS_CLIENT_ID` | `CF_ACCESS_CLIENT_ID` | Access service token client id |
+| Variable                   | Fallback                  | Purpose                            |
+| -------------------------- | ------------------------- | ---------------------------------- |
+| `PRK_API_URL`              |                           | Base URL of the Worker             |
+| `PRK_PROJECT`              |                           | Default project                    |
+| `PRK_ENV`                  |                           | Default environment                |
+| `PRK_ACCESS_CLIENT_ID`     | `CF_ACCESS_CLIENT_ID`     | Access service token client id     |
 | `PRK_ACCESS_CLIENT_SECRET` | `CF_ACCESS_CLIENT_SECRET` | Access service token client secret |
 
 The first three are wired through the argument parser today. The service-token
@@ -82,13 +82,13 @@ prk login <URL> [--storage <BACKEND>]
 
 Authenticate against a prick server.
 
-| Argument | Meaning |
-|---|---|
-| `<URL>` | Base URL of the server |
+| Argument | Meaning                |
+| -------- | ---------------------- |
+| `<URL>`  | Base URL of the server |
 
-| Flag | Values | Default |
-|---|---|---|
-| `--storage` | `file`, `keyring` | `file` |
+| Flag        | Values            | Default |
+| ----------- | ----------------- | ------- |
+| `--storage` | `file`, `keyring` | `file`  |
 
 `file` writes a token file with mode `0600`, in a directory created with mode
 `0700`. `keyring` uses the OS keyring and is opt-in: it breaks over SSH and in CI
@@ -160,15 +160,15 @@ prk secrets history <KEY>
 prk secrets rollback <KEY> --to <N>
 ```
 
-| Flag | Command | Meaning |
-|---|---|---|
-| `--stdin` | `set` | Read the value from stdin instead of prompting |
-| `--description <TEXT>` | `set` | Human-readable description stored with the secret |
-| `--dry-run` | `upload` | Report what would change and exit without writing |
-| `--expected-rev <REV>` | `upload` | Fail unless the environment is still at this revision |
-| `--format <FORMAT>` | `download` | `env` (default), `shell`, `yaml`, `json` |
+| Flag                    | Command    | Meaning                                                     |
+| ----------------------- | ---------- | ----------------------------------------------------------- |
+| `--stdin`               | `set`      | Read the value from stdin instead of prompting              |
+| `--description <TEXT>`  | `set`      | Human-readable description stored with the secret           |
+| `--dry-run`             | `upload`   | Report what would change and exit without writing           |
+| `--expected-rev <REV>`  | `upload`   | Fail unless the environment is still at this revision       |
+| `--format <FORMAT>`     | `download` | `env` (default), `shell`, `yaml`, `json`                    |
 | `--output <FILE>`, `-o` | `download` | Write to a file instead of stdout, created with mode `0600` |
-| `--to <N>` | `rollback` | The version to restore |
+| `--to <N>`              | `rollback` | The version to restore                                      |
 
 `set` never takes the value as an argument: it would be in the shell history and
 visible in `ps`. The prompt reads the terminal device directly, which is what
@@ -185,8 +185,8 @@ prk run [--allow-unsafe-env] -- <COMMAND> [ARGS...]
 
 Run a command with the environment's secrets in its environment.
 
-| Flag | Meaning |
-|---|---|
+| Flag                 | Meaning                                                                                                  |
+| -------------------- | -------------------------------------------------------------------------------------------------------- |
 | `--allow-unsafe-env` | Permit secrets whose names the dynamic loader or a language runtime interprets before the program starts |
 
 Everything after `--` is the child's, including flags `prk` also understands.
@@ -208,12 +208,12 @@ prk access grant <SUBJECT> --role <ROLE> [--scope <SCOPE>] [--expires-in <DAYS>]
 prk access revoke <SUBJECT> [--scope <SCOPE>]
 ```
 
-| Flag | Values | Default |
-|---|---|---|
-| `--denied` | | off |
-| `--role` | `reader`, `writer`, `admin` | required |
-| `--scope` | `project:environment`, `*` wildcards | `*:*` |
-| `--expires-in` | days | never expires |
+| Flag           | Values                               | Default       |
+| -------------- | ------------------------------------ | ------------- |
+| `--denied`     |                                      | off           |
+| `--role`       | `reader`, `writer`, `admin`          | required      |
+| `--scope`      | `project:environment`, `*` wildcards | `*:*`         |
+| `--expires-in` | days                                 | never expires |
 
 `<SUBJECT>` is an email address or a service token's common name.
 
@@ -262,10 +262,10 @@ nothing else ever goes there. Progress, diagnostics and failures go to
 
 Under `--json` the split is strict:
 
-| Outcome | stdout | stderr |
-|---|---|---|
-| Success | one JSON document | **empty** |
-| Failure | **empty** | one JSON error envelope |
+| Outcome | stdout            | stderr                  |
+| ------- | ----------------- | ----------------------- |
+| Success | one JSON document | **empty**               |
+| Failure | **empty**         | one JSON error envelope |
 
 Both halves matter. Diagnostics on stderr during a successful `--json` run break
 callers that merge the streams; anything on stdout during a failure means
@@ -297,20 +297,20 @@ the ban. A secret reaching stderr is a build failure.
 
 Scripts branch on these, so a value is never reassigned to a different meaning.
 
-| Code | Meaning |
-|---|---|
-| 0 | Success |
-| 1 | Unclassified failure |
-| 2 | Usage error, emitted by the argument parser |
-| 3 | Not authenticated |
-| 4 | Not authorized |
-| 5 | Not found |
-| 6 | Conflict or failed precondition |
-| 7 | Cannot reach the server |
-| 8 | Server error |
-| 9 | Output cannot be represented in the requested format |
-| 10 | Rate limited |
-| 11 | Request rejected as invalid |
+| Code | Meaning                                              |
+| ---- | ---------------------------------------------------- |
+| 0    | Success                                              |
+| 1    | Unclassified failure                                 |
+| 2    | Usage error, emitted by the argument parser          |
+| 3    | Not authenticated                                    |
+| 4    | Not authorized                                       |
+| 5    | Not found                                            |
+| 6    | Conflict or failed precondition                      |
+| 7    | Cannot reach the server                              |
+| 8    | Server error                                         |
+| 9    | Output cannot be represented in the requested format |
+| 10   | Rate limited                                         |
+| 11   | Request rejected as invalid                          |
 
 Source: `crates/prick-core/src/classify.rs`.
 
@@ -318,33 +318,33 @@ Source: `crates/prick-core/src/classify.rs`.
 
 The stable machine-readable codes emitted under `--json`.
 
-| Code | Exit | Retryable | Meaning |
-|---|---|---|---|
-| `UNAUTHENTICATED` | 3 | no | No credentials, or they expired and could not be refreshed |
-| `FORBIDDEN` | 4 | no | Authenticated, but not granted the role this operation needs |
-| `NOT_FOUND` | 5 | no | The project, environment, secret or version does not exist — or is not visible to you |
-| `CONFLICT` | 6 | yes | A concurrent writer won |
-| `PRECONDITION_FAILED` | 6 | no | `--expected-rev` did not match |
-| `VALIDATION_FAILED` | 11 | no | The payload was rejected |
-| `PAYLOAD_TOO_LARGE` | 11 | no | The environment would exceed its secret cap |
-| `RATE_LIMITED` | 10 | yes | The server asked the client to slow down |
-| `SERVER_ERROR` | 8 | yes | The server failed internally |
-| `SERVICE_UNAVAILABLE` | 8 | yes | Up but temporarily refusing work, or no admins configured yet |
-| `UNREACHABLE` | 7 | yes | DNS, connection refused, or no route |
-| `TLS_FAILURE` | 7 | no | The TLS handshake failed — typically a corporate proxy with a private certificate authority |
-| `TIMEOUT` | 7 | yes | The request exceeded `--timeout` |
-| `NOT_A_PRICK_SERVER` | 7 | no | Something answered, but it is not a prick server |
-| `UNKNOWN` | 1 | no | A status with no specific handling |
+| Code                  | Exit | Retryable | Meaning                                                                                     |
+| --------------------- | ---- | --------- | ------------------------------------------------------------------------------------------- |
+| `UNAUTHENTICATED`     | 3    | no        | No credentials, or they expired and could not be refreshed                                  |
+| `FORBIDDEN`           | 4    | no        | Authenticated, but not granted the role this operation needs                                |
+| `NOT_FOUND`           | 5    | no        | The project, environment, secret or version does not exist — or is not visible to you       |
+| `CONFLICT`            | 6    | yes       | A concurrent writer won                                                                     |
+| `PRECONDITION_FAILED` | 6    | no        | `--expected-rev` did not match                                                              |
+| `VALIDATION_FAILED`   | 11   | no        | The payload was rejected                                                                    |
+| `PAYLOAD_TOO_LARGE`   | 11   | no        | The environment would exceed its secret cap                                                 |
+| `RATE_LIMITED`        | 10   | yes       | The server asked the client to slow down                                                    |
+| `SERVER_ERROR`        | 8    | yes       | The server failed internally                                                                |
+| `SERVICE_UNAVAILABLE` | 8    | yes       | Up but temporarily refusing work, or no admins configured yet                               |
+| `UNREACHABLE`         | 7    | yes       | DNS, connection refused, or no route                                                        |
+| `TLS_FAILURE`         | 7    | no        | The TLS handshake failed — typically a corporate proxy with a private certificate authority |
+| `TIMEOUT`             | 7    | yes       | The request exceeded `--timeout`                                                            |
+| `NOT_A_PRICK_SERVER`  | 7    | no        | Something answered, but it is not a prick server                                            |
+| `UNKNOWN`             | 1    | no        | A status with no specific handling                                                          |
 
 Codes raised by the client itself rather than by a response:
 
-| Code | Exit | Meaning |
-|---|---|---|
-| `UNREPRESENTABLE_OUTPUT` | 9 | A value contains a control character the chosen format cannot encode |
-| `INVALID_DOTENV` | 11 | A `.env` document could not be parsed unambiguously |
-| `INVALID_SCOPE` | 11 | A scope string could not be parsed |
-| `UNSAFE_ENVIRONMENT` | 11 | A secret's name is one the loader interprets, and `--allow-unsafe-env` was not given |
-| `NOT_IMPLEMENTED` | 1 | The command exists in the interface but has no implementation yet |
+| Code                     | Exit | Meaning                                                                              |
+| ------------------------ | ---- | ------------------------------------------------------------------------------------ |
+| `UNREPRESENTABLE_OUTPUT` | 9    | A value contains a control character the chosen format cannot encode                 |
+| `INVALID_DOTENV`         | 11   | A `.env` document could not be parsed unambiguously                                  |
+| `INVALID_SCOPE`          | 11   | A scope string could not be parsed                                                   |
+| `UNSAFE_ENVIRONMENT`     | 11   | A secret's name is one the loader interprets, and `--allow-unsafe-env` was not given |
+| `NOT_IMPLEMENTED`        | 1    | The command exists in the interface but has no implementation yet                    |
 
 "Retryable" means retrying the identical request could plausibly succeed. It is
 deliberately conservative: a write that may have partially applied is not listed,

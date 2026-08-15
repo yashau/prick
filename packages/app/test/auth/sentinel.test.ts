@@ -28,7 +28,7 @@ const FORBIDDEN: [name: string, needle: string][] = [
   ["the mock Access hostname", "access-harness"],
   ["an import from the test tree", "test/auth/"],
   ["an import from the harness", "harness/"],
-  ["a vitest import", "from \"vitest\""],
+  ["a vitest import", 'from "vitest"'],
   ["the cloudflare:test module", "cloudflare:test"],
   ["a NODE_ENV test branch", "NODE_ENV"],
   ["an import.meta.vitest block", "import.meta.vitest"],
@@ -59,9 +59,7 @@ describe("the Access harness never ships", () => {
    * ACCESS_CERTS_URL" a silent authentication bypass rather than a 503.
    */
   it("defaults the certs URL to the real Cloudflare Access endpoint", async () => {
-    const { accessCertsUrl, resolveCertsUrl } = await import(
-      "../../src/lib/server/auth/jwks.js"
-    );
+    const { accessCertsUrl, resolveCertsUrl } = await import("../../src/lib/server/auth/jwks.js");
 
     expect(accessCertsUrl("acme")).toBe("https://acme.cloudflareaccess.com/cdn-cgi/access/certs");
     expect(resolveCertsUrl("acme", undefined)).toBe(

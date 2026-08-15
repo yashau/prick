@@ -26,15 +26,15 @@ The architecture is settled and the security-critical layers are written. Large
 parts of the product are not implemented yet, and this documentation says so at
 the point where it matters rather than describing intent as fact.
 
-| Area | State |
-|---|---|
-| Crypto: envelope, AAD, keyring | Implemented |
-| Access JWT verification, claims, authorization, bootstrap | Implemented |
-| Projects and environments (domain layer) | Implemented |
-| Secrets, identities/grants, audit query, rekey (domain layer) | Not implemented |
-| HTTP API | Only `GET /api/v1/health` is mounted |
-| CLI | Interface complete; only `prk version` and `prk completions` do work |
-| Web UI | Route skeleton only |
+| Area                                                          | State                                                                |
+| ------------------------------------------------------------- | -------------------------------------------------------------------- |
+| Crypto: envelope, AAD, keyring                                | Implemented                                                          |
+| Access JWT verification, claims, authorization, bootstrap     | Implemented                                                          |
+| Projects and environments (domain layer)                      | Implemented                                                          |
+| Secrets, identities/grants, audit query, rekey (domain layer) | Not implemented                                                      |
+| HTTP API                                                      | Only `GET /api/v1/health` is mounted                                 |
+| CLI                                                           | Interface complete; only `prk version` and `prk completions` do work |
+| Web UI                                                        | Route skeleton only                                                  |
 
 ## Start here
 

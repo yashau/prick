@@ -133,10 +133,7 @@ describe("an invisible resource is INDISTINGUISHABLE from an absent one", () => 
 
     await expect(getProjectBySlug(as(SCOPED), "acme")).resolves.toMatchObject({ slug: "acme" });
 
-    await rejectsWith(
-      () => updateProject(as(SCOPED), "acme", { name: "Renamed" }),
-      "FORBIDDEN",
-    );
+    await rejectsWith(() => updateProject(as(SCOPED), "acme", { name: "Renamed" }), "FORBIDDEN");
   });
 });
 
@@ -277,7 +274,9 @@ describe("every mutation carries its audit row", () => {
     await createProject(as(ADMIN), { slug: "acme", name: "Acme" });
     await updateProject(as(ADMIN), "acme", { description: "internal codename: bluebird" });
 
-    const row = (await db.select().from(auditLog)).find((entry) => entry.action === "project.update");
+    const row = (await db.select().from(auditLog)).find(
+      (entry) => entry.action === "project.update",
+    );
 
     expect(JSON.parse(row?.detail ?? "{}")).toMatchObject({ fields: ["description"] });
     expect(row?.detail).not.toContain("bluebird");

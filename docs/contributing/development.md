@@ -63,29 +63,29 @@ for a Windows contributor. Node is guaranteed present because mise installed it.
 
 `mise tasks` lists everything. The ones you will use:
 
-| Task | Does |
-|---|---|
-| `mise run dev` | Worker + UI dev server |
-| `mise run fmt` | Format everything in place |
-| `mise run lint` | clippy, `vp lint`, svelte-check, actionlint, zizmor, pinact, typos |
-| `mise run typecheck` | TypeScript across the workspace |
-| `mise run test` | Rust, doc, Worker and script test suites |
-| `mise run miri` | The purity proof for `prick-core` |
-| `mise run e2e` | Playwright |
-| `mise run build` | CLI and Worker bundle |
-| `mise run deny` | Licences, bans, advisories, the git-source ban |
-| `mise run ci` | **Exact mirror of CI.** Run before opening a pull request |
+| Task                 | Does                                                               |
+| -------------------- | ------------------------------------------------------------------ |
+| `mise run dev`       | Worker + UI dev server                                             |
+| `mise run fmt`       | Format everything in place                                         |
+| `mise run lint`      | clippy, `vp lint`, svelte-check, actionlint, zizmor, pinact, typos |
+| `mise run typecheck` | TypeScript across the workspace                                    |
+| `mise run test`      | Rust, doc, Worker and script test suites                           |
+| `mise run miri`      | The purity proof for `prick-core`                                  |
+| `mise run e2e`       | Playwright                                                         |
+| `mise run build`     | CLI and Worker bundle                                              |
+| `mise run deny`      | Licences, bans, advisories, the git-source ban                     |
+| `mise run ci`        | **Exact mirror of CI.** Run before opening a pull request          |
 
 `depends` fans out in parallel, and `sources`/`outputs` give content-hash
 skipping, so a repeat run is cheap.
 
 ## Who owns what
 
-| Owns | Scope |
-|---|---|
-| mise | Rust, Node, pnpm, the Rust dev tools, and Vite+ itself. The only thing a contributor installs |
-| Vite+ (`vp`) | The JS-side workflow for `packages/**` only |
-| pnpm | Package management. `vp` wraps whatever the lockfile indicates |
+| Owns         | Scope                                                                                         |
+| ------------ | --------------------------------------------------------------------------------------------- |
+| mise         | Rust, Node, pnpm, the Rust dev tools, and Vite+ itself. The only thing a contributor installs |
+| Vite+ (`vp`) | The JS-side workflow for `packages/**` only                                                   |
+| pnpm         | Package management. `vp` wraps whatever the lockfile indicates                                |
 
 `vp env` is never used. mise pins Node, and two version managers fighting over it
 is the exact failure mode mise was chosen to prevent.
@@ -127,7 +127,7 @@ otherwise.
 
 These are not mechanically checked.
 
-1. **Never log, print or embed a secret value.** Error messages name the *key*,
+1. **Never log, print or embed a secret value.** Error messages name the _key_,
    never the value.
 2. **Never return a secret value from a SvelteKit `+*.server.ts` load or form
    action.** SvelteKit serialises those into the page payload. Values reach the
@@ -142,18 +142,18 @@ These are not mechanically checked.
 
 ## Where things live
 
-| Concern | Path |
-|---|---|
-| Pure logic: parsing, formatting, escaping | `crates/prick-core/` |
-| HTTP client, error classification | `crates/prick-api/` |
-| Access OAuth, token storage | `crates/prick-auth/` |
-| Process spawn, signals | `crates/prick-exec/` |
-| CLI commands and rendering | `crates/prk/` |
-| Domain logic, transport-agnostic | `packages/app/src/lib/server/core/` |
-| Crypto: envelope, AAD, keyring | `packages/app/src/lib/server/crypto/` |
-| Access JWT verification | `packages/app/src/lib/server/auth/` |
-| Drizzle schema | `packages/app/src/lib/server/db/schema.ts` |
-| UI routes | `packages/app/src/routes/` |
+| Concern                                   | Path                                       |
+| ----------------------------------------- | ------------------------------------------ |
+| Pure logic: parsing, formatting, escaping | `crates/prick-core/`                       |
+| HTTP client, error classification         | `crates/prick-api/`                        |
+| Access OAuth, token storage               | `crates/prick-auth/`                       |
+| Process spawn, signals                    | `crates/prick-exec/`                       |
+| CLI commands and rendering                | `crates/prk/`                              |
+| Domain logic, transport-agnostic          | `packages/app/src/lib/server/core/`        |
+| Crypto: envelope, AAD, keyring            | `packages/app/src/lib/server/crypto/`      |
+| Access JWT verification                   | `packages/app/src/lib/server/auth/`        |
+| Drizzle schema                            | `packages/app/src/lib/server/db/schema.ts` |
+| UI routes                                 | `packages/app/src/routes/`                 |
 
 ## Database migrations
 
@@ -163,7 +163,7 @@ Edit the Drizzle schema, then generate. Never hand-edit generated SQL.
 pnpm --dir packages/app run db:generate
 ```
 
-**Migrations are additive only.** They are applied *before* the new code deploys,
+**Migrations are additive only.** They are applied _before_ the new code deploys,
 so a release must tolerate the previous version's code running against the new
 schema. A destructive change takes three releases: add nullable and backfill,
 then require, then drop.

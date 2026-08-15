@@ -73,7 +73,7 @@ prk env create production --project api
 prk env rm staging --project api
 ```
 
-There is no rename and no reparent. A rename of the *display name* is a normal
+There is no rename and no reparent. A rename of the _display name_ is a normal
 update; changing which project an environment belongs to is not an operation
 that exists.
 
@@ -90,11 +90,11 @@ the project. The price of that choice is that the immutability has to hold. See
 A project or environment has both a **slug** — the URL-safe identifier the CLI
 and the API address it by — and a **name**, which is free text.
 
-| Field | Rule | Source |
-|---|---|---|
-| Slug | Lowercase letters and digits, single interior hyphens. No leading or trailing hyphen. 1–64 characters | `packages/shared/src/primitives.ts` |
-| Name | 1–128 characters, free text | `packages/shared/src/primitives.ts` |
-| Description | Up to 1024 characters, or null | `packages/shared/src/limits.ts` |
+| Field       | Rule                                                                                                  | Source                              |
+| ----------- | ----------------------------------------------------------------------------------------------------- | ----------------------------------- |
+| Slug        | Lowercase letters and digits, single interior hyphens. No leading or trailing hyphen. 1–64 characters | `packages/shared/src/primitives.ts` |
+| Name        | 1–128 characters, free text                                                                           | `packages/shared/src/primitives.ts` |
+| Description | Up to 1024 characters, or null                                                                        | `packages/shared/src/limits.ts`     |
 
 Slugs are unique: globally for projects, and within a project for environments.
 
@@ -123,12 +123,12 @@ the current revision, re-apply your change, and try again.
 
 ## Failure modes
 
-| Symptom | Meaning |
-|---|---|
+| Symptom                                     | Meaning                                                                                                                                                                               |
+| ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `NOT_FOUND` on a project you believe exists | It does not exist **or** it is not visible to you. The API deliberately does not distinguish the two, because a 403/404 split turns the API into an oracle for which names are in use |
-| `CONFLICT` on create | The slug is already taken at that scope |
-| `PRECONDITION_FAILED` | `--expected-rev` did not match |
-| `VALIDATION_FAILED` | The slug or name broke a rule in the table above |
+| `CONFLICT` on create                        | The slug is already taken at that scope                                                                                                                                               |
+| `PRECONDITION_FAILED`                       | `--expected-rev` did not match                                                                                                                                                        |
+| `VALIDATION_FAILED`                         | The slug or name broke a rule in the table above                                                                                                                                      |
 
 ## Next
 

@@ -83,9 +83,7 @@ async function loadSnapshot(ctx: CoreContext): Promise<AuthorizationSnapshot> {
     })
     .from(identities)
     .leftJoin(grants, eq(grants.identityId, identities.id))
-    .where(
-      and(eq(identities.kind, ctx.actor.kind), eq(identities.subject, ctx.actor.subject)),
-    );
+    .where(and(eq(identities.kind, ctx.actor.kind), eq(identities.subject, ctx.actor.subject)));
 
   const bootstrapAdmin = isBootstrapAdmin(ctx.config, ctx.actor.subject);
 
@@ -177,7 +175,10 @@ export function resolveAuthorization(ctx: CoreContext): Promise<AuthorizationSna
   return pending;
 }
 
-async function projectOfEnvironment(ctx: CoreContext, environmentId: string): Promise<string | null> {
+async function projectOfEnvironment(
+  ctx: CoreContext,
+  environmentId: string,
+): Promise<string | null> {
   let memo = environmentProjects.get(ctx);
   if (memo === undefined) {
     memo = new Map();
@@ -233,8 +234,7 @@ export async function resolveEffectiveRole(ctx: CoreContext, scope: Scope): Prom
 
   // Present when the caller already loaded the environment row -- which is every
   // caller in `core` -- and looked up and memoised for this request when not.
-  const projectId =
-    scope.projectId ?? (await projectOfEnvironment(ctx, scope.environmentId));
+  const projectId = scope.projectId ?? (await projectOfEnvironment(ctx, scope.environmentId));
 
   const fromProject = projectId === null ? null : (snapshot.byProject.get(projectId) ?? null);
 
@@ -244,11 +244,7 @@ export async function resolveEffectiveRole(ctx: CoreContext, scope: Scope): Prom
   );
 }
 
-export async function can(
-  ctx: CoreContext,
-  scope: Scope,
-  required: Role,
-): Promise<boolean> {
+export async function can(ctx: CoreContext, scope: Scope, required: Role): Promise<boolean> {
   const role = await resolveEffectiveRole(ctx, scope);
   return role !== null && ROLE_RANK[role] >= ROLE_RANK[required];
 }
@@ -263,11 +259,7 @@ export async function can(
  * hex string; nobody maps `e367826f93b8d71185e03fe518aff3b4.access` to "staging
  * deploy" by looking at it. The denial row is the introduction.
  */
-export async function assertCan(
-  ctx: CoreContext,
-  scope: Scope,
-  required: Role,
-): Promise<void> {
+export async function assertCan(ctx: CoreContext, scope: Scope, required: Role): Promise<void> {
   if (await can(ctx, scope, required)) return;
 
   const snapshot = await resolveAuthorization(ctx);
@@ -281,7 +273,7 @@ export async function assertCan(
   throw new PrickError("FORBIDDEN", "You do not have permission to perform this action.", {
     hint: snapshot.disabled
       ? "This identity is disabled. An administrator must re-enable it."
-      : "An administrator can grant access from the Access screen; your subject now appears under \"Seen but not granted\".",
+      : 'An administrator can grant access from the Access screen; your subject now appears under "Seen but not granted".',
     detail: { required, scope: scope.type },
   });
 }

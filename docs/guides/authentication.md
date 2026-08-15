@@ -18,9 +18,9 @@ Worker and attached an Access application to its hostname, start with the
 There are two kinds of credential and three ways to supply the configuration
 around them.
 
-| Credential | Who uses it | How it is obtained |
-|---|---|---|
-| Access SSO session | People | `prk login <url>`, browser round trip |
+| Credential           | Who uses it                 | How it is obtained                                                         |
+| -------------------- | --------------------------- | -------------------------------------------------------------------------- |
+| Access SSO session   | People                      | `prk login <url>`, browser round trip                                      |
 | Access service token | CI, cron, anything headless | Created in the Cloudflare dashboard, supplied as two environment variables |
 
 prick issues no credentials of its own. There are no API keys to rotate and no
@@ -67,10 +67,10 @@ Refresh is meant to be transparent, so the short Access session is invisible.
 prk login https://prick.example.com --storage file
 ```
 
-| Backend | Default | Notes |
-|---|---|---|
-| `file` | Yes | A file with mode `0600` in a directory with mode `0700`. Works over SSH, in containers and in CI |
-| `keyring` | No | The OS keyring. Opt-in only |
+| Backend   | Default | Notes                                                                                            |
+| --------- | ------- | ------------------------------------------------------------------------------------------------ |
+| `file`    | Yes     | A file with mode `0600` in a directory with mode `0700`. Works over SSH, in containers and in CI |
+| `keyring` | No      | The OS keyring. Opt-in only                                                                      |
 
 The keyring is not the default deliberately. Over SSH there is no session keyring
 to talk to, and on macOS the Keychain ACL binds to the binary's code signature,
@@ -109,9 +109,9 @@ Two variables carry an Access service token. prick reads its own names first,
 then falls back to the names `cloudflared` uses, so CI that already has the
 Cloudflare pair set works with no changes.
 
-| Variable | Fallback | Purpose |
-|---|---|---|
-| `PRK_ACCESS_CLIENT_ID` | `CF_ACCESS_CLIENT_ID` | Service token client id |
+| Variable                   | Fallback                  | Purpose                     |
+| -------------------------- | ------------------------- | --------------------------- |
+| `PRK_ACCESS_CLIENT_ID`     | `CF_ACCESS_CLIENT_ID`     | Service token client id     |
 | `PRK_ACCESS_CLIENT_SECRET` | `CF_ACCESS_CLIENT_SECRET` | Service token client secret |
 
 They are sent as the request headers `CF-Access-Client-Id` and
@@ -133,11 +133,11 @@ attaches them is still a skeleton, so setting them has no effect in this build.
 
 ### Everything else
 
-| Variable | Equivalent flag | Meaning |
-|---|---|---|
-| `PRK_API_URL` | `--api-url` | Base URL of the Worker |
-| `PRK_PROJECT` | `-P`, `--project` | Project to operate on |
-| `PRK_ENV` | `-E`, `--env` | Environment to operate on |
+| Variable      | Equivalent flag   | Meaning                   |
+| ------------- | ----------------- | ------------------------- |
+| `PRK_API_URL` | `--api-url`       | Base URL of the Worker    |
+| `PRK_PROJECT` | `-P`, `--project` | Project to operate on     |
+| `PRK_ENV`     | `-E`, `--env`     | Environment to operate on |
 
 These three are wired through clap today, so they parse and resolve correctly
 even though the commands that would use them do not run yet.
@@ -203,22 +203,22 @@ rather than trusting that Access ran — see
 
 Claims then resolve to an identity:
 
-| Claims | Identity |
-|---|---|
-| `sub` non-empty **and** `email` present | `user`, subject is the lower-cased email |
-| `common_name` present **and** `sub` empty | `service`, subject is the `common_name` |
-| Both `email` and `common_name` | Rejected — Access does not issue that shape |
-| Neither | Rejected — nothing to key a grant on |
+| Claims                                    | Identity                                    |
+| ----------------------------------------- | ------------------------------------------- |
+| `sub` non-empty **and** `email` present   | `user`, subject is the lower-cased email    |
+| `common_name` present **and** `sub` empty | `service`, subject is the `common_name`     |
+| Both `email` and `common_name`            | Rejected — Access does not issue that shape |
+| Neither                                   | Rejected — nothing to key a grant on        |
 
 ## Common failures
 
-| Symptom | Cause | Fix |
-|---|---|---|
-| `UNAUTHENTICATED`, exit 3 | No credential, or an expired one | `prk login <url>`, or set the service-token variables |
-| `FORBIDDEN`, exit 4 | Authenticated, but no grant covers this scope | Ask an admin for a grant; `prk whoami` shows the subject to grant |
-| `NOT_A_PRICK_SERVER`, exit 7 | The URL answered but is not this Worker | Point `--api-url` at the Worker's hostname, not at a proxy |
-| `SERVICE_UNAVAILABLE` with `NO_ADMINS_CONFIGURED` | Nobody can administer this install | Set `BOOTSTRAP_ADMINS` and redeploy |
-| Login warns that `/health` returned 200 unauthenticated | Access is not attached to the hostname | Fix the Access application before storing anything |
+| Symptom                                                 | Cause                                         | Fix                                                               |
+| ------------------------------------------------------- | --------------------------------------------- | ----------------------------------------------------------------- |
+| `UNAUTHENTICATED`, exit 3                               | No credential, or an expired one              | `prk login <url>`, or set the service-token variables             |
+| `FORBIDDEN`, exit 4                                     | Authenticated, but no grant covers this scope | Ask an admin for a grant; `prk whoami` shows the subject to grant |
+| `NOT_A_PRICK_SERVER`, exit 7                            | The URL answered but is not this Worker       | Point `--api-url` at the Worker's hostname, not at a proxy        |
+| `SERVICE_UNAVAILABLE` with `NO_ADMINS_CONFIGURED`       | Nobody can administer this install            | Set `BOOTSTRAP_ADMINS` and redeploy                               |
+| Login warns that `/health` returned 200 unauthenticated | Access is not attached to the hostname        | Fix the Access application before storing anything                |
 
 ## Next
 

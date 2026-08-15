@@ -15,11 +15,11 @@ history.
 
 `YYYY.MMDD.N` — for example `2026.815.0`.
 
-| Part | Rule |
-|---|---|
-| `YYYY` | Year, UTC |
+| Part   | Rule                                                                             |
+| ------ | -------------------------------------------------------------------------------- |
+| `YYYY` | Year, UTC                                                                        |
 | `MMDD` | Month and day with **no leading zeros**. 5 January is `105`, 1 October is `1001` |
-| `N` | Zero-based count of tags already taken today |
+| `N`    | Zero-based count of tags already taken today                                     |
 
 It is valid semver, and it is strictly monotonic within a year:
 `105 < 930 < 1001 < 1231`.
@@ -64,12 +64,12 @@ Releases are cut through mise tasks, which dispatch the release workflow with
 `gh`. They must **not** create the tag locally: the workflow's `plan` job pushes
 it, and a hand-made tag would collide with the lock it depends on.
 
-| Task | Does |
-|---|---|
-| `mise run release:preview` | Print the version and tag the next release would take. Read-only, never prompts, works at zero tags |
-| `mise run release:dry` | Dispatch with `dry_run=true` — builds all eight binaries and stages the nine npm packages, publishes nothing |
-| `mise run release:cut` | Tag, build, publish, create the GitHub Release |
-| `mise run release:status` | Follow the latest run. Read-only |
+| Task                       | Does                                                                                                         |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| `mise run release:preview` | Print the version and tag the next release would take. Read-only, never prompts, works at zero tags          |
+| `mise run release:dry`     | Dispatch with `dry_run=true` — builds all eight binaries and stages the nine npm packages, publishes nothing |
+| `mise run release:cut`     | Tag, build, publish, create the GitHub Release                                                               |
+| `mise run release:status`  | Follow the latest run. Read-only                                                                             |
 
 ```bash
 mise run release:preview
@@ -107,11 +107,11 @@ Computes the version and pushes the tag, which claims it.
 Six runner legs produce eight artefacts; macOS and Windows each build two targets
 in one job.
 
-| Target family | Targets |
-|---|---|
-| Linux | x64-gnu, x64-musl, arm64-gnu, arm64-musl |
-| macOS | arm64, x64 |
-| Windows | x64-msvc, arm64-msvc |
+| Target family | Targets                                  |
+| ------------- | ---------------------------------------- |
+| Linux         | x64-gnu, x64-musl, arm64-gnu, arm64-musl |
+| macOS         | arm64, x64                               |
+| Windows       | x64-msvc, arm64-msvc                     |
 
 The matrix is hand-rolled, with no `cross`: free arm64 runners exist now, and
 native builds remove Docker, qemu and image pinning. `+crt-static` on
@@ -197,11 +197,11 @@ After that no token exists to leak, and provenance is automatic — drop
 Deployment is a separate workflow from the release, and it is not tied to a
 version.
 
-| Event | What happens |
-|---|---|
-| Push to `main` | Guard, migrations, production deploy |
+| Event                                 | What happens                                              |
+| ------------------------------------- | --------------------------------------------------------- |
+| Push to `main`                        | Guard, migrations, production deploy                      |
 | Pull request from the same repository | Guard, migrations, `versions upload` with a preview alias |
-| Pull request from a fork | Guard only |
+| Pull request from a fork              | Guard only                                                |
 
 The **guard** job runs for every event, needs no secrets, and blocks both deploy
 jobs. It asserts that `workers_dev` and `preview_urls` are explicitly `false` in

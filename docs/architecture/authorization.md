@@ -48,7 +48,7 @@ and the subject can appear in the "seen but not granted" list.
 
 The snapshot is memoised per request in a `WeakMap` keyed by the context object —
 not stored as a field on the context, so it cannot outlive the request and cannot
-be serialised into anything. The in-flight *promise* is what is cached, so two
+be serialised into anything. The in-flight _promise_ is what is cached, so two
 concurrent checks on one request share a single query rather than racing to issue
 two.
 
@@ -111,7 +111,7 @@ oracle for which project names are in use, which is information the actor was
 denied by design. The helper that constructs the error takes no argument that
 could distinguish the two cases — the shape is the enforcement, so a handler
 cannot leak the difference by picking the wrong overload under time pressure. It
-names the *kind* of thing ("project") and never the identifier that was looked
+names the _kind_ of thing ("project") and never the identifier that was looked
 up.
 
 ## Bootstrap
@@ -129,7 +129,7 @@ which a printed credential is valid and unrevoked.
 
 On the first authenticated request from a listed address, the implicit admin
 self-heals into a real `grants` row, and the grant insert and its audit row ride
-in the same transaction. The grant is recorded as created by the *system*, not by
+in the same transaction. The grant is recorded as created by the _system_, not by
 the person it promotes: "alice@example.com granted alice@example.com global
 admin" would be a false account of how that row came to exist.
 
@@ -141,16 +141,16 @@ than moving the audit outside the transaction so it could be made conditional.
 
 ### The two guards
 
-| Condition | Response |
-|---|---|
+| Condition                                                     | Response                   |
+| ------------------------------------------------------------- | -------------------------- |
 | `BOOTSTRAP_ADMINS` empty **and** no usable global admin grant | `503 NO_ADMINS_CONFIGURED` |
-| Revoking the last global admin grant while the var is empty | `409 LAST_ADMIN` |
+| Revoking the last global admin grant while the var is empty   | `409 LAST_ADMIN`           |
 
 "Usable" excludes grants belonging to disabled identities and grants that have
 expired. Counting them would report an install as administrable when nobody can
 actually log in and fix it.
 
-If the var *is* set, revoking the last grant is allowed, because the recovery
+If the var _is_ set, revoking the last grant is allowed, because the recovery
 path exists: edit the var and redeploy.
 
 ### Disabled outranks everything

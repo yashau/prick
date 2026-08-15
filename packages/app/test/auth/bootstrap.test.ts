@@ -106,10 +106,12 @@ describe("self-heal", () => {
   it("is idempotent: a second request creates nothing", async () => {
     const config = testConfig({ bootstrapAdmins: [ADMIN] });
 
-    expect((await selfHealBootstrapGrant(requestContext(db, userActor(ADMIN), { config }))).granted)
-      .toBe(true);
-    expect((await selfHealBootstrapGrant(requestContext(db, userActor(ADMIN), { config }))).granted)
-      .toBe(false);
+    expect(
+      (await selfHealBootstrapGrant(requestContext(db, userActor(ADMIN), { config }))).granted,
+    ).toBe(true);
+    expect(
+      (await selfHealBootstrapGrant(requestContext(db, userActor(ADMIN), { config }))).granted,
+    ).toBe(false);
 
     expect(await db.select().from(grants)).toHaveLength(1);
     expect(await db.select().from(auditLog)).toHaveLength(1);
@@ -168,9 +170,7 @@ describe("self-heal", () => {
 describe("upsertIdentity", () => {
   it("creates a row and then touches last_seen_at without duplicating it", async () => {
     const first = await upsertIdentity(requestContext(db, userActor(ADMIN)));
-    const second = await upsertIdentity(
-      requestContext(db, userActor(ADMIN), { now: NOW + 5_000 }),
-    );
+    const second = await upsertIdentity(requestContext(db, userActor(ADMIN), { now: NOW + 5_000 }));
 
     expect(second).toBe(first);
 
@@ -182,7 +182,12 @@ describe("upsertIdentity", () => {
   it("keeps a user and a service token with the same subject apart", async () => {
     await upsertIdentity(requestContext(db, userActor("shared-name")));
     await upsertIdentity(
-      requestContext(db, { kind: "service", subject: "shared-name", identityId: null, bootstrap: false }),
+      requestContext(db, {
+        kind: "service",
+        subject: "shared-name",
+        identityId: null,
+        bootstrap: false,
+      }),
     );
 
     expect(await db.select().from(identities)).toHaveLength(2);

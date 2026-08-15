@@ -65,7 +65,12 @@ export const BIN_BASENAME = 'prk';
  * npm case. Emitting it costs nothing and helps the resolver that does read it.
  */
 export const PLATFORMS = [
-  { name: '@yashau/prick-darwin-arm64', target: 'aarch64-apple-darwin', os: 'darwin', cpu: 'arm64' },
+  {
+    name: '@yashau/prick-darwin-arm64',
+    target: 'aarch64-apple-darwin',
+    os: 'darwin',
+    cpu: 'arm64',
+  },
   { name: '@yashau/prick-darwin-x64', target: 'x86_64-apple-darwin', os: 'darwin', cpu: 'x64' },
   {
     name: '@yashau/prick-linux-arm64-gnu',
@@ -270,15 +275,7 @@ function writeJson(file, value) {
  *   log: (s: string) => void,
  * }} options
  */
-export function renderPackages({
-  version,
-  binDir,
-  outDir,
-  templateDir,
-  root,
-  allowMissing,
-  log,
-}) {
+export function renderPackages({ version, binDir, outDir, templateDir, root, allowMissing, log }) {
   assertVersion(version);
 
   const templateManifestPath = path.join(templateDir, 'package.json');
@@ -441,8 +438,7 @@ export function main(argv, io = {}) {
   return 0;
 }
 
-const invokedDirectly =
-  process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
+const invokedDirectly = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
 
 if (invokedDirectly) {
   try {

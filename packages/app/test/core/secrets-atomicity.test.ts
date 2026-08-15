@@ -1,10 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 
-import {
-  exportSecrets,
-  listVersions,
-  writeSecrets,
-} from "../../src/lib/server/core/secrets.js";
+import { exportSecrets, listVersions, writeSecrets } from "../../src/lib/server/core/secrets.js";
 import type { Keyring } from "../../src/lib/server/crypto/index.js";
 import { createDatabase, type Database } from "../../src/lib/server/db/client.js";
 import { environments } from "../../src/lib/server/db/schema.js";
@@ -390,12 +386,10 @@ describe("per-key version races", () => {
 
     await rejectsWith(
       () =>
-        writeSecrets(
-          secretsContext(racing, userActor(ADMIN), keyring),
-          "acme",
-          "prod",
-          { mode: "merge", set: { TOKEN: "v4" } },
-        ),
+        writeSecrets(secretsContext(racing, userActor(ADMIN), keyring), "acme", "prod", {
+          mode: "merge",
+          set: { TOKEN: "v4" },
+        }),
       "VERSION_CONFLICT",
     );
 

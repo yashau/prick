@@ -71,7 +71,11 @@ describe('the workflow dispatch arguments', () => {
     for (const args of [workflowRunArgs(true), workflowRunArgs(false)]) {
       const joined = args.join(' ');
       for (const forbidden of ['tag', 'push', 'ref']) {
-        assert.doesNotMatch(joined, new RegExp(`\\b${forbidden}\\b`), `${joined} must not ${forbidden}`);
+        assert.doesNotMatch(
+          joined,
+          new RegExp(`\\b${forbidden}\\b`),
+          `${joined} must not ${forbidden}`,
+        );
       }
     }
   });
@@ -206,16 +210,19 @@ describe('cut', () => {
 });
 
 describe('status', () => {
-  const run = (extra) => JSON.stringify([{
-    databaseId: 42,
-    status: 'completed',
-    conclusion: 'success',
-    displayTitle: 'Release',
-    headBranch: 'main',
-    createdAt: '2026-08-15T12:00:00Z',
-    url: 'https://github.com/yashau/prick/actions/runs/42',
-    ...extra,
-  }]);
+  const run = (extra) =>
+    JSON.stringify([
+      {
+        databaseId: 42,
+        status: 'completed',
+        conclusion: 'success',
+        displayTitle: 'Release',
+        headBranch: 'main',
+        createdAt: '2026-08-15T12:00:00Z',
+        url: 'https://github.com/yashau/prick/actions/runs/42',
+        ...extra,
+      },
+    ]);
 
   test('reports a completed successful run and watches nothing', async () => {
     const h = harness({ ghResult: run() });

@@ -1,7 +1,15 @@
 // scripts/npm-package.test.mjs — node:test + node:assert only.
 
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test, { describe } from 'node:test';
@@ -29,7 +37,11 @@ const TEMPLATE = {
   license: 'MIT',
   bin: { prk: 'bin/prk.js' },
   files: ['bin/'],
-  repository: { type: 'git', url: 'git+https://github.com/yashau/prick.git', directory: 'packages/npm/prick' },
+  repository: {
+    type: 'git',
+    url: 'git+https://github.com/yashau/prick.git',
+    directory: 'packages/npm/prick',
+  },
   homepage: 'https://github.com/yashau/prick',
   bugs: { url: 'https://github.com/yashau/prick/issues' },
   dependencies: { 'detect-libc': '^2.1.2' },
@@ -91,8 +103,14 @@ describe('platform manifests', () => {
   });
 
   test('carry libc only on linux', () => {
-    const gnu = platformManifest(PLATFORMS.find((p) => p.name.endsWith('linux-x64-gnu')), VERSION);
-    const win = platformManifest(PLATFORMS.find((p) => p.os === 'win32'), VERSION);
+    const gnu = platformManifest(
+      PLATFORMS.find((p) => p.name.endsWith('linux-x64-gnu')),
+      VERSION,
+    );
+    const win = platformManifest(
+      PLATFORMS.find((p) => p.os === 'win32'),
+      VERSION,
+    );
     assert.deepEqual(gnu.libc, ['glibc']);
     assert.equal('libc' in win, false);
   });
@@ -143,8 +161,13 @@ describe('the parent manifest', () => {
 
   test('assertTemplateMatchesPlatforms catches drift in either direction', () => {
     assert.doesNotThrow(() => assertTemplateMatchesPlatforms(TEMPLATE));
-    const extra = { optionalDependencies: { ...TEMPLATE.optionalDependencies, '@yashau/prick-aix-ppc64': '0' } };
-    assert.throws(() => assertTemplateMatchesPlatforms(extra), /disagree about the platform packages/);
+    const extra = {
+      optionalDependencies: { ...TEMPLATE.optionalDependencies, '@yashau/prick-aix-ppc64': '0' },
+    };
+    assert.throws(
+      () => assertTemplateMatchesPlatforms(extra),
+      /disagree about the platform packages/,
+    );
     assert.throws(() => assertTemplateMatchesPlatforms({}), /disagree about the platform packages/);
   });
 });
@@ -177,7 +200,10 @@ describe('binary lookup', () => {
   });
 
   test('returns null when nothing matches', () => {
-    assert.equal(findBinary(mkdtempSync(path.join(os.tmpdir(), 'prick-empty-')), PLATFORMS[0]), null);
+    assert.equal(
+      findBinary(mkdtempSync(path.join(os.tmpdir(), 'prick-empty-')), PLATFORMS[0]),
+      null,
+    );
   });
 });
 
@@ -202,7 +228,12 @@ describe('rendering the full set', () => {
   test('emits exactly nine package directories', () => {
     const f = fixture();
     try {
-      const emitted = renderPackages({ ...f, version: VERSION, allowMissing: false, log: () => {} });
+      const emitted = renderPackages({
+        ...f,
+        version: VERSION,
+        allowMissing: false,
+        log: () => {},
+      });
       assert.equal(emitted.length, 9);
       for (const p of PLATFORMS) {
         assert.ok(existsSync(path.join(f.outDir, packageDirName(p.name), 'package.json')));
@@ -234,7 +265,9 @@ describe('rendering the full set', () => {
     try {
       renderPackages({ ...f, version: VERSION, allowMissing: false, log: () => {} });
       for (const p of PLATFORMS.filter((x) => x.os !== 'win32')) {
-        const mode = statSync(path.join(f.outDir, packageDirName(p.name), 'bin', binaryName(p))).mode;
+        const mode = statSync(
+          path.join(f.outDir, packageDirName(p.name), 'bin', binaryName(p)),
+        ).mode;
         assert.equal(mode & 0o111, 0o111, `${p.name} is not executable`);
       }
     } finally {
@@ -308,8 +341,14 @@ describe('rendering the full set', () => {
   test('a template that disagrees with PLATFORMS is rejected before anything is written', () => {
     const f = fixture();
     try {
-      const broken = { ...TEMPLATE, optionalDependencies: { '@yashau/prick-darwin-x64': '0.0.0-dev' } };
-      writeFileSync(path.join(f.templateDir, 'package.json'), `${JSON.stringify(broken, null, 2)}\n`);
+      const broken = {
+        ...TEMPLATE,
+        optionalDependencies: { '@yashau/prick-darwin-x64': '0.0.0-dev' },
+      };
+      writeFileSync(
+        path.join(f.templateDir, 'package.json'),
+        `${JSON.stringify(broken, null, 2)}\n`,
+      );
       assert.throws(
         () => renderPackages({ ...f, version: VERSION, allowMissing: false, log: () => {} }),
         /disagree about the platform packages/,

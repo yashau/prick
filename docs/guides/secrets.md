@@ -107,13 +107,13 @@ resolves every ambiguity by **refusing to guess**: a line it cannot parse
 unambiguously fails the whole import. Importing a file and silently dropping the
 two lines the parser did not understand is how a deploy loses `DATABASE_URL`.
 
-| Form | Meaning |
-|---|---|
-| `# …` or blank | Ignored |
-| `KEY=value` | Unquoted. Trailing whitespace trimmed, no escapes, **no inline comment** |
-| `KEY='value'` | Literal. No escapes at all; `\` is a backslash |
-| `KEY="value"` | `\\`, `\"`, `\n`, `\r`, `\t` are escapes; everything else is literal |
-| `export KEY=…` | The `export ` prefix is accepted and dropped |
+| Form           | Meaning                                                                  |
+| -------------- | ------------------------------------------------------------------------ |
+| `# …` or blank | Ignored                                                                  |
+| `KEY=value`    | Unquoted. Trailing whitespace trimmed, no escapes, **no inline comment** |
+| `KEY='value'`  | Literal. No escapes at all; `\` is a backslash                           |
+| `KEY="value"`  | `\\`, `\"`, `\n`, `\r`, `\t` are escapes; everything else is literal     |
+| `export KEY=…` | The `export ` prefix is accepted and dropped                             |
 
 Unquoted values deliberately do not support a trailing `# comment`: a password
 ending in ` # 1` is far more likely than a comment on a secret line, and guessing
@@ -143,12 +143,12 @@ Every format quotes **unconditionally**. Not "quote when necessary" — always.
 Conditional quoting means modelling the consumer's grammar exactly, and a single
 miss is a command injection or a silently altered value.
 
-| Format | Rule |
-|---|---|
-| `env` | `KEY="value"`. Escapes `\`, `"`, newline, carriage return, tab. Raw UTF-8 otherwise |
-| `shell` | `export KEY='value'`. POSIX single quotes; the only escape is `'` → `'\''` |
-| `yaml` | Double-quotes **key and value** |
-| `json` | Sorted keys, deterministic byte output |
+| Format  | Rule                                                                                |
+| ------- | ----------------------------------------------------------------------------------- |
+| `env`   | `KEY="value"`. Escapes `\`, `"`, newline, carriage return, tab. Raw UTF-8 otherwise |
+| `shell` | `export KEY='value'`. POSIX single quotes; the only escape is `'` → `'\''`          |
+| `yaml`  | Double-quotes **key and value**                                                     |
+| `json`  | Sorted keys, deterministic byte output                                              |
 
 Two of those deserve a sentence.
 
@@ -193,13 +193,13 @@ identity and re-encrypt under the new one, in one transaction.
 
 ## Limits
 
-| Limit | Default | Var |
-|---|---|---|
-| Key name | 1–256 characters, POSIX env var name: a letter or `_`, then letters, digits or `_` | — |
-| Value size | 65536 bytes of UTF-8 | `SECRET_MAX_BYTES` |
-| Secrets per environment | 500 | `ENV_MAX_SECRETS` |
-| Request body | 1 MiB | `BODY_MAX_BYTES` |
-| Description | 1024 characters | — |
+| Limit                   | Default                                                                            | Var                |
+| ----------------------- | ---------------------------------------------------------------------------------- | ------------------ |
+| Key name                | 1–256 characters, POSIX env var name: a letter or `_`, then letters, digits or `_` | —                  |
+| Value size              | 65536 bytes of UTF-8                                                               | `SECRET_MAX_BYTES` |
+| Secrets per environment | 500                                                                                | `ENV_MAX_SECRETS`  |
+| Request body            | 1 MiB                                                                              | `BODY_MAX_BYTES`   |
+| Description             | 1024 characters                                                                    | —                  |
 
 The value limit is counted in **UTF-8 bytes**, not JavaScript string length. A
 limit checked against string length would let a value of emoji or CJK text
@@ -218,14 +218,14 @@ test disagrees, the fix is to lower the cap — never to split the batch.
 
 ## Failure modes
 
-| Symptom | Meaning | What to do |
-|---|---|---|
-| `DECRYPT_FAILED` | The stored bytes were not sealed against the identity they are being read under: altered ciphertext, or a row moved between environments, keys or versions | Treat it as a tamper attempt until proven otherwise. The error names the environment, key, version and key id — never the value |
-| `UNKNOWN_KID` | The envelope names a master key the ring does not hold | You probably removed `MASTER_KEY_OLD` too early. See [Key rotation](/guides/key-rotation) |
-| `PAYLOAD_TOO_LARGE` | The environment would exceed `ENV_MAX_SECRETS`, or a value exceeds `SECRET_MAX_BYTES` | Split across environments, or raise the var |
-| `CONFLICT` | Another writer took the same version number, twice | Re-run the command |
-| `PRECONDITION_FAILED` | `--expected-rev` did not match | Re-read and re-apply |
-| Exit code 9 | A value contains a control character the chosen format cannot encode | Use `--format json` or `--format yaml` |
+| Symptom               | Meaning                                                                                                                                                    | What to do                                                                                                                      |
+| --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `DECRYPT_FAILED`      | The stored bytes were not sealed against the identity they are being read under: altered ciphertext, or a row moved between environments, keys or versions | Treat it as a tamper attempt until proven otherwise. The error names the environment, key, version and key id — never the value |
+| `UNKNOWN_KID`         | The envelope names a master key the ring does not hold                                                                                                     | You probably removed `MASTER_KEY_OLD` too early. See [Key rotation](/guides/key-rotation)                                       |
+| `PAYLOAD_TOO_LARGE`   | The environment would exceed `ENV_MAX_SECRETS`, or a value exceeds `SECRET_MAX_BYTES`                                                                      | Split across environments, or raise the var                                                                                     |
+| `CONFLICT`            | Another writer took the same version number, twice                                                                                                         | Re-run the command                                                                                                              |
+| `PRECONDITION_FAILED` | `--expected-rev` did not match                                                                                                                             | Re-read and re-apply                                                                                                            |
+| Exit code 9           | A value contains a control character the chosen format cannot encode                                                                                       | Use `--format json` or `--format yaml`                                                                                          |
 
 A decrypt failure is never swallowed. On a reveal it fails the request; in a
 listing the row is marked unreadable. Both write an audit row with

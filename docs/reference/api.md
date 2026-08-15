@@ -34,10 +34,10 @@ ergonomics. They match **exactly**, never as a prefix.
 
 Every route except `/health` requires a Cloudflare Access JWT.
 
-| Source | Notes |
-|---|---|
-| `Cf-Access-Jwt-Assertion` header | Primary |
-| `CF_Authorization` cookie | Fallback. Cloudflare documents it as not guaranteed to be passed in every context |
+| Source                           | Notes                                                                             |
+| -------------------------------- | --------------------------------------------------------------------------------- |
+| `Cf-Access-Jwt-Assertion` header | Primary                                                                           |
+| `CF_Authorization` cookie        | Fallback. Cloudflare documents it as not guaranteed to be passed in every context |
 
 Service tokens present `CF-Access-Client-Id` and `CF-Access-Client-Secret`;
 Access exchanges those at the edge and the Worker sees the resulting JWT like any
@@ -137,25 +137,25 @@ nothing has established what it contains.
 
 ### Codes and statuses
 
-| Code | Status | Meaning |
-|---|---|---|
-| `BAD_REQUEST` | 400 | Malformed request |
-| `UNAUTHENTICATED` | 401 | No valid Access assertion |
-| `FORBIDDEN` | 403 | Authenticated, but no grant covers this scope |
-| `NOT_FOUND` | 404 | Absent **or** invisible — deliberately indistinguishable |
-| `CONFLICT` | 409 | Uniqueness violation |
-| `VERSION_CONFLICT` | 409 | Lost a race on the version uniqueness constraint, twice |
-| `LAST_ADMIN` | 409 | Refusing to revoke the last global administrator |
-| `PRECONDITION_FAILED` | 412 | `expected_rev` did not match. The environment is byte-for-byte unchanged |
-| `VALIDATION_FAILED` | 422 | Schema rejection, including an unknown field |
-| `PAYLOAD_TOO_LARGE` | 413 | Over a configured byte or count limit |
-| `RATE_LIMITED` | 429 | Slow down |
-| `INTERNAL` | 500 | Unclassified failure |
-| `DECRYPT_FAILED` | 500 | Authenticated decryption failed. Never swallowed |
-| `UNKNOWN_KID` | 500 | The envelope names a master key the ring does not hold |
-| `SERVER_MISCONFIGURED` | 500 | Fail-closed configuration error, e.g. an invalid `MASTER_KEY` |
-| `NOT_IMPLEMENTED` | 501 | The route exists but the behaviour does not |
-| `NO_ADMINS_CONFIGURED` | 503 | Neither `BOOTSTRAP_ADMINS` nor a usable global admin grant exists |
+| Code                   | Status | Meaning                                                                  |
+| ---------------------- | ------ | ------------------------------------------------------------------------ |
+| `BAD_REQUEST`          | 400    | Malformed request                                                        |
+| `UNAUTHENTICATED`      | 401    | No valid Access assertion                                                |
+| `FORBIDDEN`            | 403    | Authenticated, but no grant covers this scope                            |
+| `NOT_FOUND`            | 404    | Absent **or** invisible — deliberately indistinguishable                 |
+| `CONFLICT`             | 409    | Uniqueness violation                                                     |
+| `VERSION_CONFLICT`     | 409    | Lost a race on the version uniqueness constraint, twice                  |
+| `LAST_ADMIN`           | 409    | Refusing to revoke the last global administrator                         |
+| `PRECONDITION_FAILED`  | 412    | `expected_rev` did not match. The environment is byte-for-byte unchanged |
+| `VALIDATION_FAILED`    | 422    | Schema rejection, including an unknown field                             |
+| `PAYLOAD_TOO_LARGE`    | 413    | Over a configured byte or count limit                                    |
+| `RATE_LIMITED`         | 429    | Slow down                                                                |
+| `INTERNAL`             | 500    | Unclassified failure                                                     |
+| `DECRYPT_FAILED`       | 500    | Authenticated decryption failed. Never swallowed                         |
+| `UNKNOWN_KID`          | 500    | The envelope names a master key the ring does not hold                   |
+| `SERVER_MISCONFIGURED` | 500    | Fail-closed configuration error, e.g. an invalid `MASTER_KEY`            |
+| `NOT_IMPLEMENTED`      | 501    | The route exists but the behaviour does not                              |
+| `NO_ADMINS_CONFIGURED` | 503    | Neither `BOOTSTRAP_ADMINS` nor a usable global admin grant exists        |
 
 Source: `packages/app/src/lib/server/core/errors.ts`.
 
@@ -185,15 +185,15 @@ Two framework-level rules apply to every route:
 
 ### Limits
 
-| Limit | Default | Override |
-|---|---|---|
-| Secret value | 65536 bytes of UTF-8 | `SECRET_MAX_BYTES` |
-| Secrets per environment | 500 | `ENV_MAX_SECRETS` |
-| Request body | 1048576 bytes | `BODY_MAX_BYTES` |
-| Secret key name | 256 characters, POSIX env var name | — |
-| Slug | 64 characters, lowercase with single interior hyphens | — |
-| Description | 1024 characters | — |
-| Audit `reason` | 512 characters | — |
+| Limit                   | Default                                               | Override           |
+| ----------------------- | ----------------------------------------------------- | ------------------ |
+| Secret value            | 65536 bytes of UTF-8                                  | `SECRET_MAX_BYTES` |
+| Secrets per environment | 500                                                   | `ENV_MAX_SECRETS`  |
+| Request body            | 1048576 bytes                                         | `BODY_MAX_BYTES`   |
+| Secret key name         | 256 characters, POSIX env var name                    | —                  |
+| Slug                    | 64 characters, lowercase with single interior hyphens | —                  |
+| Description             | 1024 characters                                       | —                  |
+| Audit `reason`          | 512 characters                                        | —                  |
 
 ## Planned routes
 
@@ -201,30 +201,30 @@ None of these are mounted. They are listed so the intended surface is on record,
 and because the request bodies they will take are already written and validated
 in `@prick/shared`.
 
-| Area | Routes |
-|---|---|
-| Projects | list, create, get, update, delete |
-| Environments | list, create, get, delete |
-| Secrets | list, reveal one, batch write, import (with `dry_run`), export |
-| Versions | list, rollback |
-| Access | identities, grants, `access/unknown-identities` |
-| Audit | query with keyset pagination |
-| Admin | `admin/rekey` |
+| Area         | Routes                                                         |
+| ------------ | -------------------------------------------------------------- |
+| Projects     | list, create, get, update, delete                              |
+| Environments | list, create, get, delete                                      |
+| Secrets      | list, reveal one, batch write, import (with `dry_run`), export |
+| Versions     | list, rollback                                                 |
+| Access       | identities, grants, `access/unknown-identities`                |
+| Audit        | query with keyset pagination                                   |
+| Admin        | `admin/rekey`                                                  |
 
 ### Request bodies that already exist
 
-| Schema | Shape |
-|---|---|
-| `CreateProjectBody` | `{ slug, name, description? }` |
-| `UpdateProjectBody` | `{ name?, description? }` |
-| `CreateEnvironmentBody` | `{ slug, name, description? }` |
-| `BatchBody` | `{ mode: "merge" \| "replace", set?, delete?, expected_rev?, reason? }` |
-| `ImportBody` | `{ format: "env" \| "json", content, mode, dry_run, expected_rev?, reason? }` |
-| `RollbackBody` | `{ key, to_version, reason? }` |
-| `RevealQuery` | `{ reason: "reveal" \| "copy" \| "export" \| "run" }` |
-| `CreateGrantBody` | Discriminated on `scope_type`: `global`, `project` (+`project`), `environment` (+`project`, `environment`) |
-| `UpdateIdentityBody` | `{ display_name?, disabled? }` |
-| `AuditQuery` | `{ project?, environment?, actor?, action?, outcome?, since?, until?, cursor?, limit }` |
+| Schema                  | Shape                                                                                                      |
+| ----------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `CreateProjectBody`     | `{ slug, name, description? }`                                                                             |
+| `UpdateProjectBody`     | `{ name?, description? }`                                                                                  |
+| `CreateEnvironmentBody` | `{ slug, name, description? }`                                                                             |
+| `BatchBody`             | `{ mode: "merge" \| "replace", set?, delete?, expected_rev?, reason? }`                                    |
+| `ImportBody`            | `{ format: "env" \| "json", content, mode, dry_run, expected_rev?, reason? }`                              |
+| `RollbackBody`          | `{ key, to_version, reason? }`                                                                             |
+| `RevealQuery`           | `{ reason: "reveal" \| "copy" \| "export" \| "run" }`                                                      |
+| `CreateGrantBody`       | Discriminated on `scope_type`: `global`, `project` (+`project`), `environment` (+`project`, `environment`) |
+| `UpdateIdentityBody`    | `{ display_name?, disabled? }`                                                                             |
+| `AuditQuery`            | `{ project?, environment?, actor?, action?, outcome?, since?, until?, cursor?, limit }`                    |
 
 Two of those carry design decisions worth stating:
 

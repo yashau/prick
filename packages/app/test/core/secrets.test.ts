@@ -99,11 +99,7 @@ describe("round trip", () => {
     await write({ A: "1", B: "2" });
     await write({ C: "3" });
 
-    expect(Object.keys(await exportSecrets(ctx(), "acme", "prod")).sort()).toEqual([
-      "A",
-      "B",
-      "C",
-    ]);
+    expect(Object.keys(await exportSecrets(ctx(), "acme", "prod")).sort()).toEqual(["A", "B", "C"]);
   });
 });
 
@@ -130,9 +126,7 @@ describe("delete and recreate", () => {
       kid: null,
     });
 
-    await expect(revealSecret(ctx(), "acme", "prod", "API_KEY", "reveal")).resolves.toBe(
-      "second",
-    );
+    await expect(revealSecret(ctx(), "acme", "prod", "API_KEY", "reveal")).resolves.toBe("second");
   });
 
   it("a tombstone carries no ciphertext and no kid", async () => {
@@ -319,10 +313,7 @@ describe("rename", () => {
       ciphertext: null,
     });
 
-    await rejectsWith(
-      () => revealSecret(ctx(), "acme", "prod", "OLD_NAME", "reveal"),
-      "NOT_FOUND",
-    );
+    await rejectsWith(() => revealSecret(ctx(), "acme", "prod", "OLD_NAME", "reveal"), "NOT_FOUND");
   });
 
   it("continues the DESTINATION key's history, not the source's", async () => {

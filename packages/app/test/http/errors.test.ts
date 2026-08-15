@@ -104,9 +104,7 @@ describe("a bad master key fails closed at 500", () => {
     // but Access returning 502 for thirty seconds is precisely what a caller
     // should retry. Same shape at the throw site, opposite meaning downstream.
     expect(ERROR_STATUS.IDENTITY_PROVIDER_UNAVAILABLE).toBe(503);
-    expect(ERROR_STATUS.IDENTITY_PROVIDER_UNAVAILABLE).not.toBe(
-      ERROR_STATUS.SERVER_MISCONFIGURED,
-    );
+    expect(ERROR_STATUS.IDENTITY_PROVIDER_UNAVAILABLE).not.toBe(ERROR_STATUS.SERVER_MISCONFIGURED);
   });
 });
 
@@ -232,9 +230,9 @@ describe("D1 constraint classification", () => {
 
   it("calls everything else 'other', so a real bug is not mapped to a 412", () => {
     expect(classifyD1Constraint(new Error("D1_ERROR: no such table: secrets"))).toBe("other");
-    expect(
-      classifyD1Constraint(new Error("UNIQUE constraint failed: projects.slug")),
-    ).toBe("other");
+    expect(classifyD1Constraint(new Error("UNIQUE constraint failed: projects.slug"))).toBe(
+      "other",
+    );
     expect(classifyD1Constraint("not an error at all")).toBe("other");
   });
 });

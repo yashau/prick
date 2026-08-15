@@ -12,14 +12,14 @@ mise run test
 That runs four suites: Rust unit and integration tests, Rust doc tests, the
 Worker suite, and the `scripts/*.mjs` suite. Playwright is separate.
 
-| Suite | Runner | Task |
-|---|---|---|
-| Rust | `cargo nextest` | `mise run test:rust` |
-| Rust doc tests | `cargo test --doc` | `mise run test:doc` |
-| Worker | Vitest with `@cloudflare/vitest-pool-workers` | `mise run test:js` |
-| Repo scripts | `node --test` | `mise run test:scripts` |
-| End-to-end | Playwright | `mise run e2e` |
-| Purity proof | `cargo miri nextest` | `mise run miri` |
+| Suite          | Runner                                        | Task                    |
+| -------------- | --------------------------------------------- | ----------------------- |
+| Rust           | `cargo nextest`                               | `mise run test:rust`    |
+| Rust doc tests | `cargo test --doc`                            | `mise run test:doc`     |
+| Worker         | Vitest with `@cloudflare/vitest-pool-workers` | `mise run test:js`      |
+| Repo scripts   | `node --test`                                 | `mise run test:scripts` |
+| End-to-end     | Playwright                                    | `mise run e2e`          |
+| Purity proof   | `cargo miri nextest`                          | `mise run miri`         |
 
 Doc tests get their own pass because nextest cannot run them.
 
@@ -159,7 +159,7 @@ mise run ci
 
 It mirrors CI exactly. `ci-ok` is the only required status check in the
 repository: with a paths filter, a skipped job reports "skipped", and a
-*required* check that is skipped blocks the pull request forever. `ci-ok` runs
+_required_ check that is skipped blocks the pull request forever. `ci-ok` runs
 with `if: always()` and treats skipped as pass.
 
 ## Next

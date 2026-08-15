@@ -117,11 +117,9 @@ export interface SelfHealResult {
  */
 export async function selfHealBootstrapGrant(ctx: CoreContext): Promise<SelfHealResult> {
   if (!isBootstrapAdmin(ctx.config, ctx.actor.subject)) {
-    throw new PrickError(
-      "FORBIDDEN",
-      "This subject is not listed in BOOTSTRAP_ADMINS.",
-      { hint: "Only a subject named in the var can be promoted by the bootstrap path." },
-    );
+    throw new PrickError("FORBIDDEN", "This subject is not listed in BOOTSTRAP_ADMINS.", {
+      hint: "Only a subject named in the var can be promoted by the bootstrap path.",
+    });
   }
 
   const identityId = await upsertIdentity(ctx);
@@ -233,7 +231,7 @@ export async function assertAdminsConfigured(ctx: CoreContext): Promise<void> {
   if (!(await hasNoAdmins(ctx))) return;
 
   throw new PrickError("NO_ADMINS_CONFIGURED", "This installation has no administrator.", {
-    hint: 'Set BOOTSTRAP_ADMINS in wrangler.jsonc to a comma-separated list of admin emails and redeploy. The first authenticated request from one of them creates a real, revocable grant.',
+    hint: "Set BOOTSTRAP_ADMINS in wrangler.jsonc to a comma-separated list of admin emails and redeploy. The first authenticated request from one of them creates a real, revocable grant.",
   });
 }
 

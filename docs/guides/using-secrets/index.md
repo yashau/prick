@@ -51,10 +51,10 @@ prk run --project api --env production -- npm test --json
 
 That `--json` reaches `npm`. It is not prick's `--json`.
 
-| Platform | Behaviour |
-|---|---|
-| Unix | `prk` calls `execvp` and **becomes** the child. Exit codes and signals are correct by construction, and job control (`SIGTSTP`/`SIGCONT`) works because there is no supervisor left in the process tree |
-| Windows | There is no `exec`, so `prk` spawns and waits, inside a job object with `KILL_ON_JOB_CLOSE` (no orphaned grandchildren) and behind a console control handler (Ctrl-C reaches the child) |
+| Platform | Behaviour                                                                                                                                                                                               |
+| -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Unix     | `prk` calls `execvp` and **becomes** the child. Exit codes and signals are correct by construction, and job control (`SIGTSTP`/`SIGCONT`) works because there is no supervisor left in the process tree |
+| Windows  | There is no `exec`, so `prk` spawns and waits, inside a job object with `KILL_ON_JOB_CLOSE` (no orphaned grandchildren) and behind a console control handler (Ctrl-C reaches the child)                 |
 
 ## Names that are refused
 
@@ -66,16 +66,16 @@ value controls what the program does — so a compromised server that can set
 
 Those names are refused by default:
 
-| Refused | |
-|---|---|
-| Any name starting with | `LD_`, `DYLD_` |
-| Exact names | `BASH_ENV`, `ENV`, `GIT_SSH_COMMAND`, `GLIBC_TUNABLES`, `IFS`, `NODE_OPTIONS`, `NODE_REPL_EXTERNAL_MODULE`, `PATH`, `PERL5OPT`, `PERL5LIB`, `PYTHONPATH`, `PYTHONSTARTUP`, `PYTHONHOME`, `RUBYLIB`, `RUBYOPT` |
+| Refused                |                                                                                                                                                                                                               |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Any name starting with | `LD_`, `DYLD_`                                                                                                                                                                                                |
+| Exact names            | `BASH_ENV`, `ENV`, `GIT_SSH_COMMAND`, `GLIBC_TUNABLES`, `IFS`, `NODE_OPTIONS`, `NODE_REPL_EXTERNAL_MODULE`, `PATH`, `PERL5OPT`, `PERL5LIB`, `PYTHONPATH`, `PYTHONSTARTUP`, `PYTHONHOME`, `RUBYLIB`, `RUBYOPT` |
 
 Source: `crates/prick-core/src/keyname.rs`.
 
 A single refused name fails the whole launch. It is not dropped from the set:
 a child started with a silently missing variable is a debugging problem, and a
-child started with a silently *present* one is a breach.
+child started with a silently _present_ one is a breach.
 
 Override only if the child really is meant to be configured that way:
 

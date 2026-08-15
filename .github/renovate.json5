@@ -126,9 +126,5 @@
   // shadcn-svelte components are vendored into the tree from the registry on
   // purpose -- they are source, and edited. Renovate must not treat their
   // upstream as a dependency.
-  ignorePaths: [
-    "**/node_modules/**",
-    "**/dist/**",
-    "packages/app/src/lib/components/ui/**",
-  ],
+  ignorePaths: ["**/node_modules/**", "**/dist/**", "packages/app/src/lib/components/ui/**"],
 }

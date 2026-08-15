@@ -163,7 +163,8 @@ export function buildAuditRow(ctx: CoreContext, input: AuditInput): NewAuditEntr
     projectId: input.projectId ?? null,
     environmentId: input.environmentId ?? null,
     targetKey: input.targetKey ?? null,
-    detail: input.detail === undefined || input.detail === null ? null : JSON.stringify(input.detail),
+    detail:
+      input.detail === undefined || input.detail === null ? null : JSON.stringify(input.detail),
   };
 }
 

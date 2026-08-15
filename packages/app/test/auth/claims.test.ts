@@ -52,10 +52,7 @@ describe("classifyClaims -- rejected", () => {
     ["neither an email nor a common_name", { sub: "uuid" }],
     ["neither, with an empty sub", { sub: "" }],
     ["both an email and a common_name", { sub: "uuid", email: "a@b.c", common_name: "x.access" }],
-    [
-      "both, with an empty sub",
-      { sub: "", email: "a@b.c", common_name: "x.access" },
-    ],
+    ["both, with an empty sub", { sub: "", email: "a@b.c", common_name: "x.access" }],
     ["an email but an empty sub", { sub: "", email: "a@b.c" }],
     ["a common_name but a non-empty sub", { sub: "uuid", common_name: "x.access" }],
     ["an email that is only whitespace", { sub: "uuid", email: "   " }],

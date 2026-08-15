@@ -10,13 +10,13 @@ and the Worker's `vars` in `packages/app/wrangler.jsonc`.
 
 ## CLI environment variables
 
-| Variable | Fallback | Equivalent flag | Purpose |
-|---|---|---|---|
-| `PRK_API_URL` | | `--api-url` | Base URL of the Worker |
-| `PRK_PROJECT` | | `-P`, `--project` | Default project |
-| `PRK_ENV` | | `-E`, `--env` | Default environment |
-| `PRK_ACCESS_CLIENT_ID` | `CF_ACCESS_CLIENT_ID` | | Access service token client id |
-| `PRK_ACCESS_CLIENT_SECRET` | `CF_ACCESS_CLIENT_SECRET` | | Access service token client secret |
+| Variable                   | Fallback                  | Equivalent flag   | Purpose                            |
+| -------------------------- | ------------------------- | ----------------- | ---------------------------------- |
+| `PRK_API_URL`              |                           | `--api-url`       | Base URL of the Worker             |
+| `PRK_PROJECT`              |                           | `-P`, `--project` | Default project                    |
+| `PRK_ENV`                  |                           | `-E`, `--env`     | Default environment                |
+| `PRK_ACCESS_CLIENT_ID`     | `CF_ACCESS_CLIENT_ID`     |                   | Access service token client id     |
+| `PRK_ACCESS_CLIENT_SECRET` | `CF_ACCESS_CLIENT_SECRET` |                   | Access service token client secret |
 
 An explicit flag wins over the variable. `PRK_*` is checked before the
 `CF_ACCESS_*` fallbacks, which exist so that CI already configured for
@@ -29,9 +29,9 @@ not read by any request path yet.
 
 Installed with `wrangler secret put`, never written in `wrangler.jsonc`.
 
-| Secret | Required | Format |
-|---|---|---|
-| `MASTER_KEY` | Yes | Base64 of **exactly 32 bytes** |
+| Secret           | Required               | Format                                                          |
+| ---------------- | ---------------------- | --------------------------------------------------------------- |
+| `MASTER_KEY`     | Yes                    | Base64 of **exactly 32 bytes**                                  |
 | `MASTER_KEY_OLD` | Only during a rotation | One or more retired keys, comma-separated, each the same format |
 
 ```bash
@@ -81,16 +81,16 @@ Plain configuration in `packages/app/wrangler.jsonc`. All are strings; the
 Worker parses them once at the edge, so no route ever compares a number to the
 string `"500"`.
 
-| Var | Required | Default | Meaning |
-|---|---|---|---|
-| `ACCESS_TEAM` | Yes | — | The `<team>` in `https://<team>.cloudflareaccess.com`. Used to build the issuer and the JWKS URL |
-| `ACCESS_AUD` | Yes | — | The Access application's Audience (AUD) tag |
-| `BOOTSTRAP_ADMINS` | Effectively | empty | Comma-separated admin emails, evaluated live |
-| `REQUIRE_CTX_ACCESS` | No | `false` | Defence-in-depth assertion on Access-on-Workers |
-| `SECRET_MAX_BYTES` | No | `65536` | Maximum size of one decrypted value, in UTF-8 bytes |
-| `ENV_MAX_SECRETS` | No | `500` | Hard cap on secrets per environment |
-| `BODY_MAX_BYTES` | No | `1048576` | Maximum accepted request body |
-| `ACCESS_CERTS_URL` | No | derived from `ACCESS_TEAM` | Overrides the JWKS URL. Exists so the test harness can serve its own keys |
+| Var                  | Required    | Default                    | Meaning                                                                                          |
+| -------------------- | ----------- | -------------------------- | ------------------------------------------------------------------------------------------------ |
+| `ACCESS_TEAM`        | Yes         | —                          | The `<team>` in `https://<team>.cloudflareaccess.com`. Used to build the issuer and the JWKS URL |
+| `ACCESS_AUD`         | Yes         | —                          | The Access application's Audience (AUD) tag                                                      |
+| `BOOTSTRAP_ADMINS`   | Effectively | empty                      | Comma-separated admin emails, evaluated live                                                     |
+| `REQUIRE_CTX_ACCESS` | No          | `false`                    | Defence-in-depth assertion on Access-on-Workers                                                  |
+| `SECRET_MAX_BYTES`   | No          | `65536`                    | Maximum size of one decrypted value, in UTF-8 bytes                                              |
+| `ENV_MAX_SECRETS`    | No          | `500`                      | Hard cap on secrets per environment                                                              |
+| `BODY_MAX_BYTES`     | No          | `1048576`                  | Maximum accepted request body                                                                    |
+| `ACCESS_CERTS_URL`   | No          | derived from `ACCESS_TEAM` | Overrides the JWKS URL. Exists so the test harness can serve its own keys                        |
 
 A numeric var that is present but unparseable is a **refusal**, not a silent
 fallback. `ENV_MAX_SECRETS: "5OO"` (letter O) quietly falling back to 500 would
@@ -100,7 +100,7 @@ never find out that they had not. `REQUIRE_CTX_ACCESS` accepts only the literals
 something else.
 
 `ACCESS_AUD` must be non-empty. An empty value would make the audience assertion
-vacuous, and a verifier that accepts tokens minted for a *different* Access
+vacuous, and a verifier that accepts tokens minted for a _different_ Access
 application in the same account is not a verifier.
 
 ### `REQUIRE_CTX_ACCESS`
@@ -129,7 +129,7 @@ The parts that matter, beyond the vars above.
 
   "assets": {
     "directory": ".svelte-kit/cloudflare",
-    "binding": "ASSETS"
+    "binding": "ASSETS",
   },
 
   "d1_databases": [
@@ -137,22 +137,22 @@ The parts that matter, beyond the vars above.
       "binding": "DB",
       "database_name": "prick",
       "database_id": "<from wrangler d1 create>",
-      "migrations_dir": "drizzle/migrations"
-    }
+      "migrations_dir": "drizzle/migrations",
+    },
   ],
 
-  "observability": { "enabled": true, "head_sampling_rate": 1 }
+  "observability": { "enabled": true, "head_sampling_rate": 1 },
 }
 ```
 
-| Setting | Why it is what it is |
-|---|---|
-| `workers_dev: false` | **Non-negotiable.** Access attaches to a hostname. A `*.workers.dev` hostname Access is not in front of serves this Worker with no authentication at all |
-| `preview_urls: false` | Same reason, for per-version preview URLs |
-| `routes` | Commented out in the repository. With workers.dev disabled and no route, `wrangler deploy` has nowhere to put the Worker — set this before your first deploy |
-| `database_id` | A placeholder in the repository. Replace it with the id from `wrangler d1 create`. It is not a secret |
-| `assets.directory` | Served **without invoking the Worker**, which is why `packages/app/_headers` exists |
-| `head_sampling_rate: 1` | Sample nothing away. This is an admin console's request volume, not a CDN's, and a dropped log line is a missing answer to "who read that secret" |
+| Setting                 | Why it is what it is                                                                                                                                         |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `workers_dev: false`    | **Non-negotiable.** Access attaches to a hostname. A `*.workers.dev` hostname Access is not in front of serves this Worker with no authentication at all     |
+| `preview_urls: false`   | Same reason, for per-version preview URLs                                                                                                                    |
+| `routes`                | Commented out in the repository. With workers.dev disabled and no route, `wrangler deploy` has nowhere to put the Worker — set this before your first deploy |
+| `database_id`           | A placeholder in the repository. Replace it with the id from `wrangler d1 create`. It is not a secret                                                        |
+| `assets.directory`      | Served **without invoking the Worker**, which is why `packages/app/_headers` exists                                                                          |
+| `head_sampling_rate: 1` | Sample nothing away. This is an admin console's request volume, not a CDN's, and a dropped log line is a missing answer to "who read that secret"            |
 
 CI greps the resolved configuration for `workers_dev` and `preview_urls` and
 fails the deploy workflow if either is not explicitly `false`.

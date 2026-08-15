@@ -9,14 +9,14 @@
 # The eight targets the release matrix actually produces. Restricting the graph
 # keeps platform-specific crates from being audited on platforms we never ship.
 targets = [
-    "x86_64-unknown-linux-gnu",
-    "aarch64-unknown-linux-gnu",
-    "x86_64-unknown-linux-musl",
-    "aarch64-unknown-linux-musl",
-    "x86_64-apple-darwin",
-    "aarch64-apple-darwin",
-    "x86_64-pc-windows-msvc",
-    "aarch64-pc-windows-msvc",
+  "x86_64-unknown-linux-gnu",
+  "aarch64-unknown-linux-gnu",
+  "x86_64-unknown-linux-musl",
+  "aarch64-unknown-linux-musl",
+  "x86_64-apple-darwin",
+  "aarch64-apple-darwin",
+  "x86_64-pc-windows-msvc",
+  "aarch64-pc-windows-msvc",
 ]
 all-features = false
 no-default-features = false
@@ -38,15 +38,15 @@ ignore = []
 
 [licenses]
 allow = [
-    "MIT",
-    "Apache-2.0",
-    "Apache-2.0 WITH LLVM-exception",
-    "BSD-2-Clause",
-    "BSD-3-Clause",
-    "ISC",
-    "Unicode-3.0",
-    "Zlib",
-    "MPL-2.0",
+  "MIT",
+  "Apache-2.0",
+  "Apache-2.0 WITH LLVM-exception",
+  "BSD-2-Clause",
+  "BSD-3-Clause",
+  "ISC",
+  "Unicode-3.0",
+  "Zlib",
+  "MPL-2.0",
 ]
 confidence-threshold = 0.93
 exceptions = []
@@ -61,17 +61,17 @@ allow-wildcard-paths = true
 external-default-features = "allow"
 
 deny = [
-    # TLS is rustls + ring, everywhere, always. Cross-compiling openssl-sys to
-    # aarch64-musl is the single worst part of Rust release engineering, and a
-    # dynamically linked libssl defeats the point of a static binary.
-    { name = "openssl" },
-    { name = "openssl-sys" },
-    { name = "native-tls" },
-    { name = "hyper-tls" },
+  # TLS is rustls + ring, everywhere, always. Cross-compiling openssl-sys to
+  # aarch64-musl is the single worst part of Rust release engineering, and a
+  # dynamically linked libssl defeats the point of a static binary.
+  { name = "openssl" },
+  { name = "openssl-sys" },
+  { name = "native-tls" },
+  { name = "hyper-tls" },
 
-    # Superseded rustls versions, so a transitive dependency cannot quietly pin
-    # the client to an older protocol implementation than the one we audit.
-    { name = "rustls", version = "<0.23" },
+  # Superseded rustls versions, so a transitive dependency cannot quietly pin
+  # the client to an older protocol implementation than the one we audit.
+  { name = "rustls", version = "<0.23" },
 ]
 
 # Deliberately NOT banned, despite looking like the sort of thing that should

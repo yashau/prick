@@ -19,12 +19,12 @@ Secret **values**. Nothing else on the following list is confidential:
 
 ## Who is trusted
 
-| Party | Trusted with |
-|---|---|
-| Anyone who can `wrangler deploy` | **Everything.** See below |
-| Cloudflare | Running the Worker and D1, and authenticating at the edge |
-| A global administrator | Every value in the system |
-| The prick server | Storing and returning values. **Not** with choosing what code runs on your machine |
+| Party                            | Trusted with                                                                       |
+| -------------------------------- | ---------------------------------------------------------------------------------- |
+| Anyone who can `wrangler deploy` | **Everything.** See below                                                          |
+| Cloudflare                       | Running the Worker and D1, and authenticating at the edge                          |
+| A global administrator           | Every value in the system                                                          |
+| The prick server                 | Storing and returning values. **Not** with choosing what code runs on your machine |
 
 ## The three things you should know before adopting this
 
@@ -42,7 +42,7 @@ administrator to the authority that already has total access adds no exposure,
 and a printed one-time credential would.
 
 **Practical consequence:** the set of people who can deploy to this Cloudflare
-account *is* the set of people who can read every secret. Treat Cloudflare
+account _is_ the set of people who can read every secret. Treat Cloudflare
 account access as equivalent to a global admin grant, and audit it in the same
 way.
 
@@ -55,12 +55,12 @@ crash reporter. On other platforms the equivalents differ in detail, not in kind
 
 This is a deliberate trade. The alternatives are worse for the same threat: a
 file on disk persists after the process exits, command-line arguments are visible
-in `ps` to *every* user, and a private channel would require the child program to
+in `ps` to _every_ user, and a private channel would require the child program to
 cooperate. The environment is the mechanism that every program already
 understands.
 
-**Practical consequence:** `prk run` protects a secret from *the disk* and from
-*other users' processes at rest*, not from another process running as you, and not
+**Practical consequence:** `prk run` protects a secret from _the disk_ and from
+_other users' processes at rest_, not from another process running as you, and not
 from root. If your threat model includes a hostile process running as the same
 user, `prk run` does not address it.
 

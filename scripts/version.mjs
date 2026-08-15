@@ -221,7 +221,11 @@ export function setCargoVersion(text, version) {
   let subTablePathLine = -1;
 
   const flushSubTable = () => {
-    if (section?.startsWith('workspace.dependencies.') && subTablePathSeen && !subTableVersionSeen) {
+    if (
+      section?.startsWith('workspace.dependencies.') &&
+      subTablePathSeen &&
+      !subTableVersionSeen
+    ) {
       const name = section.slice('workspace.dependencies.'.length);
       lines.splice(subTablePathLine + 1, 0, `version = "${version}"`);
       changes.push(`[workspace.dependencies.${name}] version (inserted)`);
@@ -483,7 +487,10 @@ export function gitTags(root) {
       `could not read git tags in ${root}: ${error instanceof Error ? error.message : String(error)}`,
     );
   }
-  return out.split('\n').map((t) => t.trim()).filter(Boolean);
+  return out
+    .split('\n')
+    .map((t) => t.trim())
+    .filter(Boolean);
 }
 
 /**
@@ -628,7 +635,8 @@ export function main(argv, io = {}) {
       return cmdPlan({ root, githubOutput: values['github-output'], log });
     case 'set': {
       const version = rest[0];
-      if (!version) throw new Error('set requires a version, e.g. `mise run version:set 2026.815.0`');
+      if (!version)
+        throw new Error('set requires a version, e.g. `mise run version:set 2026.815.0`');
       return cmdSet({ root, version, log });
     }
     case 'check':
@@ -639,8 +647,7 @@ export function main(argv, io = {}) {
   }
 }
 
-const invokedDirectly =
-  process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
+const invokedDirectly = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
 
 if (invokedDirectly) {
   try {

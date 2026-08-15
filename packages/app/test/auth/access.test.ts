@@ -14,7 +14,12 @@ import {
 } from "../../src/lib/server/auth/access.js";
 import { testConfig } from "./fixtures.js";
 import { certsEndpoint, harnessKeys } from "./harness/client.js";
-import { mintJwt, mintServiceToken, mintUserToken, type AccessTokenOptions } from "./harness/mint.js";
+import {
+  mintJwt,
+  mintServiceToken,
+  mintUserToken,
+  type AccessTokenOptions,
+} from "./harness/mint.js";
 import type { CertsProfile, HarnessKeysResponse } from "./harness/protocol.js";
 import { rejectsWith, throwsWith } from "./rejects.js";
 
@@ -94,10 +99,9 @@ describe("verifyAccessJwt -- accepted", () => {
     const token = await serviceToken();
 
     // Prove the fixture really omits nbf rather than merely back-dating it.
-    const payload = JSON.parse(atob((token.split(".")[1] ?? "").replaceAll("-", "+").replaceAll("_", "/"))) as Record<
-      string,
-      unknown
-    >;
+    const payload = JSON.parse(
+      atob((token.split(".")[1] ?? "").replaceAll("-", "+").replaceAll("_", "/")),
+    ) as Record<string, unknown>;
     expect(Object.keys(payload)).not.toContain("nbf");
     expect(Object.keys(payload)).not.toContain("email");
     expect(payload["sub"]).toBe("");
@@ -125,7 +129,10 @@ describe("verifyAccessJwt -- accepted", () => {
   });
 
   it("accepts a token with no iat", async () => {
-    const claims = await verifyAccessJwt(await userToken({ claims: { iat: undefined } }), options());
+    const claims = await verifyAccessJwt(
+      await userToken({ claims: { iat: undefined } }),
+      options(),
+    );
     expect(claims.iat).toBeUndefined();
   });
 
@@ -153,7 +160,10 @@ describe("verifyAccessJwt -- claim rejections", () => {
   it("rejects an aud array that does not contain ours", async () => {
     await rejectsWith(
       async () =>
-        verifyAccessJwt(await userToken({ claims: { aud: ["alpha", "beta", "gamma"] } }), options()),
+        verifyAccessJwt(
+          await userToken({ claims: { aud: ["alpha", "beta", "gamma"] } }),
+          options(),
+        ),
       "UNAUTHENTICATED",
     );
   });
@@ -304,8 +314,7 @@ describe("verifyAccessJwt -- algorithm and signature rejections", () => {
     );
 
     await rejectsWith(
-      async () =>
-        verifyAccessJwt(forged, { team: TEAM, aud: AUD, certsUrl: certs.url, now: NOW }),
+      async () => verifyAccessJwt(forged, { team: TEAM, aud: AUD, certsUrl: certs.url, now: NOW }),
       "UNAUTHENTICATED",
     );
   });

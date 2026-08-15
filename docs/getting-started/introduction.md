@@ -10,11 +10,11 @@ reach, and hands them to processes at runtime.
 
 There are three moving parts:
 
-| Part | What it is |
-|---|---|
-| `prk` | The command-line client. One static Rust binary, published as `@yashau/prick` |
+| Part       | What it is                                                                                    |
+| ---------- | --------------------------------------------------------------------------------------------- |
+| `prk`      | The command-line client. One static Rust binary, published as `@yashau/prick`                 |
 | The Worker | One Cloudflare Worker serving a JSON API at `/api/*` and a SvelteKit admin UI everywhere else |
-| D1 | The database. Secret values are stored encrypted; key names are not |
+| D1         | The database. Secret values are stored encrypted; key names are not                           |
 
 ## How a request flows
 
@@ -25,8 +25,8 @@ prk / browser  ──▶  Cloudflare Access  ──▶  Worker  ──▶  D1
 ```
 
 Cloudflare Access authenticates at the edge, before the Worker runs. The Worker
-then verifies the signed JWT itself to learn *who* is calling, and consults its
-own `grants` table to decide *what* they may do. Authentication is Cloudflare's;
+then verifies the signed JWT itself to learn _who_ is calling, and consults its
+own `grants` table to decide _what_ they may do. Authentication is Cloudflare's;
 authorization is prick's.
 
 ## Decisions worth knowing
@@ -41,7 +41,7 @@ authorization is prick's.
   which is a real transaction. There is no window in which an environment is
   half-written.
 - **Nothing mutates without an audit row.** The audit insert is the last
-  statement *inside* the same transaction, so if the audit write fails the data
+  statement _inside_ the same transaction, so if the audit write fails the data
   write fails with it.
 - **A decrypt failure is loud.** A row that will not decrypt fails the request or
   is marked unreadable. It is never quietly skipped, because a silently shorter

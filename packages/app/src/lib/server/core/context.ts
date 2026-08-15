@@ -1,9 +1,5 @@
 import type { IdentityKind, Role, ScopeType } from "@prick/shared";
-import {
-  BODY_MAX_BYTES,
-  ENV_MAX_SECRETS,
-  SECRET_VALUE_MAX_BYTES,
-} from "@prick/shared";
+import { BODY_MAX_BYTES, ENV_MAX_SECRETS, SECRET_VALUE_MAX_BYTES } from "@prick/shared";
 
 import type { Keyring } from "../crypto/index.js";
 import type { Database } from "../db/index.js";

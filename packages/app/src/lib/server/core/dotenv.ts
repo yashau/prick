@@ -356,7 +356,7 @@ function readDoubleQuoted(cursor: Cursor, key: string): string {
         throw new DotenvParseError(
           cursor.line,
           `unknown escape sequence in the value of "${key}".`,
-          'Recognised escapes are \\n \\r \\t \\f \\b \\" \\\' \\\\ \\$ and \\`. A lone backslash must be written \\\\.',
+          "Recognised escapes are \\n \\r \\t \\f \\b \\\" \\' \\\\ \\$ and \\`. A lone backslash must be written \\\\.",
         );
       }
 

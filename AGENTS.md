@@ -35,7 +35,7 @@ Breaking these fails the build, not review.
 
 ## Rules that are not mechanically enforced — you must hold these yourself
 
-1. **Never log, print, or embed a secret value.** Error messages name the *key*, never the value.
+1. **Never log, print, or embed a secret value.** Error messages name the _key_, never the value.
    Values are `SecretString`; do not `{:?}` your way around the redacted `Debug`.
 2. **Never return a secret value from a SvelteKit `+*.server.ts` load or form action.** SvelteKit
    serialises those into the page payload. Secret values reach the browser only via a client-side
@@ -61,18 +61,18 @@ Breaking these fails the build, not review.
 
 ## Where things live
 
-| Concern | Path |
-|---|---|
-| Pure logic (parsing, formatting, escaping) | `crates/prick-core/` |
-| HTTP client, error classification | `crates/prick-api/` |
-| Access OAuth, token storage | `crates/prick-auth/` |
-| Process spawn, signals | `crates/prick-exec/` |
-| CLI commands and rendering | `crates/prk/` |
-| Domain logic, transport-agnostic | `packages/app/src/lib/server/core/` |
-| Crypto (envelope, AAD, keyring) | `packages/app/src/lib/server/crypto/` |
-| Access JWT verification | `packages/app/src/lib/server/auth/` |
-| Drizzle schema | `packages/app/src/lib/server/db/schema.ts` |
-| UI routes | `packages/app/src/routes/` |
+| Concern                                    | Path                                       |
+| ------------------------------------------ | ------------------------------------------ |
+| Pure logic (parsing, formatting, escaping) | `crates/prick-core/`                       |
+| HTTP client, error classification          | `crates/prick-api/`                        |
+| Access OAuth, token storage                | `crates/prick-auth/`                       |
+| Process spawn, signals                     | `crates/prick-exec/`                       |
+| CLI commands and rendering                 | `crates/prk/`                              |
+| Domain logic, transport-agnostic           | `packages/app/src/lib/server/core/`        |
+| Crypto (envelope, AAD, keyring)            | `packages/app/src/lib/server/crypto/`      |
+| Access JWT verification                    | `packages/app/src/lib/server/auth/`        |
+| Drizzle schema                             | `packages/app/src/lib/server/db/schema.ts` |
+| UI routes                                  | `packages/app/src/routes/`                 |
 
 The domain layer takes `(db, actor, input)` and knows nothing about HTTP. Hono routes and SvelteKit
 loads are both thin transports over it — so authorization is written once, in `core`.

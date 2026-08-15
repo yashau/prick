@@ -35,13 +35,13 @@ DEK(mk) = HKDF-SHA256(ikm = mk, salt, "prick/v1/dek/secret.value")
 
 with the fixed salt `prick/v1/keyring`.
 
-| Property | Value |
-|---|---|
-| Salt | `prick/v1/keyring` |
-| Key id info | `prick/v1/kid` |
-| Data key info | `prick/v1/dek/secret.value` |
-| Key id | 8 bytes, rendered as 16 lowercase hex characters |
-| Data key | AES-256-GCM, `extractable: false` |
+| Property      | Value                                            |
+| ------------- | ------------------------------------------------ |
+| Salt          | `prick/v1/keyring`                               |
+| Key id info   | `prick/v1/kid`                                   |
+| Data key info | `prick/v1/dek/secret.value`                      |
+| Key id        | 8 bytes, rendered as 16 lowercase hex characters |
+| Data key      | AES-256-GCM, `extractable: false`                |
 
 The key id is **derived** from the key material rather than configured, so it
 cannot drift from the key it names. Two deployments given the same `MASTER_KEY`
@@ -70,27 +70,27 @@ for no security gain.
 base64url( version ‖ alg ‖ kid[8] ‖ iv[12] ‖ ciphertext‖tag )
 ```
 
-| Field | Bytes |
-|---|---|
-| `version` | 1 |
-| `alg` | 1 (`0x01` = AES-256-GCM) |
-| `kid` | 8 |
-| `iv` | 12 |
+| Field            | Bytes                            |
+| ---------------- | -------------------------------- |
+| `version`        | 1                                |
+| `alg`            | 1 (`0x01` = AES-256-GCM)         |
+| `kid`            | 8                                |
+| `iv`             | 12                               |
 | `ciphertext‖tag` | remainder, at least 16 (the tag) |
 
 A v1 header is therefore 22 bytes, and the shortest legal v1 envelope is 38.
 
 **Byte 0 is read first, and it dispatches.** An unknown format byte throws. It is
 never guessed at, never best-effort decoded, and never treated as the current
-format on the assumption that it probably is. The length checks happen *after*
+format on the assumption that it probably is. The length checks happen _after_
 the dispatch and are specific to the format that byte named — a shared "is it
 long enough" check up front would be checking the wrong number for every format
 but one.
 
-| Format | Meaning |
-|---|---|
+| Format | Meaning                                                      |
+| ------ | ------------------------------------------------------------ |
 | `0x01` | Current. AES-256-GCM with full additional authenticated data |
-| `0x00` | v0 — legacy, no AAD. **Decrypt-only, never emitted** |
+| `0x00` | v0 — legacy, no AAD. **Decrypt-only, never emitted**         |
 
 The v0 format exists so that a v0 export can be imported and immediately
 re-encrypted as `0x01`. Its body is `iv[12] ‖ ciphertext‖tag`: no algorithm byte
@@ -166,12 +166,12 @@ exceed 65535 bytes. The version must be an integer in `[0, 4294967295]`.
 
 All of these are GCM tag failures, not application-level checks:
 
-| Field | Attack it kills |
-|---|---|
-| `environment_id` | Cross-environment transplant |
-| `key` | Cross-key transplant |
-| `version` | Rollback and roll-forward replay |
-| `purpose` | Reuse of a value blob in some future non-value context |
+| Field            | Attack it kills                                        |
+| ---------------- | ------------------------------------------------------ |
+| `environment_id` | Cross-environment transplant                           |
+| `key`            | Cross-key transplant                                   |
+| `version`        | Rollback and roll-forward replay                       |
+| `purpose`        | Reuse of a value blob in some future non-value context |
 
 Concretely: take the ciphertext for `DATABASE_URL` version 3 in production, write
 it into the `DATABASE_URL` row of a development environment you can read, and the
@@ -197,13 +197,13 @@ the history of every secret you own.
 
 ## How mutations interact with the AAD
 
-| Operation | Handling |
-|---|---|
-| Update a value | New version, encrypt fresh. **Never copy a blob** |
-| Rename a key | Decrypt under the old identity, re-encrypt under the new one at the next version, both in one transaction. There is no cheap rename |
-| Roll back to version N | Decrypt N, re-encrypt as `current + 1`. The old blob is never resurrected |
-| Rekey | Re-encrypt under the **identical** AAD with a new key id. Version unchanged |
-| Import a v0 row | Accepted on decrypt only, then immediately re-encrypted as `0x01` |
+| Operation              | Handling                                                                                                                            |
+| ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| Update a value         | New version, encrypt fresh. **Never copy a blob**                                                                                   |
+| Rename a key           | Decrypt under the old identity, re-encrypt under the new one at the next version, both in one transaction. There is no cheap rename |
+| Roll back to version N | Decrypt N, re-encrypt as `current + 1`. The old blob is never resurrected                                                           |
+| Rekey                  | Re-encrypt under the **identical** AAD with a new key id. Version unchanged                                                         |
+| Import a v0 row        | Accepted on decrypt only, then immediately re-encrypted as `0x01`                                                                   |
 
 ## Failure behaviour
 
@@ -212,14 +212,14 @@ no path that returns `null`, an empty string, a "skipped" marker or a partially
 decoded value. The caller cannot accidentally treat a failure as an absent row —
 which is how an environment quietly deploys without its `DATABASE_URL`.
 
-| Error | Meaning |
-|---|---|
+| Error                  | Meaning                                                                                                                                                |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `SERVER_MISCONFIGURED` | The master key material is absent, malformed or internally inconsistent. Raised while parsing configuration, so the Worker fails closed on every route |
-| `DECRYPT_FAILED` | The bytes were not sealed against the identity they are being opened under |
-| `UNKNOWN_KID` | The envelope names a key id the ring does not hold. **Names the id**, and lists the ones loaded |
-| `CRYPTO_FORMAT` | A stored blob is not parseable |
-| `CRYPTO_INPUT` | A caller supplied an identity that cannot be encoded |
-| `PAYLOAD_TOO_LARGE` | The plaintext exceeds the configured byte ceiling |
+| `DECRYPT_FAILED`       | The bytes were not sealed against the identity they are being opened under                                                                             |
+| `UNKNOWN_KID`          | The envelope names a key id the ring does not hold. **Names the id**, and lists the ones loaded                                                        |
+| `CRYPTO_FORMAT`        | A stored blob is not parseable                                                                                                                         |
+| `CRYPTO_INPUT`         | A caller supplied an identity that cannot be encoded                                                                                                   |
+| `PAYLOAD_TOO_LARGE`    | The plaintext exceeds the configured byte ceiling                                                                                                      |
 
 An AEAD failure and a presented-under-the-wrong-identity failure are
 indistinguishable to AES-GCM and are reported the same way. That is correct,
@@ -234,7 +234,7 @@ limit or a format byte. **None may contain a plaintext value, a ciphertext, or
 master key material** — these strings reach logs, HTTP responses and audit rows.
 
 One message is written to leak less than it could: the payload-too-large error
-names the *limit* and not the actual size. A value's exact byte length is the
+names the _limit_ and not the actual size. A value's exact byte length is the
 most revealing metadata a value has, and naming the limit already tells the
 caller everything they need in order to act.
 

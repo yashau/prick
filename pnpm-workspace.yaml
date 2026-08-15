@@ -32,8 +32,8 @@ packages:
 # -----------------------------------------------------------------------------
 minimumReleaseAge: 4320
 minimumReleaseAgeExclude:
-  - '@yashau/prick'
-  - '@yashau/prick-*'
+  - "@yashau/prick"
+  - "@yashau/prick-*"
 
 # -----------------------------------------------------------------------------
 # Refuse non-registry dependency specs (git://, github:, http(s) tarballs,
@@ -82,7 +82,7 @@ allowBuilds:
 # local to this workspace.
 # -----------------------------------------------------------------------------
 ignoredOptionalDependencies:
-  - '@yashau/prick-*'
+  - "@yashau/prick-*"
 
 # -----------------------------------------------------------------------------
 # One version of the toolchain, workspace-wide.
@@ -101,7 +101,7 @@ ignoredOptionalDependencies:
 # run `mise install` yet, and guarantees the two agree on a version. It vendors
 # vitest 4.1.10 exactly, which is why the vitest pin above must match it.
 catalog:
-  '@cloudflare/vitest-pool-workers': 0.21.1
+  "@cloudflare/vitest-pool-workers": 0.21.1
   typescript: 5.9.3
   vite: 8.2.1
   vite-plus: 0.2.9

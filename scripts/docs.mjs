@@ -197,7 +197,8 @@ export async function main(argv, io = {}) {
 }
 
 const invokedDirectly =
-  process.argv[1] && import.meta.url === new URL(`file://${process.argv[1]}`).href.replace(/\\/g, '/');
+  process.argv[1] &&
+  import.meta.url === new URL(`file://${process.argv[1]}`).href.replace(/\\/g, '/');
 
 if (invokedDirectly || process.argv[1]?.endsWith('docs.mjs')) {
   main(process.argv.slice(2))

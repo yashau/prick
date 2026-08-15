@@ -30,8 +30,8 @@ prk / browser  ──▶  Cloudflare Access  ──▶  Worker  ──▶  D1
 ```
 
 Everything sits behind one Access-protected hostname. Access authenticates at the edge before the
-Worker runs; the Worker independently verifies the signed JWT to learn *who* is calling, then
-consults its own grant table to decide *what* they may do.
+Worker runs; the Worker independently verifies the signed JWT to learn _who_ is calling, then
+consults its own grant table to decide _what_ they may do.
 
 Secret **values** are encrypted with AES-256-GCM under a key derived from your `MASTER_KEY` via
 HKDF-SHA256. Each ciphertext is bound to its row with additional authenticated data — environment,
@@ -48,7 +48,7 @@ A few decisions worth knowing before you adopt it:
   Cloudflare's own tooling rather than to a bespoke `init` command.
 - **Writes are atomic.** A bulk write is a single D1 `batch()` — a transaction. There is no window in
   which an environment is half-written.
-- **Nothing mutates without an audit row**, because the audit insert is the last statement *inside*
+- **Nothing mutates without an audit row**, because the audit insert is the last statement _inside_
   the same transaction. If the audit write fails, the data write fails.
 - **`MASTER_KEY` is the whole ballgame.** Lose it and the data is unrecoverable; a D1 export without
   it is just ciphertext. Rotation is supported and incremental — the UI tells you when it is safe to

@@ -21,7 +21,7 @@ The key ring, the two-key derivation and the validation are implemented
 `getKeyringStatus` and `rekeyPage` are stubs, `POST /api/v1/admin/rekey` is not
 mounted, no cron trigger is configured, and the settings screen does not exist.
 
-So in this build you can *start* a rotation and old rows keep working — but
+So in this build you can _start_ a rotation and old rows keep working — but
 there is no way to finish one, and therefore no point at which it is safe to
 remove `MASTER_KEY_OLD`. Do not remove it.
 :::
@@ -140,7 +140,7 @@ If it belongs to a key you never had, that row did not come from this
 deployment. Investigate where it came from before you do anything else.
 
 This is exactly why the failure is a distinct error code and not a generic
-"decryption failed": *restore the key* and *investigate a compromise* are
+"decryption failed": _restore the key_ and _investigate a compromise_ are
 opposite responses, and one message cannot tell them apart.
 
 ## How often

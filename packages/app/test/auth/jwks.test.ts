@@ -30,9 +30,7 @@ function token(kid: string, privateJwk: JsonWebKey): Promise<string> {
 
 describe("certs URL resolution", () => {
   it("derives the team certs endpoint", () => {
-    expect(accessCertsUrl("acme")).toBe(
-      "https://acme.cloudflareaccess.com/cdn-cgi/access/certs",
-    );
+    expect(accessCertsUrl("acme")).toBe("https://acme.cloudflareaccess.com/cdn-cgi/access/certs");
   });
 
   it("REJECTS a team name that is not a hostname label", () => {
@@ -52,7 +50,10 @@ describe("certs URL resolution", () => {
   });
 
   it("REJECTS a certs URL carrying credentials", () => {
-    throwsWith(() => resolveCertsUrl("acme", "https://u:p@acme.example/certs"), "SERVER_MISCONFIGURED");
+    throwsWith(
+      () => resolveCertsUrl("acme", "https://u:p@acme.example/certs"),
+      "SERVER_MISCONFIGURED",
+    );
   });
 
   it("REJECTS a certs URL that is not a URL", () => {
@@ -194,10 +195,7 @@ describe("unknown kid -- rate-limited refetch", () => {
   it("REJECTS an unknown kid rather than trying every key", async () => {
     const certs = certsEndpoint("primary");
 
-    await rejectsWith(
-      async () => findJwksKey(certs.url, "no-such-kid", NOW),
-      "UNAUTHENTICATED",
-    );
+    await rejectsWith(async () => findJwksKey(certs.url, "no-such-kid", NOW), "UNAUTHENTICATED");
   });
 });
 

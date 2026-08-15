@@ -130,7 +130,7 @@ D1's `batch()` is a real transaction: if a statement fails, the whole sequence
 rolls back. A 100-secret write is roughly 23 statements in one batch instead of
 101 sequential round-trips.
 
-The audit insert being *inside* the batch is what makes an un-audited mutation
+The audit insert being _inside_ the batch is what makes an un-audited mutation
 unrepresentable rather than merely discouraged. If the audit write fails, the
 data write fails with it.
 
@@ -145,7 +145,7 @@ load-testing; if it does not hold, the fix is a lower cap, never a split batch.
 ### The optimistic-concurrency guard
 
 `UPDATE … WHERE rev = ?` does **not** work as a guard. D1 rolls back on an
-*error*, not on zero rows changed, so a non-matching update succeeds as a no-op
+_error_, not on zero rows changed, so a non-matching update succeeds as a no-op
 and the rest of the batch commits anyway.
 
 The construct that works is a deliberate primary-key collision:
@@ -173,15 +173,15 @@ This is enforced by a build-time check rather than by convention.
 
 ## Status
 
-| Layer | State |
-|---|---|
-| Crypto (`crypto/`) | Implemented |
-| Access verification and authorization (`auth/`) | Implemented |
-| Projects, environments, audit helpers (`core/`) | Implemented |
-| Secrets, identities, keyring (`core/`) | Stubs that throw `NOT_IMPLEMENTED` |
-| Hono routes | `GET /api/v1/health` only |
-| SvelteKit UI | Route skeleton |
-| CLI | `version` and `completions` only |
+| Layer                                           | State                              |
+| ----------------------------------------------- | ---------------------------------- |
+| Crypto (`crypto/`)                              | Implemented                        |
+| Access verification and authorization (`auth/`) | Implemented                        |
+| Projects, environments, audit helpers (`core/`) | Implemented                        |
+| Secrets, identities, keyring (`core/`)          | Stubs that throw `NOT_IMPLEMENTED` |
+| Hono routes                                     | `GET /api/v1/health` only          |
+| SvelteKit UI                                    | Route skeleton                     |
+| CLI                                             | `version` and `completions` only   |
 
 ## Next
 

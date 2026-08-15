@@ -50,20 +50,33 @@ thiserror = "2"
 # release engineering), and it keeps rustls off `aws-lc-rs`, whose cmake/C
 # build would put a compiler toolchain on the critical path for every target.
 reqwest = { version = "0.12", default-features = false, features = [
-    "rustls-tls-manual-roots",
-    "charset",
-    "http2",
-    "json",
-    "gzip",
-    "system-proxy",
+  "rustls-tls-manual-roots",
+  "charset",
+  "http2",
+  "json",
+  "gzip",
+  "system-proxy",
 ] }
-rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
+rustls = { version = "0.23", default-features = false, features = [
+  "ring",
+  "std",
+  "tls12",
+  "logging",
+] }
 # So a corporate TLS-inspecting proxy with a private certificate authority
 # works from the OS trust store without a flag or an environment variable.
 rustls-platform-verifier = "0.7"
 # current-thread. A CLI that issues one request at a time has no concurrency to
 # exploit, and a work-stealing scheduler is pure overhead and extra threads.
-tokio = { version = "1", default-features = false, features = ["rt", "net", "io-util", "time", "macros", "process", "sync"] }
+tokio = { version = "1", default-features = false, features = [
+  "rt",
+  "net",
+  "io-util",
+  "time",
+  "macros",
+  "process",
+  "sync",
+] }
 
 secrecy = { version = "0.10", features = ["serde"] }
 zeroize = "1"

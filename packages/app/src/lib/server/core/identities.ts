@@ -168,8 +168,7 @@ export async function listGrants(ctx: CoreContext): Promise<GrantRecord[]> {
     if (!globalAdmin) {
       const administers =
         (row.projectId !== null && snapshot.byProject.get(row.projectId) === "admin") ||
-        (row.environmentId !== null &&
-          snapshot.byEnvironment.get(row.environmentId) === "admin") ||
+        (row.environmentId !== null && snapshot.byEnvironment.get(row.environmentId) === "admin") ||
         (row.environmentId !== null &&
           row.projectId !== null &&
           snapshot.byProject.get(row.projectId) === "admin");
@@ -214,10 +213,7 @@ function asScopeType(value: string): "global" | "project" | "environment" {
  * admin because somebody re-submitted a form is precisely the change nobody
  * would notice.
  */
-export async function createGrant(
-  ctx: CoreContext,
-  input: CreateGrantBody,
-): Promise<GrantRecord> {
+export async function createGrant(ctx: CoreContext, input: CreateGrantBody): Promise<GrantRecord> {
   const resolved = await resolveGrantScope(ctx, input);
 
   await assertRole(ctx, resolved.scope, "admin");
@@ -291,10 +287,7 @@ interface ResolvedScope {
   environmentSlug: string | null;
 }
 
-async function resolveGrantScope(
-  ctx: CoreContext,
-  input: CreateGrantBody,
-): Promise<ResolvedScope> {
+async function resolveGrantScope(ctx: CoreContext, input: CreateGrantBody): Promise<ResolvedScope> {
   if (input.scope_type === "global") {
     return {
       scope: { type: "global" },

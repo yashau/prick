@@ -164,7 +164,10 @@ describe('N is zero-based and counted from the tags', () => {
   });
 
   test('whitespace around tags is tolerated', () => {
-    assert.equal(computePatch(['  v2026.815.0  ', '\tv2026.815.1'], { major: 2026, minor: 815 }), 2);
+    assert.equal(
+      computePatch(['  v2026.815.0  ', '\tv2026.815.1'], { major: 2026, minor: 815 }),
+      2,
+    );
   });
 });
 
@@ -200,8 +203,14 @@ describe('UTC is mandatory', () => {
   });
 
   test('year rollover at midnight UTC on New Year', () => {
-    assert.equal(planVersion({ now: new Date('2027-01-01T00:00:00Z'), tags: [] }).version, '2027.101.0');
-    assert.equal(planVersion({ now: new Date('2026-12-31T23:59:59Z'), tags: [] }).version, '2026.1231.0');
+    assert.equal(
+      planVersion({ now: new Date('2027-01-01T00:00:00Z'), tags: [] }).version,
+      '2027.101.0',
+    );
+    assert.equal(
+      planVersion({ now: new Date('2026-12-31T23:59:59Z'), tags: [] }).version,
+      '2026.1231.0',
+    );
   });
 
   test('utcDateString rejects an invalid Date rather than emitting garbage', () => {
@@ -311,7 +320,10 @@ inherits = "release"
   });
 
   test('readCargoVersions surfaces drift', () => {
-    const drifted = CARGO.replace('prick-core", version = "0.0.0-dev"', 'prick-core", version = "9.9.9"');
+    const drifted = CARGO.replace(
+      'prick-core", version = "0.0.0-dev"',
+      'prick-core", version = "9.9.9"',
+    );
     const versions = readCargoVersions(drifted).map((f) => f.version);
     assert.ok(versions.includes('9.9.9'));
     assert.ok(versions.includes('0.0.0-dev'));
@@ -325,21 +337,22 @@ inherits = "release"
 // ---------------------------------------------------------------------------
 
 describe('package.json rewriting', () => {
-  const PARENT = JSON.stringify(
-    {
-      name: '@yashau/prick',
-      version: '0.0.0-dev',
-      optionalDependencies: {
-        '@yashau/prick-linux-x64-gnu': '0.0.0-dev',
-        '@yashau/prick-darwin-arm64': '^0.0.1',
-        '@yashau/prick-win32-x64-msvc': '0.0.0-dev',
-        'detect-libc': '^2.0.3',
+  const PARENT =
+    JSON.stringify(
+      {
+        name: '@yashau/prick',
+        version: '0.0.0-dev',
+        optionalDependencies: {
+          '@yashau/prick-linux-x64-gnu': '0.0.0-dev',
+          '@yashau/prick-darwin-arm64': '^0.0.1',
+          '@yashau/prick-win32-x64-msvc': '0.0.0-dev',
+          'detect-libc': '^2.0.3',
+        },
+        dependencies: { '@yashau/prick-shared': 'workspace:*' },
       },
-      dependencies: { '@yashau/prick-shared': 'workspace:*' },
-    },
-    null,
-    2,
-  ) + '\n';
+      null,
+      2,
+    ) + '\n';
 
   test('sets version and pins every internal optional dependency exactly', () => {
     const { text } = setPackageJsonVersion(PARENT, '2026.815.0');
@@ -436,13 +449,16 @@ describe('filesystem: set and check across a partial repo', () => {
       'e2e/package.json': pkg('e2e'),
     });
     try {
-      assert.deepEqual(discoverManifests(root).map((t) => t.path), [
-        'package.json',
-        'packages/app/package.json',
-        'packages/npm/prick/package.json',
-        'packages/shared/package.json',
-        'e2e/package.json',
-      ]);
+      assert.deepEqual(
+        discoverManifests(root).map((t) => t.path),
+        [
+          'package.json',
+          'packages/app/package.json',
+          'packages/npm/prick/package.json',
+          'packages/shared/package.json',
+          'e2e/package.json',
+        ],
+      );
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -519,7 +535,10 @@ describe('filesystem: set and check across a partial repo', () => {
     const root = makeRepo({ 'package.json': pkg('prick') });
     try {
       assert.throws(() => main(['set', 'v2026.815.0'], { root, log: () => {} }), /not a valid/);
-      assert.equal(JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8')).version, '0.0.0-dev');
+      assert.equal(
+        JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8')).version,
+        '0.0.0-dev',
+      );
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -527,7 +546,10 @@ describe('filesystem: set and check across a partial repo', () => {
 
   test('an unknown command exits non-zero', () => {
     const errors = [];
-    assert.equal(main(['frobnicate'], { root: os.tmpdir(), log: () => {}, logErr: (s) => errors.push(s) }), 1);
+    assert.equal(
+      main(['frobnicate'], { root: os.tmpdir(), log: () => {}, logErr: (s) => errors.push(s) }),
+      1,
+    );
     assert.ok(errors.some((l) => l.includes('unknown command')));
   });
 });

@@ -57,8 +57,14 @@ pnpm = "11.21.0"
 # Pinning the date keeps the miri job from breaking on unrelated PRs when a
 # rolling nightly regresses. `rust-src` is required by `cargo miri setup`.
 rust = [
-  { version = "1.97.1", components = ["rustfmt", "clippy"] },
-  { version = "nightly-2026-08-01", components = ["miri", "rust-src"], profile = "minimal" },
+  { version = "1.97.1", components = [
+    "rustfmt",
+    "clippy",
+  ] },
+  { version = "nightly-2026-08-01", components = [
+    "miri",
+    "rust-src",
+  ], profile = "minimal" },
 ]
 
 # Vite Plus (CLI `vp`) owns the JS-side workflow: lint, fmt, check, test, build.
@@ -276,8 +282,13 @@ run = "node --test"
 description = "node:test suite for the MCP server package"
 # node:test rather than vitest: this package runs under plain Node, not workerd,
 # and test:js is scoped to packages/app.
-dir = "{{config_root}}/packages/mcp"
-run = "node --test"
+#
+# Delegates to the package's own `test` script rather than calling `node --test`
+# directly. That script carries `--import ./test/support/shared-ts-resolve.ts`,
+# without which the schema-drift suite cannot load @prick/shared from source and
+# fails. Reaching past a package's script to its underlying command silently
+# drops flags the package considers part of running its tests.
+run = "pnpm --dir packages/mcp run test"
 
 [tasks."build:mcp"]
 description = "tsc build of the MCP server package"

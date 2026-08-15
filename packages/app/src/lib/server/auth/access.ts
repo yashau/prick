@@ -77,10 +77,7 @@ export interface AccessVerifyOptions {
  * unauthenticated by design and must not start failing because Access is
  * misconfigured for the routes that are.
  */
-export function accessOptionsFromConfig(
-  config: RuntimeConfig,
-  now?: number,
-): AccessVerifyOptions {
+export function accessOptionsFromConfig(config: RuntimeConfig, now?: number): AccessVerifyOptions {
   const team = config.accessTeam.trim();
   const aud = config.accessAud.trim();
 
@@ -351,7 +348,10 @@ export async function verifyAccessJwt(
     throw unauthenticated("The access token carries no expiry.");
   }
   if (exp <= nowSeconds) {
-    throw unauthenticated("The access token has expired.", "Sign in again to obtain a fresh token.");
+    throw unauthenticated(
+      "The access token has expired.",
+      "Sign in again to obtain a fresh token.",
+    );
   }
 
   // --- nbf: ONLY IF PRESENT. Service tokens do not carry one --------------
@@ -430,13 +430,9 @@ export function assertCtxAccess(ctx: unknown, options: { requireCtxAccess: boole
     typeof ctx === "object" && ctx !== null ? (ctx as { access?: unknown }).access : undefined;
 
   if (typeof access !== "object" || access === null) {
-    throw new PrickError(
-      "UNAUTHENTICATED",
-      "Access-on-Workers did not attest this request.",
-      {
-        hint: "REQUIRE_CTX_ACCESS is true but ctx.access is absent. Set REQUIRE_CTX_ACCESS to false unless the Worker is bound to an Access application.",
-      },
-    );
+    throw new PrickError("UNAUTHENTICATED", "Access-on-Workers did not attest this request.", {
+      hint: "REQUIRE_CTX_ACCESS is true but ctx.access is absent. Set REQUIRE_CTX_ACCESS to false unless the Worker is bound to an Access application.",
+    });
   }
 }
 

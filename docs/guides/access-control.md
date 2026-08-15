@@ -25,9 +25,9 @@ grants are stubs (`.../core/identities.ts`), no route is mounted, and the
 An identity is a subject prick has seen authenticate. There are exactly two
 kinds, and neither is created by prick:
 
-| Kind | Subject | Comes from |
-|---|---|---|
-| `user` | The lower-cased email address | An Access SSO session |
+| Kind      | Subject                           | Comes from              |
+| --------- | --------------------------------- | ----------------------- |
+| `user`    | The lower-cased email address     | An Access SSO session   |
 | `service` | The service token's `common_name` | An Access service token |
 
 A service token subject looks like `e367826f93b8d71185e03fe518aff3b4.access`.
@@ -42,21 +42,21 @@ override is worthless exactly when it is being used in anger.
 
 ## Roles
 
-| Role | Can |
-|---|---|
-| `reader` | Read secret metadata and values |
+| Role     | Can                                         |
+| -------- | ------------------------------------------- |
+| `reader` | Read secret metadata and values             |
 | `writer` | Everything a reader can, plus write secrets |
-| `admin` | Everything a writer can, plus manage grants |
+| `admin`  | Everything a writer can, plus manage grants |
 
 They are totally ordered: `reader < writer < admin`.
 
 ## Scopes
 
-| Scope | Covers |
-|---|---|
-| `global` | Everything |
-| `project` | Every environment in one project |
-| `environment` | One environment |
+| Scope         | Covers                           |
+| ------------- | -------------------------------- |
+| `global`      | Everything                       |
+| `project`     | Every environment in one project |
+| `environment` | One environment                  |
 
 Grants inherit **downwards only**. A global grant covers every project; a project
 grant covers every environment in it. An environment admin is not a project
@@ -160,16 +160,16 @@ as any admin is implicit.
 
 Two guards sit either side of that:
 
-| Condition | Response |
-|---|---|
+| Condition                                                     | Response                                                                                                                      |
+| ------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
 | `BOOTSTRAP_ADMINS` empty **and** no usable global admin grant | `503 NO_ADMINS_CONFIGURED` on the affected requests. Failing closed and loudly beats serving an install nobody can administer |
-| Revoking the last global admin grant while the var is empty | `409 LAST_ADMIN`. There is no recovery credential by design, so an irreversible lockout is refused rather than confirmed |
+| Revoking the last global admin grant while the var is empty   | `409 LAST_ADMIN`. There is no recovery credential by design, so an irreversible lockout is refused rather than confirmed      |
 
 "Usable" is doing work in that first row: a grant belonging to a disabled
 identity, or one that has expired, cannot administer anything, so it is not
 counted.
 
-If the var *is* set, revoking the last grant is allowed — the recovery path
+If the var _is_ set, revoking the last grant is allowed — the recovery path
 exists, and it is "edit the var and redeploy".
 
 ## Why you get a 404 and not a 403

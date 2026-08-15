@@ -44,19 +44,19 @@
 // the token out of `ps` output, and it is what makes `shell: true` on Windows
 // safe below: there is no user data in the command line to quote wrongly.
 
-import { spawnSync } from 'node:child_process';
-import { randomBytes } from 'node:crypto';
-import fs from 'node:fs';
+import { spawnSync } from "node:child_process";
+import { randomBytes } from "node:crypto";
+import fs from "node:fs";
 
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
 
 /** The npm package that carries the `prk` binary. */
-export const CLI_PACKAGE = '@yashau/prick';
+export const CLI_PACKAGE = "@yashau/prick";
 
 /** The binary the package installs. */
-export const CLI_BINARY = 'prk';
+export const CLI_BINARY = "prk";
 
 /**
  * The CLI invocation, in full.
@@ -68,7 +68,7 @@ export const CLI_BINARY = 'prk';
  * Every element is a literal. A test asserts that, because it is the premise
  * the Windows `shell: true` path rests on.
  */
-export const CLI_ARGS = ['secrets', 'download', '--format', 'json', '--no-input'];
+export const CLI_ARGS = ["secrets", "download", "--format", "json", "--no-input"];
 
 /** The longest key name accepted, mirroring `prick_core::keyname::MAX_KEY_LEN`. */
 export const MAX_KEY_LEN = 256;
@@ -92,25 +92,25 @@ export const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
  * can set `NODE_OPTIONS` gets arbitrary code execution in the workflow.
  */
 export const LOADER_CONTROLLED_EXACT = [
-  'BASH_ENV',
-  'ENV',
-  'GIT_SSH_COMMAND',
-  'GLIBC_TUNABLES',
-  'IFS',
-  'NODE_OPTIONS',
-  'NODE_REPL_EXTERNAL_MODULE',
-  'PATH',
-  'PERL5OPT',
-  'PERL5LIB',
-  'PYTHONPATH',
-  'PYTHONSTARTUP',
-  'PYTHONHOME',
-  'RUBYLIB',
-  'RUBYOPT',
+  "BASH_ENV",
+  "ENV",
+  "GIT_SSH_COMMAND",
+  "GLIBC_TUNABLES",
+  "IFS",
+  "NODE_OPTIONS",
+  "NODE_REPL_EXTERNAL_MODULE",
+  "PATH",
+  "PERL5OPT",
+  "PERL5LIB",
+  "PYTHONPATH",
+  "PYTHONSTARTUP",
+  "PYTHONHOME",
+  "RUBYLIB",
+  "RUBYOPT",
 ];
 
 /** Whole families of loader-controlling variables. Mirrors `UNSAFE_PREFIXES`. */
-export const LOADER_CONTROLLED_PREFIXES = ['LD_', 'DYLD_'];
+export const LOADER_CONTROLLED_PREFIXES = ["LD_", "DYLD_"];
 
 /**
  * Namespaces the runner owns.
@@ -119,10 +119,10 @@ export const LOADER_CONTROLLED_PREFIXES = ['LD_', 'DYLD_'];
  * `ACTIONS_RUNTIME_TOKEN` from a secret store is never a legitimate use and is
  * a direct route to controlling later steps.
  */
-export const RESERVED_PREFIXES = ['GITHUB_', 'RUNNER_', 'ACTIONS_'];
+export const RESERVED_PREFIXES = ["GITHUB_", "RUNNER_", "ACTIONS_"];
 
 /** The heredoc delimiter's fixed part. The random part follows it. */
-export const DELIMITER_PREFIX = '__PRICK_EOF_';
+export const DELIMITER_PREFIX = "__PRICK_EOF_";
 
 /** CalVer, `YYYY.MMDD.N`, optionally `v`-prefixed. See scripts/version.mjs. */
 export const CALVER = /^v?\d{4}\.\d{1,4}\.\d+$/;
@@ -155,7 +155,7 @@ export class ActionError extends Error {
    */
   constructor(message, hint) {
     super(message);
-    this.name = 'ActionError';
+    this.name = "ActionError";
     this.hint = hint;
   }
 }
@@ -179,7 +179,7 @@ export class ActionError extends Error {
  * @returns {string}
  */
 export function escapeData(value) {
-  return String(value).replace(/%/g, '%25').replace(/\r/g, '%0D').replace(/\n/g, '%0A');
+  return String(value).replace(/%/g, "%25").replace(/\r/g, "%0D").replace(/\n/g, "%0A");
 }
 
 /**
@@ -198,14 +198,14 @@ export function escapeData(value) {
  */
 export function maskPayloads(value) {
   const text = String(value);
-  if (text.trim() === '') {
+  if (text.trim() === "") {
     return [];
   }
 
   const payloads = [text];
   if (/[\r\n]/.test(text)) {
     for (const line of text.split(/\r?\n/)) {
-      if (line.trim() !== '') {
+      if (line.trim() !== "") {
         payloads.push(line);
       }
     }
@@ -224,7 +224,7 @@ export function maskPayloads(value) {
  */
 export function isValidEnvName(name) {
   return (
-    typeof name === 'string' && name.length > 0 && name.length <= MAX_KEY_LEN && ENV_NAME.test(name)
+    typeof name === "string" && name.length > 0 && name.length <= MAX_KEY_LEN && ENV_NAME.test(name)
   );
 }
 
@@ -260,10 +260,10 @@ export function isUnsafeName(name) {
  * @returns {string[] | null}
  */
 export function parseKeyList(raw) {
-  const items = String(raw ?? '')
+  const items = String(raw ?? "")
     .split(/[\n,]/)
     .map((item) => item.trim())
-    .filter((item) => item !== '');
+    .filter((item) => item !== "");
   return items.length === 0 ? null : [...new Set(items)];
 }
 
@@ -281,21 +281,21 @@ export function parseKeyList(raw) {
  * @returns {boolean}
  */
 export function parseBoolean(raw, name, fallback) {
-  const text = String(raw ?? '')
+  const text = String(raw ?? "")
     .trim()
     .toLowerCase();
-  if (text === '') {
+  if (text === "") {
     return fallback;
   }
-  if (['true', '1', 'yes', 'on'].includes(text)) {
+  if (["true", "1", "yes", "on"].includes(text)) {
     return true;
   }
-  if (['false', '0', 'no', 'off'].includes(text)) {
+  if (["false", "0", "no", "off"].includes(text)) {
     return false;
   }
   throw new ActionError(
     `\`${name}\` must be true or false, but was \`${text}\``,
-    'Leave it unset to take the default.',
+    "Leave it unset to take the default.",
   );
 }
 
@@ -311,9 +311,9 @@ export function parseBoolean(raw, name, fallback) {
  * @returns {string}
  */
 export function validateUrl(raw) {
-  const text = String(raw ?? '').trim();
-  if (text === '') {
-    throw new ActionError('`url` is required', 'Set it to the base URL of your prick server.');
+  const text = String(raw ?? "").trim();
+  if (text === "") {
+    throw new ActionError("`url` is required", "Set it to the base URL of your prick server.");
   }
 
   let parsed;
@@ -321,24 +321,24 @@ export function validateUrl(raw) {
     parsed = new URL(text);
   } catch {
     throw new ActionError(
-      '`url` is not a URL',
-      'It must be an absolute URL, for example https://prick.example.com.',
+      "`url` is not a URL",
+      "It must be an absolute URL, for example https://prick.example.com.",
     );
   }
 
-  if (parsed.protocol !== 'https:') {
+  if (parsed.protocol !== "https:") {
     throw new ActionError(
       `\`url\` uses the ${parsed.protocol} scheme; only https is accepted`,
-      'The Access service token is sent as a request header. Over plaintext it is ' +
-        'readable by anything on the path.',
+      "The Access service token is sent as a request header. Over plaintext it is " +
+        "readable by anything on the path.",
     );
   }
 
-  if (parsed.username !== '' || parsed.password !== '') {
+  if (parsed.username !== "" || parsed.password !== "") {
     throw new ActionError(
-      '`url` carries userinfo credentials',
-      'Remove the user:password@ part. Authentication is the service token, ' +
-        'passed through the client-id and client-secret inputs.',
+      "`url` carries userinfo credentials",
+      "Remove the user:password@ part. Authentication is the service token, " +
+        "passed through the client-id and client-secret inputs.",
     );
   }
 
@@ -350,16 +350,16 @@ export function validateUrl(raw) {
  * @returns {string} the validated prefix, possibly empty
  */
 export function validatePrefix(raw) {
-  const text = String(raw ?? '').trim();
-  if (text === '') {
-    return '';
+  const text = String(raw ?? "").trim();
+  if (text === "") {
+    return "";
   }
   // A bad prefix is operator configuration, not data: it would make EVERY key
   // invalid, so failing is far more useful than warning about each one.
   if (!isValidEnvName(text)) {
     throw new ActionError(
       `\`prefix\` is not a valid environment variable name fragment: \`${text}\``,
-      'It must match [A-Za-z_][A-Za-z0-9_]*, for example `APP_`.',
+      "It must match [A-Za-z_][A-Za-z0-9_]*, for example `APP_`.",
     );
   }
   return text;
@@ -370,11 +370,11 @@ export function validatePrefix(raw) {
  * @returns {'env' | 'outputs'}
  */
 export function validateExportTo(raw) {
-  const text = String(raw ?? '').trim() || 'env';
-  if (text !== 'env' && text !== 'outputs') {
+  const text = String(raw ?? "").trim() || "env";
+  if (text !== "env" && text !== "outputs") {
     throw new ActionError(
       `\`export-to\` must be \`env\` or \`outputs\`, but was \`${text}\``,
-      'Leave it unset for `env`, which is what almost every workflow wants.',
+      "Leave it unset for `env`, which is what almost every workflow wants.",
     );
   }
   return text;
@@ -397,19 +397,19 @@ export function validateExportTo(raw) {
  * @returns {{ spec: string, source: string }}
  */
 export function resolveVersionSpec({ version, actionRef } = {}) {
-  const explicit = String(version ?? '').trim();
-  if (explicit !== '') {
-    return { spec: assertSafeVersionSpec(stripLeadingV(explicit)), source: 'the `version` input' };
+  const explicit = String(version ?? "").trim();
+  if (explicit !== "") {
+    return { spec: assertSafeVersionSpec(stripLeadingV(explicit)), source: "the `version` input" };
   }
 
-  const ref = String(actionRef ?? '').trim();
+  const ref = String(actionRef ?? "").trim();
   if (CALVER.test(ref)) {
     return { spec: assertSafeVersionSpec(stripLeadingV(ref)), source: `the action ref ${ref}` };
   }
 
   return {
-    spec: 'latest',
-    source: ref === '' ? 'the latest dist-tag' : `the latest dist-tag (${ref} names no version)`,
+    spec: "latest",
+    source: ref === "" ? "the latest dist-tag" : `the latest dist-tag (${ref} names no version)`,
   };
 }
 
@@ -418,7 +418,7 @@ export function resolveVersionSpec({ version, actionRef } = {}) {
  * @returns {string}
  */
 function stripLeadingV(spec) {
-  return spec.replace(/^v(?=\d)/, '');
+  return spec.replace(/^v(?=\d)/, "");
 }
 
 /**
@@ -429,8 +429,8 @@ export function assertSafeVersionSpec(spec) {
   if (!VERSION_SPEC.test(spec)) {
     throw new ActionError(
       `\`version\` is not a plain registry version: \`${spec}\``,
-      'Use an exact version (2026.815.0), a ^ or ~ range, or a dist-tag. ' +
-        'Paths, git remotes and tarball URLs are refused.',
+      "Use an exact version (2026.815.0), a ^ or ~ range, or a dist-tag. " +
+        "Paths, git remotes and tarball URLs are refused.",
     );
   }
   return spec;
@@ -450,11 +450,11 @@ export function assertSafeVersionSpec(spec) {
  */
 export function installArgs(spec) {
   return [
-    'install',
-    '--global',
-    '--ignore-scripts',
-    '--no-audit',
-    '--no-fund',
+    "install",
+    "--global",
+    "--ignore-scripts",
+    "--no-audit",
+    "--no-fund",
     `${CLI_PACKAGE}@${assertSafeVersionSpec(spec)}`,
   ];
 }
@@ -476,61 +476,61 @@ export function describeExit(code) {
   switch (code) {
     case 2:
       return {
-        title: 'the CLI rejected its own arguments',
+        title: "the CLI rejected its own arguments",
         hint:
-          'The installed CLI is older or newer than this action expects. ' +
-          'Pin both: set the `version` input, or use a CalVer tag of the action.',
+          "The installed CLI is older or newer than this action expects. " +
+          "Pin both: set the `version` input, or use a CalVer tag of the action.",
       };
     case 3:
       return {
-        title: 'the service token was not accepted',
+        title: "the service token was not accepted",
         hint:
-          'Check `client-id` and `client-secret`. A service token client id ends in ' +
-          '`.access`; the secret is shown once, when the token is created. Both must ' +
-          'come from the same token, and the token must not have expired.',
+          "Check `client-id` and `client-secret`. A service token client id ends in " +
+          "`.access`; the secret is shown once, when the token is created. Both must " +
+          "come from the same token, and the token must not have expired.",
       };
     case 4:
       return {
-        title: 'the service token has no grant for this project and environment',
+        title: "the service token has no grant for this project and environment",
         hint:
-          'This is the usual first-run failure, and it is fixed in the admin UI, not ' +
+          "This is the usual first-run failure, and it is fixed in the admin UI, not " +
           'in this workflow: open Access, find the client id under "Seen but not ' +
           'granted" (the denial you just caused puts it there), and grant it the ' +
-          '`reader` role on this project or environment.',
+          "`reader` role on this project or environment.",
       };
     case 5:
       return {
-        title: 'no such project or environment',
+        title: "no such project or environment",
         hint:
-          'Names are matched exactly and are case-sensitive. Check `project` and ' +
-          '`environment` against `prk projects list` and `prk env list`.',
+          "Names are matched exactly and are case-sensitive. Check `project` and " +
+          "`environment` against `prk projects list` and `prk env list`.",
       };
     case 6:
       return {
-        title: 'the environment changed while it was being read',
-        hint: 'Re-run the job.',
+        title: "the environment changed while it was being read",
+        hint: "Re-run the job.",
       };
     case 7:
       return {
-        title: 'the server could not be reached',
+        title: "the server could not be reached",
         hint:
-          'Check `url`. It must be the Worker hostname, reachable from a GitHub ' +
-          'runner, and the Access application must be in front of it.',
+          "Check `url`. It must be the Worker hostname, reachable from a GitHub " +
+          "runner, and the Access application must be in front of it.",
       };
     case 8:
       return {
-        title: 'the server failed',
-        hint: 'Quote the X-Request-Id from the error above when reporting it.',
+        title: "the server failed",
+        hint: "Quote the X-Request-Id from the error above when reporting it.",
       };
     case 10:
       return {
-        title: 'the server is rate limiting this token',
-        hint: 'Re-run the job after the interval the server asked for.',
+        title: "the server is rate limiting this token",
+        hint: "Re-run the job after the interval the server asked for.",
       };
     case 11:
       return {
-        title: 'the server rejected the request as invalid',
-        hint: 'Check `project` and `environment` for stray whitespace or quoting.',
+        title: "the server rejected the request as invalid",
+        hint: "Check `project` and `environment` for stray whitespace or quoting.",
       };
     default:
       return {
@@ -538,9 +538,9 @@ export function describeExit(code) {
         // report "exited with status 0" for a job the runner just cancelled.
         title:
           code === null
-            ? 'the CLI was killed before it finished'
+            ? "the CLI was killed before it finished"
             : `the CLI exited with status ${code}`,
-        hint: 'Re-run with ACTIONS_STEP_DEBUG enabled to see the CLI diagnostics.',
+        hint: "Re-run with ACTIONS_STEP_DEBUG enabled to see the CLI diagnostics.",
       };
   }
 }
@@ -570,22 +570,22 @@ export function parseSecrets(text) {
     // secret values -- so reporting the parse error would leak one. The byte
     // count is the most that can safely be said.
     throw new ActionError(
-      `the CLI produced ${Buffer.byteLength(String(text), 'utf8')} bytes that are not valid JSON`,
-      'The parser error is withheld on purpose: it would quote the secret values. ' +
-        'Check that the installed `prk` supports `secrets download --format json`.',
+      `the CLI produced ${Buffer.byteLength(String(text), "utf8")} bytes that are not valid JSON`,
+      "The parser error is withheld on purpose: it would quote the secret values. " +
+        "Check that the installed `prk` supports `secrets download --format json`.",
     );
   }
 
-  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
     throw new ActionError(
-      'the CLI produced JSON that is not an object of key/value pairs',
-      'Check that the installed `prk` supports `secrets download --format json`.',
+      "the CLI produced JSON that is not an object of key/value pairs",
+      "Check that the installed `prk` supports `secrets download --format json`.",
     );
   }
 
   const secrets = new Map();
   for (const [key, value] of Object.entries(parsed)) {
-    if (typeof value !== 'string') {
+    if (typeof value !== "string") {
       // Names the key, never the value.
       throw new ActionError(`the value of \`${key}\` is not a string`);
     }
@@ -618,7 +618,7 @@ export function parseSecrets(text) {
  * @param {boolean} options.allowUnsafeNames
  * @returns {InjectionPlan}
  */
-export function planInjection({ secrets, allowlist, prefix = '', allowUnsafeNames = false }) {
+export function planInjection({ secrets, allowlist, prefix = "", allowUnsafeNames = false }) {
   /** @type {InjectionPlan} */
   const plan = { entries: [], skipped: [], missing: [] };
 
@@ -637,7 +637,7 @@ export function planInjection({ secrets, allowlist, prefix = '', allowUnsafeName
     if (!isValidEnvName(key)) {
       plan.skipped.push({
         key,
-        reason: 'it is not a valid environment variable name ([A-Za-z_][A-Za-z0-9_]*)',
+        reason: "it is not a valid environment variable name ([A-Za-z_][A-Za-z0-9_]*)",
       });
       continue;
     }
@@ -653,8 +653,8 @@ export function planInjection({ secrets, allowlist, prefix = '', allowUnsafeName
         key,
         reason:
           `\`${name}\` is interpreted by the runner, the dynamic loader or a language ` +
-          'runtime before a program starts, so setting it from a secret store would ' +
-          'give the store control of every later step',
+          "runtime before a program starts, so setting it from a secret store would " +
+          "give the store control of every later step",
       });
       continue;
     }
@@ -696,7 +696,7 @@ function byName(a, b) {
  * @returns {string}
  */
 export function newDelimiter(random = randomBytes) {
-  return `${DELIMITER_PREFIX}${random(16).toString('hex')}__`;
+  return `${DELIMITER_PREFIX}${random(16).toString("hex")}__`;
 }
 
 /**
@@ -719,7 +719,7 @@ export function chooseDelimiter(values, random = randomBytes, attempts = 8) {
       return delimiter;
     }
   }
-  throw new ActionError('could not generate a delimiter that no value contains');
+  throw new ActionError("could not generate a delimiter that no value contains");
 }
 
 /**
@@ -746,7 +746,7 @@ export function renderAssignment(name, value, delimiter) {
  * @returns {string}
  */
 export function renderBlock(entries, delimiter) {
-  return entries.map((entry) => renderAssignment(entry.name, entry.value, delimiter)).join('');
+  return entries.map((entry) => renderAssignment(entry.name, entry.value, delimiter)).join("");
 }
 
 // ---------------------------------------------------------------------------
@@ -785,10 +785,10 @@ export function realIo(env = process.env) {
       console.error(line);
     },
     appendEnv(text) {
-      fs.appendFileSync(requireFile(env, 'GITHUB_ENV'), text, 'utf8');
+      fs.appendFileSync(requireFile(env, "GITHUB_ENV"), text, "utf8");
     },
     appendOutput(text) {
-      fs.appendFileSync(requireFile(env, 'GITHUB_OUTPUT'), text, 'utf8');
+      fs.appendFileSync(requireFile(env, "GITHUB_OUTPUT"), text, "utf8");
     },
   };
 }
@@ -803,7 +803,7 @@ function requireFile(env, name) {
   if (!value) {
     throw new ActionError(
       `$${name} is not set`,
-      'This action only runs inside a GitHub Actions job.',
+      "This action only runs inside a GitHub Actions job.",
     );
   }
   return value;
@@ -860,16 +860,16 @@ export function cliEnvironment({ base, url, project, environment, clientId, clie
 export function run(file, args, env, spawn = spawnSync) {
   const result = spawn(file, args, {
     env,
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'pipe'],
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
     windowsHide: true,
-    shell: process.platform === 'win32',
+    shell: process.platform === "win32",
     maxBuffer: 64 * 1024 * 1024,
   });
   return {
     status: result.status,
-    stdout: String(result.stdout ?? ''),
-    stderr: String(result.stderr ?? ''),
+    stdout: String(result.stdout ?? ""),
+    stderr: String(result.stderr ?? ""),
     error: result.error,
   };
 }
@@ -891,22 +891,22 @@ export function run(file, args, env, spawn = spawnSync) {
  */
 export function readInputs(env) {
   const url = validateUrl(env.PRICK_INPUT_URL);
-  const project = String(env.PRICK_INPUT_PROJECT ?? '').trim();
-  if (project === '') {
-    throw new ActionError('`project` is required');
+  const project = String(env.PRICK_INPUT_PROJECT ?? "").trim();
+  if (project === "") {
+    throw new ActionError("`project` is required");
   }
 
-  const environment = String(env.PRICK_INPUT_ENVIRONMENT ?? '').trim() || 'production';
+  const environment = String(env.PRICK_INPUT_ENVIRONMENT ?? "").trim() || "production";
   // Trimmed: a trailing newline picked up when the token was pasted into the
   // repository secret is otherwise an authentication failure with no visible
   // cause. Neither half of an Access service token contains whitespace.
-  const clientId = String(env.PRICK_INPUT_CLIENT_ID ?? '').trim();
-  const clientSecret = String(env.PRICK_INPUT_CLIENT_SECRET ?? '').trim();
-  if (clientId === '' || clientSecret === '') {
+  const clientId = String(env.PRICK_INPUT_CLIENT_ID ?? "").trim();
+  const clientSecret = String(env.PRICK_INPUT_CLIENT_SECRET ?? "").trim();
+  if (clientId === "" || clientSecret === "") {
     throw new ActionError(
-      '`client-id` and `client-secret` are both required',
-      'They come from an Access SERVICE TOKEN, not from an SSO session. ' +
-        'See the README for how to create one.',
+      "`client-id` and `client-secret` are both required",
+      "They come from an Access SERVICE TOKEN, not from an SSO session. " +
+        "See the README for how to create one.",
     );
   }
 
@@ -919,10 +919,10 @@ export function readInputs(env) {
     allowlist: parseKeyList(env.PRICK_INPUT_KEYS),
     prefix: validatePrefix(env.PRICK_INPUT_PREFIX),
     exportTo: validateExportTo(env.PRICK_INPUT_EXPORT_TO),
-    mask: parseBoolean(env.PRICK_INPUT_MASK, 'mask', true),
-    allowUnsafeNames: parseBoolean(env.PRICK_INPUT_ALLOW_UNSAFE_NAMES, 'allow-unsafe-names', false),
-    version: String(env.PRICK_INPUT_VERSION ?? '').trim(),
-    actionRef: String(env.GITHUB_ACTION_REF ?? '').trim(),
+    mask: parseBoolean(env.PRICK_INPUT_MASK, "mask", true),
+    allowUnsafeNames: parseBoolean(env.PRICK_INPUT_ALLOW_UNSAFE_NAMES, "allow-unsafe-names", false),
+    version: String(env.PRICK_INPUT_VERSION ?? "").trim(),
+    actionRef: String(env.GITHUB_ACTION_REF ?? "").trim(),
   };
 }
 
@@ -943,16 +943,16 @@ export function commandInstall({ env, io, spawn = spawnSync }) {
   const { spec, source } = resolveVersionSpec(inputs);
 
   io.log(`Installing ${CLI_PACKAGE}@${spec} (from ${source}).`);
-  const result = run('npm', installArgs(spec), env, spawn);
+  const result = run("npm", installArgs(spec), env, spawn);
 
   if (result.error || result.status !== 0) {
-    if (result.stderr !== '') {
+    if (result.stderr !== "") {
       io.log(result.stderr.trimEnd());
     }
     throw new ActionError(
       `installing ${CLI_PACKAGE}@${spec} failed`,
-      spec === 'latest'
-        ? 'Check that the runner can reach the npm registry.'
+      spec === "latest"
+        ? "Check that the runner can reach the npm registry."
         : `Check that ${spec} is a published version of ${CLI_PACKAGE}.`,
     );
   }
@@ -986,8 +986,8 @@ export function commandInject({ env, io, spawn = spawnSync, random = randomBytes
   if (result.error) {
     throw new ActionError(
       `could not run \`${CLI_BINARY}\``,
-      'The install step did not put the CLI on PATH. Re-run with ACTIONS_STEP_DEBUG ' +
-        'enabled to see the npm output.',
+      "The install step did not put the CLI on PATH. Re-run with ACTIONS_STEP_DEBUG " +
+        "enabled to see the npm output.",
     );
   }
 
@@ -996,7 +996,7 @@ export function commandInject({ env, io, spawn = spawnSync, random = randomBytes
     // binary that no secret value appears there on any error path, and clippy's
     // workspace-wide `print_stderr = "deny"` is what enforces it. Its stdout is
     // NOT relayed, here or anywhere.
-    if (result.stderr.trim() !== '') {
+    if (result.stderr.trim() !== "") {
       io.log(result.stderr.trimEnd());
     }
     const { title, hint } = describeExit(result.status);
@@ -1009,56 +1009,56 @@ export function commandInject({ env, io, spawn = spawnSync, random = randomBytes
   if (plan.missing.length > 0) {
     throw new ActionError(
       `\`keys\` names ${plan.missing.length} secret(s) this environment does not have: ` +
-        plan.missing.join(', '),
-      'A job that starts without a variable it asked for fails later and less ' +
-        'clearly. Remove the name from `keys`, or add the secret.',
+        plan.missing.join(", "),
+      "A job that starts without a variable it asked for fails later and less " +
+        "clearly. Remove the name from `keys`, or add the secret.",
     );
   }
 
   for (const skipped of plan.skipped) {
     // Names the key. Never the value -- that is the whole point of this warning
     // existing rather than the action failing.
-    io.command('warning', `Skipping \`${skipped.key}\`: ${skipped.reason}.`);
+    io.command("warning", `Skipping \`${skipped.key}\`: ${skipped.reason}.`);
   }
 
   // ---- Mask first. Nothing below this point can reach a log unredacted. ----
   if (inputs.mask) {
     for (const entry of plan.entries) {
       for (const payload of maskPayloads(entry.value)) {
-        io.command('add-mask', payload);
+        io.command("add-mask", payload);
       }
     }
   } else {
     io.command(
-      'warning',
+      "warning",
       "Masking is disabled (mask: false). Secret values will appear in this job's " +
-        'logs in full, and the log is readable by anyone who can read the repository.',
+        "logs in full, and the log is readable by anyone who can read the repository.",
     );
   }
 
   const values = plan.entries.map((entry) => entry.value);
   const names = plan.entries.map((entry) => entry.name);
 
-  if (inputs.exportTo === 'env') {
+  if (inputs.exportTo === "env") {
     const delimiter = chooseDelimiter(values, random);
     io.appendEnv(renderBlock(plan.entries, delimiter));
   } else {
     const document = JSON.stringify(Object.fromEntries(plan.entries.map((e) => [e.name, e.value])));
     const delimiter = chooseDelimiter([...values, document], random);
-    io.appendOutput(renderAssignment('secrets', document, delimiter));
+    io.appendOutput(renderAssignment("secrets", document, delimiter));
   }
 
   // Names only, so this output is safe to print, log and branch on.
-  const nameDelimiter = chooseDelimiter([names.join('\n')], random);
-  io.appendOutput(renderAssignment('keys', names.join('\n'), nameDelimiter));
+  const nameDelimiter = chooseDelimiter([names.join("\n")], random);
+  io.appendOutput(renderAssignment("keys", names.join("\n"), nameDelimiter));
 
   io.log(
     `Injected ${plan.entries.length} secret(s) into ` +
-      `${inputs.exportTo === 'env' ? 'the job environment' : 'the `secrets` output'}` +
-      `${plan.skipped.length > 0 ? `, skipped ${plan.skipped.length}` : ''}.`,
+      `${inputs.exportTo === "env" ? "the job environment" : "the `secrets` output"}` +
+      `${plan.skipped.length > 0 ? `, skipped ${plan.skipped.length}` : ""}.`,
   );
   if (plan.entries.length > 0) {
-    io.log(`Names: ${names.join(', ')}`);
+    io.log(`Names: ${names.join(", ")}`);
   }
 
   return 0;
@@ -1078,21 +1078,21 @@ export function commandInject({ env, io, spawn = spawnSync, random = randomBytes
  * @returns {number} exit code
  */
 export function main(argv, { env = process.env, io = realIo(env), spawn, random } = {}) {
-  const subcommand = argv[0] ?? '';
+  const subcommand = argv[0] ?? "";
   try {
-    if (subcommand === 'install') {
+    if (subcommand === "install") {
       return commandInstall({ env, io, spawn });
     }
-    if (subcommand === 'inject') {
+    if (subcommand === "inject") {
       return commandInject({ env, io, spawn, random });
     }
     throw new ActionError(
       `unknown subcommand \`${subcommand}\``,
-      'Expected `install` or `inject`.',
+      "Expected `install` or `inject`.",
     );
   } catch (error) {
     const failure = /** @type {ActionError} */ (error);
-    io.command('error', `prick: ${failure.message}`);
+    io.command("error", `prick: ${failure.message}`);
     if (failure.hint) {
       io.log(failure.hint);
     }
@@ -1103,7 +1103,7 @@ export function main(argv, { env = process.env, io = realIo(env), spawn, random 
 // `import.meta.main` is Node 24+; this file is only ever run by the action, on
 // a runner whose Node is far newer than that, but the fallback keeps the module
 // importable by the test suite under any version.
-const isEntry = import.meta.main ?? process.argv[1]?.endsWith('inject.mjs');
+const isEntry = import.meta.main ?? process.argv[1]?.endsWith("inject.mjs");
 if (isEntry) {
   process.exitCode = main(process.argv.slice(2));
 }

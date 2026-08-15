@@ -154,9 +154,13 @@ function parseJwks(body: unknown, url: string): JwksKey[] {
   const document = typeof body === "object" && body !== null ? (body as RawJwksDocument) : null;
 
   if (document === null || !Array.isArray(document.keys)) {
-    throw new PrickError("SERVER_MISCONFIGURED", "The Access certs endpoint returned a malformed JWKS.", {
-      hint: `Expected a JSON document with a "keys" array from ${url}.`,
-    });
+    throw new PrickError(
+      "SERVER_MISCONFIGURED",
+      "The Access certs endpoint returned a malformed JWKS.",
+      {
+        hint: `Expected a JSON document with a "keys" array from ${url}.`,
+      },
+    );
   }
 
   const keys: JwksKey[] = [];
@@ -225,10 +229,14 @@ async function fetchJwks(url: string): Promise<JwksKey[]> {
   try {
     body = await response.json();
   } catch (cause) {
-    throw new PrickError("SERVER_MISCONFIGURED", "The Access certs endpoint returned invalid JSON.", {
-      hint: `Expected a JWKS document from ${url}.`,
-      cause,
-    });
+    throw new PrickError(
+      "SERVER_MISCONFIGURED",
+      "The Access certs endpoint returned invalid JSON.",
+      {
+        hint: `Expected a JWKS document from ${url}.`,
+        cause,
+      },
+    );
   }
 
   return parseJwks(body, url);

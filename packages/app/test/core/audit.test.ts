@@ -102,10 +102,7 @@ describe("keyset pagination", () => {
     // a row across the page boundary and the reader never sees it.
     await seedEntries(3);
 
-    const second = await queryAudit(
-      ctx(),
-      query({ limit: 10, cursor: first.cursor ?? undefined }),
-    );
+    const second = await queryAudit(ctx(), query({ limit: 10, cursor: first.cursor ?? undefined }));
 
     const combined = [
       ...first.entries.map((entry) => entry.targetKey),

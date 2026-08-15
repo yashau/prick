@@ -1,11 +1,7 @@
 import type { BatchBody, ImportBody, RollbackBody } from "@prick/shared";
 import { and, asc, desc, eq, inArray, ne, sql } from "drizzle-orm";
 
-import {
-  decryptSecretValue,
-  encryptSecretValue,
-  type Keyring,
-} from "../crypto/index.js";
+import { decryptSecretValue, encryptSecretValue, type Keyring } from "../crypto/index.js";
 import { uuidv7 } from "../db/ids.js";
 import {
   environments,
@@ -186,11 +182,7 @@ interface WritePlan {
   removed: string[];
 }
 
-function planWrite(
-  input: BatchBody,
-  state: Map<string, KeyState>,
-  maxSecrets: number,
-): WritePlan {
+function planWrite(input: BatchBody, state: Map<string, KeyState>, maxSecrets: number): WritePlan {
   const set = input.set ?? {};
   const setKeys = Object.keys(set);
   const explicitDeletes = input.delete ?? [];
@@ -208,9 +200,7 @@ function planWrite(
     );
   }
 
-  const liveKeys = [...state.entries()]
-    .filter(([, value]) => value.live)
-    .map(([key]) => key);
+  const liveKeys = [...state.entries()].filter(([, value]) => value.live).map(([key]) => key);
 
   const deleteKeys =
     input.mode === "replace"
@@ -1229,11 +1219,7 @@ export async function importSecrets(
   // same plan through the same function -- so what it shows is what would
   // happen, rather than a second implementation that agrees by inspection.
   const state = await readKeyState(ctx, environment.id);
-  const plan = planWrite(
-    { mode: input.mode, set: parsed.values },
-    state,
-    ctx.config.envMaxSecrets,
-  );
+  const plan = planWrite({ mode: input.mode, set: parsed.values }, state, ctx.config.envMaxSecrets);
 
   return {
     added: plan.added,
@@ -1278,11 +1264,9 @@ function parseContent(input: ImportBody): {
       // Names the KEY, never the value -- including when the value is a number
       // or an object, where quoting it would feel harmless and would still be a
       // secret in a response body.
-      throw new PrickError(
-        "VALIDATION_FAILED",
-        `The value of "${key}" is not a string.`,
-        { hint: "Secret values are strings. Quote numbers and booleans." },
-      );
+      throw new PrickError("VALIDATION_FAILED", `The value of "${key}" is not a string.`, {
+        hint: "Secret values are strings. Quote numbers and booleans.",
+      });
     }
     values[key] = value;
   }

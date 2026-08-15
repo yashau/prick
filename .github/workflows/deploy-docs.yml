@@ -9,13 +9,13 @@ on:
     branches: [main]
     paths:
       # The content ...
-      - 'docs/**'
+      - "docs/**"
       # ... the renderer ...
-      - 'packages/docs/**'
+      - "packages/docs/**"
       # ... and this workflow itself, so a change to the deploy steps is
       # exercised on the commit that makes it rather than on some later,
       # unrelated docs edit.
-      - '.github/workflows/deploy-docs.yml'
+      - ".github/workflows/deploy-docs.yml"
   workflow_dispatch:
 
 permissions:

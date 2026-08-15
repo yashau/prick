@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { DotenvParseError, parseDotenv, parseDotenvToMap } from "../../src/lib/server/core/dotenv.js";
+import {
+  DotenvParseError,
+  parseDotenv,
+  parseDotenvToMap,
+} from "../../src/lib/server/core/dotenv.js";
 import { throwsWith } from "../auth/rejects.js";
 
 /**

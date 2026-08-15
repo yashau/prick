@@ -49,9 +49,7 @@ export {
 export const TEST_MASTER_KEY = bytesToBase64(new Uint8Array(32).map((_, index) => index));
 
 /** A second, distinct key, for rotation and unknown-kid cases. */
-export const TEST_MASTER_KEY_OLD = bytesToBase64(
-  new Uint8Array(32).map((_, index) => 255 - index),
-);
+export const TEST_MASTER_KEY_OLD = bytesToBase64(new Uint8Array(32).map((_, index) => 255 - index));
 
 function bytesToBase64(bytes: Uint8Array): string {
   let binary = "";

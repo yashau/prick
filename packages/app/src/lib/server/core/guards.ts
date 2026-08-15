@@ -38,11 +38,7 @@ import { notFound } from "./errors.js";
  * ("point CI at prick, watch it fail, click Grant") stop working for exactly the
  * requests that matter most.
  */
-export async function assertVisible(
-  ctx: CoreContext,
-  scope: Scope,
-  kind: string,
-): Promise<void> {
+export async function assertVisible(ctx: CoreContext, scope: Scope, kind: string): Promise<void> {
   if (await can(ctx, scope, "reader")) return;
 
   await recordDenial(ctx, { scope, required: "reader", resource: kind });

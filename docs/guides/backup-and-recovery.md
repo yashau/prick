@@ -25,10 +25,10 @@ need Cloudflare credentials instead. Start with
 
 ## There are two things to back up
 
-| Thing | Where it lives | Backed up how |
-|---|---|---|
+| Thing                                   | Where it lives  | Backed up how                         |
+| --------------------------------------- | --------------- | ------------------------------------- |
 | `MASTER_KEY` (and any `MASTER_KEY_OLD`) | A Worker secret | By you, at the moment you generate it |
-| The D1 database | Cloudflare | `wrangler d1 export` |
+| The D1 database                         | Cloudflare      | `wrangler d1 export`                  |
 
 Both are required. Either one alone is useless.
 

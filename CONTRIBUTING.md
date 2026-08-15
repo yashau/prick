@@ -37,14 +37,14 @@ The two workspaces never overlap: Cargo members are `crates/*`, pnpm packages ar
 
 `mise tasks` lists everything. The ones you will use:
 
-| Task | Does |
-|---|---|
-| `mise run dev` | Worker + UI dev server |
-| `mise run test` | Rust + Worker tests |
-| `mise run lint` | clippy, oxlint, svelte-check, actionlint, typos |
-| `mise run fmt` | format everything in place |
-| `mise run e2e` | Playwright |
-| `mise run ci` | **exact mirror of CI** — run before opening a PR |
+| Task            | Does                                             |
+| --------------- | ------------------------------------------------ |
+| `mise run dev`  | Worker + UI dev server                           |
+| `mise run test` | Rust + Worker tests                              |
+| `mise run lint` | clippy, oxlint, svelte-check, actionlint, typos  |
+| `mise run fmt`  | format everything in place                       |
+| `mise run e2e`  | Playwright                                       |
+| `mise run ci`   | **exact mirror of CI** — run before opening a PR |
 
 ## 4. Code style
 
@@ -65,7 +65,7 @@ build on any hit.
 
 - **Rust** — `cargo-nextest`. Pure logic lives in `prick-core`.
 - **miri** — runs against `prick-core` only. It cannot execute network calls, `Command`/`exec`, or
-  FFI, so most of the CLI is out of reach. Its job here is *enforcement, not discovery*: a green miri
+  FFI, so most of the CLI is out of reach. Its job here is _enforcement, not discovery_: a green miri
   run is a machine-checked proof that `prick-core` is genuinely pure — it cannot pass if someone adds
   a file read, a clock call, or an FFI dependency. Keep it that way.
 - **Worker** — vitest with `@cloudflare/vitest-pool-workers`, against real D1 in miniflare, offline.
@@ -78,7 +78,7 @@ integration tests — miri cannot check it.
 
 Edit the Drizzle schema, then generate. Never hand-edit generated SQL.
 
-**Migrations must be additive.** Deploy applies migrations *before* the new code ships, so a release
+**Migrations must be additive.** Deploy applies migrations _before_ the new code ships, so a release
 must tolerate the previous version's code running against the new schema. Destructive changes take
 three releases: add nullable and backfill, then make it required, then drop the old column.
 
