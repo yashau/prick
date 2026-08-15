@@ -275,6 +275,7 @@ prk access list
 prk access identities [--denied]
 prk access grant <SUBJECT> --role <ROLE> [--scope <SCOPE>] [--expires-in <DAYS>]
 prk access revoke <SUBJECT> [--scope <SCOPE>]
+prk access explain <SUBJECT>
 ```
 
 | Flag           | Values                               | Default       |
@@ -296,6 +297,34 @@ subject the server has ever seen authenticate.
 `list` and `identities` currently print the server's JSON verbatim whether or not
 `--json` was given. There is no `prk` subcommand for groups yet — manage those
 through the API or the web UI.
+
+`list` shows **direct** grants only, which with groups in the model is half the
+picture. `explain` is the other command: it reads
+`GET /identities/{id}/effective-permissions`, so it covers roles held through a
+group, and it names what conferred each one rather than only reporting the role.
+
+```
+$ prk access explain bob@example.com
+bob@example.com	user
+groups	contractors, platform
+billing:production	admin	via group `platform` on `billing:*`
+     reader	a direct grant	on `billing:production`
+  -> admin	group `platform`	on `billing:*`
+```
+
+The first column of each entry is the scope, spelled the way `--scope` takes one.
+Underneath it is every grant that reaches that scope — including grants sitting
+higher up, because "the `platform` group has admin on the project" _is_ the answer
+to why Bob has the environment. `->` marks the one the server reported as
+`decisive`: the one that actually set the role, and therefore the one to remove.
+
+A **disabled** identity reports `none` at every scope with nothing marked, and the
+sources still listed — the kill switch outranks every grant, and what re-enabling
+would restore is the thing being decided.
+
+Entries are narrowed to the scopes you administer. Sources inside a visible entry
+are not, so a project admin can see that the role came from a global grant on a
+group even though the global entry itself is invisible to them.
 
 ### `prk completions`
 

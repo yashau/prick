@@ -16,7 +16,7 @@ use prick_api::ops;
 
 use crate::cli::GlobalArgs;
 use crate::commands::{
-    Context, naming, projects::confirm, projects::resolve_slug, require_project,
+    Context, projects::confirm, projects::resolve_slug, require_project, require_slug,
 };
 use crate::error::CliError;
 use crate::output::Output;
@@ -131,7 +131,7 @@ pub fn run(command: &EnvCommand, global: &GlobalArgs, out: Output) -> Result<(),
         }
 
         EnvCommand::Remove { slug } => {
-            naming::require_slug("environment", slug)?;
+            require_slug("environment", slug)?;
             if !confirm(global, out, &format!("Delete environment `{slug}` and all its secrets"))? {
                 return Err(CliError::Other("cancelled".to_owned()));
             }

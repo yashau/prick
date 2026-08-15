@@ -166,6 +166,10 @@ loud and takes the grants with it.
 
 ### Why does Bob have production?
 
+```bash
+prk access explain bob@example.com
+```
+
 ```
 GET /api/v1/identities/{id}/effective-permissions
 ```
@@ -185,6 +189,10 @@ than one entry per project.
 A **disabled** identity reports `role: null` on every entry, with the sources still
 listed and nothing decisive. The kill switch outranks every grant, so the honest
 answer is "nothing, and here is what re-enabling would restore".
+
+`prk access explain` renders that: one line per scope naming the role and the
+source that conferred it, then every source underneath with `->` against the
+decisive one. See [`prk access`](/reference/cli/#prk-access).
 
 ## The service token flow
 

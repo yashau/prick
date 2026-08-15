@@ -34,4 +34,5 @@ pub mod keyname;
 pub mod pkce;
 pub mod redact;
 pub mod scope;
+pub mod slug;
 pub mod urlpath;

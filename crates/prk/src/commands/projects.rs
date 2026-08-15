@@ -8,9 +8,10 @@
 use clap::Subcommand;
 
 use prick_api::ops;
+use prick_core::slug::slugify;
 
 use crate::cli::GlobalArgs;
-use crate::commands::{Context, naming};
+use crate::commands::{Context, require_slug};
 use crate::error::CliError;
 use crate::output::Output;
 
@@ -118,14 +119,14 @@ pub fn run(command: &ProjectsCommand, global: &GlobalArgs, out: Output) -> Resul
         }
 
         ProjectsCommand::Rename { project, name } => {
-            naming::require_slug("project", project)?;
+            require_slug("project", project)?;
             let renamed =
                 context.block_on(ops::update_project(client, project, Some(name), None))?;
             report_project(&renamed, global, out, "Renamed");
         }
 
         ProjectsCommand::Remove { project } => {
-            naming::require_slug("project", project)?;
+            require_slug("project", project)?;
             // Deleting a project cascades to its environments and their
             // secrets, which is not something to do on a typo.
             if !global.yes && !confirm(global, out, &format!("Delete project `{project}`"))? {
@@ -157,10 +158,10 @@ pub fn run(command: &ProjectsCommand, global: &GlobalArgs, out: Output) -> Resul
 pub fn resolve_slug(kind: &str, slug: Option<&str>, name: &str) -> Result<String, CliError> {
     match slug {
         Some(slug) => {
-            naming::require_slug(kind, slug)?;
+            require_slug(kind, slug)?;
             Ok(slug.to_owned())
         }
-        None => naming::slugify(name).ok_or_else(|| {
+        None => slugify(name).ok_or_else(|| {
             CliError::Other(format!(
                 "no {kind} slug could be derived from `{name}`; pass --slug <SLUG> with lowercase \
                  letters, digits and single hyphens"

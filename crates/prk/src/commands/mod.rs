@@ -15,7 +15,7 @@ pub mod auth;
 pub mod completions;
 pub mod doctor;
 pub mod env;
-pub mod naming;
+pub mod explain;
 pub mod projects;
 pub mod run;
 pub mod secrets;
@@ -26,6 +26,7 @@ use std::io::Read as _;
 use std::path::Path;
 
 use prick_auth::{ServiceToken, StorageBackend, TokenSource, TokenStore};
+use prick_core::slug::{SLUG_MAX_LEN, is_slug, slugify};
 use secrecy::{ExposeSecret, SecretString};
 
 use crate::cli::{Cli, Command, GlobalArgs};
@@ -265,6 +266,34 @@ pub fn dispatch(cli: &Cli, out: Output) -> Result<(), CliError> {
     }
 }
 
+/// Rejects a name that no route could address.
+///
+/// The grammar itself is [`prick_core::slug`], which is pure and shared. What
+/// lives here is the **message**, because it is about the command line: it names
+/// the argument the reader typed and the slug they probably meant, so the
+/// failure reads as being about `--env` rather than about a schema.
+///
+/// # Errors
+///
+/// [`CliError::Other`] naming the value and the grammar. `kind` is the word the
+/// message uses -- "project", "environment" -- so the reader is told which of
+/// the two arguments is wrong.
+pub fn require_slug(kind: &str, value: &str) -> Result<(), CliError> {
+    if is_slug(value) {
+        return Ok(());
+    }
+
+    let suggestion = slugify(value)
+        .filter(|slug| slug != value)
+        .map(|slug| format!(" Did you mean `{slug}`?"))
+        .unwrap_or_default();
+
+    Err(CliError::Other(format!(
+        "`{value}` is not a usable {kind} name: it must be lowercase letters, digits and single \
+         hyphens, at most {SLUG_MAX_LEN} characters.{suggestion}"
+    )))
+}
+
 /// The project a command operates in.
 ///
 /// # Errors
@@ -275,7 +304,7 @@ pub fn require_project(global: &GlobalArgs) -> Result<&str, CliError> {
     let project = global.project.as_deref().filter(|value| !value.is_empty()).ok_or_else(|| {
         CliError::Other("no project selected; pass --project <SLUG> or set PRK_PROJECT".to_owned())
     })?;
-    naming::require_slug("project", project)?;
+    require_slug("project", project)?;
     Ok(project)
 }
 
@@ -296,7 +325,7 @@ pub fn require_scope(global: &GlobalArgs) -> Result<(&str, &str), CliError> {
     let environment = global.env.as_deref().filter(|value| !value.is_empty()).ok_or_else(|| {
         CliError::Other("no environment selected; pass --env <SLUG> or set PRK_ENV".to_owned())
     })?;
-    naming::require_slug("environment", environment)?;
+    require_slug("environment", environment)?;
 
     Ok((project, environment))
 }
@@ -383,6 +412,20 @@ mod tests {
         let global = global_with(Some("billing"), Some("EU West"));
         let message = require_scope(&global).unwrap_err().to_string();
         assert!(message.contains("eu-west"), "{message}");
+    }
+
+    #[test]
+    fn the_refusal_names_the_grammar_and_offers_the_derived_form() {
+        let err = require_slug("environment", "EU West").expect_err("not a slug");
+        let message = err.to_string();
+        assert!(message.contains("environment"), "{message}");
+        assert!(message.contains("EU West"), "{message}");
+        assert!(message.contains("eu-west"), "{message}");
+    }
+
+    #[test]
+    fn a_valid_slug_is_accepted_without_comment() {
+        assert!(require_slug("project", "billing").is_ok());
     }
 
     /// Writes a secret file and returns the directory guarding its lifetime.

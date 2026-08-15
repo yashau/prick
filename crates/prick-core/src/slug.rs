@@ -1,7 +1,7 @@
 //! Slugs: the one spelling every route addresses a project or an environment
 //! by.
 //!
-//! # Why the CLI checks this itself
+//! # Why the client checks this itself
 //!
 //! `Slug` in `@prick/shared` is `^[a-z0-9]+(?:-[a-z0-9]+)*$`, bounded at 64
 //! characters, and every path parameter is validated against it. Sending
@@ -10,16 +10,13 @@
 //!
 //! The grammar is also what makes two other things unambiguous, which is why it
 //! is this strict: a slug contains no `/`, so it cannot add a path segment, and
-//! no `:`, so `project:environment` and `KEY:reveal` each have exactly one
-//! parse.
+//! no `:`, so `project:environment` -- see [`crate::scope`] -- and `KEY:reveal`
+//! each have exactly one parse.
 //!
-//! # Where this would rather live
-//!
-//! `prick-core`, with the other pure string logic. It is here because
-//! `prick-core` is machine-checked for purity and is not this component's to
-//! change; moving it is a one-file follow-up with no behaviour in it.
-
-use crate::error::CliError;
+//! Neither function here fails: a name either is a slug or is not, and one
+//! either has a derivable slug or has none. Turning "not a slug" into a refusal
+//! a person can act on is the caller's job, because the wording depends on
+//! which argument was wrong.
 
 /// The longest a slug may be, matching `SLUG_MAX_LENGTH` in `@prick/shared`.
 pub const SLUG_MAX_LEN: usize = 64;
@@ -76,29 +73,6 @@ pub fn slugify(name: &str) -> Option<String> {
     if trimmed.is_empty() { None } else { Some(trimmed.to_owned()) }
 }
 
-/// Rejects a name that no route could address.
-///
-/// # Errors
-///
-/// [`CliError::Other`] naming the value and the grammar. `kind` is the word the
-/// message uses -- "project", "environment" -- so the reader is told which of
-/// the two arguments is wrong.
-pub fn require_slug(kind: &str, value: &str) -> Result<(), CliError> {
-    if is_slug(value) {
-        return Ok(());
-    }
-
-    let suggestion = slugify(value)
-        .filter(|slug| slug != value)
-        .map(|slug| format!(" Did you mean `{slug}`?"))
-        .unwrap_or_default();
-
-    Err(CliError::Other(format!(
-        "`{value}` is not a usable {kind} name: it must be lowercase letters, digits and single \
-         hyphens, at most {SLUG_MAX_LEN} characters.{suggestion}"
-    )))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -148,19 +122,5 @@ mod tests {
         assert_eq!(slugify("日本"), None);
         assert_eq!(slugify("---"), None);
         assert_eq!(slugify(""), None);
-    }
-
-    #[test]
-    fn the_refusal_names_the_grammar_and_offers_the_derived_form() {
-        let err = require_slug("environment", "EU West").expect_err("not a slug");
-        let message = err.to_string();
-        assert!(message.contains("environment"), "{message}");
-        assert!(message.contains("EU West"), "{message}");
-        assert!(message.contains("eu-west"), "{message}");
-    }
-
-    #[test]
-    fn a_valid_slug_is_accepted_without_comment() {
-        assert!(require_slug("project", "billing").is_ok());
     }
 }

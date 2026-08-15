@@ -359,8 +359,8 @@ mod tests {
     #[test]
     fn the_parser_does_not_second_guess_a_name_it_cannot_validate() {
         // Whether `eu:west` names anything is a question about the server's
-        // slug grammar, and it is answered in `commands::naming` with a message
-        // that can suggest `eu-west`. A `value_parser` here would answer it
+        // slug grammar, and it is answered by `commands::require_slug` with a
+        // message that can suggest `eu-west`. A `value_parser` here would answer it
         // with clap's generic "invalid value" and exit 2 -- a usage error for
         // something that is not a usage mistake.
         let cli = Cli::try_parse_from(["prk", "--env", "eu:west:1", "whoami"]).unwrap();
@@ -389,6 +389,7 @@ mod tests {
             &["prk", "secrets", "list"],
             &["prk", "run", "--", "echo", "hi"],
             &["prk", "access", "list"],
+            &["prk", "access", "explain", "bob@example.com"],
             &["prk", "completions", "bash"],
             &["prk", "version"],
         ];

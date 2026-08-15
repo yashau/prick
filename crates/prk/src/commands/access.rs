@@ -41,8 +41,10 @@
 //! revocation path says so when it finds nothing to revoke.
 //!
 //! `GET /identities/{id}/effective-permissions` is the route that answers the
-//! whole question, sources and all. Wiring it up is the next command to write
-//! here, not a change to these ones.
+//! whole question, sources and all. It is wired up as `prk access explain`, in
+//! [`crate::commands::explain`] -- a **new** command rather than a change to
+//! these ones, because a listing that quietly grew a second meaning is how a
+//! script that parsed it starts reporting something else.
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -53,7 +55,7 @@ use prick_api::{GrantScope, ops};
 use prick_core::scope::Scope;
 
 use crate::cli::GlobalArgs;
-use crate::commands::{Context, naming, projects::confirm};
+use crate::commands::{Context, explain, projects::confirm, require_slug};
 use crate::error::CliError;
 use crate::output::Output;
 
@@ -109,6 +111,17 @@ pub enum AccessCommand {
         #[arg(long, value_name = "SCOPE", default_value = "*:*")]
         scope: String,
     },
+
+    /// Explain what an identity can do, and what conferred it.
+    ///
+    /// Unlike `list`, this includes roles held through a group, and it names
+    /// the grant or group that conferred each one -- so the answer is "yes,
+    /// and because they are in the `platform` group", not just "yes".
+    Explain {
+        /// The identity: an email address, or a service token's common name.
+        #[arg(value_name = "SUBJECT")]
+        subject: String,
+    },
 }
 
 impl AccessCommand {
@@ -119,6 +132,7 @@ impl AccessCommand {
             Self::Identities { .. } => "access identities",
             Self::Grant { .. } => "access grant",
             Self::Revoke { .. } => "access revoke",
+            Self::Explain { .. } => "access explain",
         }
     }
 }
@@ -265,6 +279,10 @@ pub fn run(command: &AccessCommand, global: &GlobalArgs, out: Output) -> Result<
                 out.data(&format!("Revoked `{subject}` on `{parsed}`."));
             }
         }
+
+        AccessCommand::Explain { subject } => {
+            explain::run(&context, subject, global, out)?;
+        }
     }
 
     Ok(())
@@ -280,10 +298,10 @@ pub fn run(command: &AccessCommand, global: &GlobalArgs, out: Output) -> Result<
 /// [`CliError::Other`] naming the offending half.
 fn require_scope_slugs(scope: &Scope) -> Result<(), CliError> {
     if !scope.is_project_wildcard() {
-        naming::require_slug("project", scope.project())?;
+        require_slug("project", scope.project())?;
     }
     if !scope.is_environment_wildcard() {
-        naming::require_slug("environment", scope.environment())?;
+        require_slug("environment", scope.environment())?;
     }
     Ok(())
 }
@@ -323,7 +341,7 @@ fn expires_at_from_now(days: u32) -> Result<i64, CliError> {
 /// [`CliError::Api`] for the listing itself, and [`CliError::Other`] when no
 /// identity has that subject -- which is the normal state for a service token
 /// that has never been used, and is fixed by using it once.
-fn resolve_identity(context: &Context, subject: &str) -> Result<Identity, CliError> {
+pub(crate) fn resolve_identity(context: &Context, subject: &str) -> Result<Identity, CliError> {
     let identities = context.block_on(ops::list_identities(context.client()))?;
 
     identities.into_iter().find(|identity| identity.subject == subject).ok_or_else(|| {
@@ -552,6 +570,7 @@ mod tests {
                 expires_in: None,
             },
             AccessCommand::Revoke { subject: "ci@example.com".to_owned(), scope: "*:*".to_owned() },
+            AccessCommand::Explain { subject: "ci@example.com".to_owned() },
         ] {
             assert!(command.path().starts_with("access "));
         }
