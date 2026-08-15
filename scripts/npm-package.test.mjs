@@ -400,7 +400,10 @@ describe('rendering the full set', () => {
       assert.equal(manifest.name, MCP_PACKAGE);
       assert.equal(manifest.version, VERSION);
       assert.equal('devDependencies' in manifest, false);
-      assert.doesNotMatch(readFileSync(path.join(dir, 'package.json'), 'utf8'), /workspace:|catalog:/);
+      assert.doesNotMatch(
+        readFileSync(path.join(dir, 'package.json'), 'utf8'),
+        /workspace:|catalog:/,
+      );
     } finally {
       rmSync(f.root, { recursive: true, force: true });
     }
@@ -409,7 +412,12 @@ describe('rendering the full set', () => {
   test('the parent is rendered last, so it is the last thing published', () => {
     const f = fixture();
     try {
-      const emitted = renderPackages({ ...f, version: VERSION, allowMissing: false, log: () => {} });
+      const emitted = renderPackages({
+        ...f,
+        version: VERSION,
+        allowMissing: false,
+        log: () => {},
+      });
       assert.equal(emitted.at(-1).name, PARENT_PACKAGE);
       assert.equal(emitted.at(-2).name, MCP_PACKAGE);
     } finally {

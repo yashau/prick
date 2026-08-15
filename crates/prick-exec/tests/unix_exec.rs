@@ -9,8 +9,36 @@
 
 use std::ffi::OsStr;
 use std::os::unix::ffi::OsStrExt as _;
-use std::process::{Command, Output, Stdio};
+use std::os::unix::process::ExitStatusExt as _;
+use std::process::{Command, ExitStatus, Output, Stdio};
 use std::time::{Duration, Instant};
+
+// Signal numbers, named so the assertions read as intent rather than arithmetic.
+const SIGINT: i32 = 2;
+const SIGPIPE: i32 = 13;
+const SIGTERM: i32 = 15;
+
+/// Assert a process died from `signal`.
+///
+/// NOT `status.code() == Some(128 + signal)`. `128 + n` is the encoding a SHELL
+/// reports in `$?`; `ExitStatus::code()` returns `None` for a signal death and
+/// exposes the number through `signal()` instead. Asserting the shell's
+/// convention against the API is how these three tests were originally written,
+/// and they could not fail on the Windows dev machine because the whole module
+/// is `#![cfg(unix)]` -- so the mistake survived until CI ran them on Linux.
+///
+/// This matters beyond the assertion: because `run()` execs rather than
+/// supervises, the fixture process IS the child, so the signal that kills the
+/// child kills the fixture. Observing the signal directly is what proves that.
+#[track_caller]
+fn assert_killed_by(status: ExitStatus, signal: i32, why: &str) {
+    assert_eq!(status.signal(), Some(signal), "{why}");
+    assert_eq!(
+        status.code(),
+        None,
+        "a signal-killed process has no exit code of its own; {why}"
+    );
+}
 
 /// The fixture binary, located by cargo rather than guessed at.
 const CHILD: &str = env!("CARGO_BIN_EXE_prick-exec-child");
@@ -63,7 +91,7 @@ fn sigpipe_is_restored_to_its_default_disposition_before_exec() {
         "the child survived SIGPIPE, so its disposition was still SIG_IGN: {}",
         String::from_utf8_lossy(&out.stdout)
     );
-    assert_eq!(out.status.code(), Some(141), "a child killed by SIGPIPE must report 128 + 13");
+    assert_killed_by(out.status, SIGPIPE, "the child must have died from SIGPIPE");
 }
 
 #[test]
@@ -83,15 +111,15 @@ fn yes_piped_into_head_terminates_rather_than_hanging() {
 }
 
 #[test]
-fn a_child_killed_by_sigterm_reports_143() {
+fn a_child_killed_by_sigterm_is_reported_as_a_signal_death() {
     let out = fixture(["--", "/bin/sh", "-c", "kill -TERM $$"]);
-    assert_eq!(out.status.code(), Some(143));
+    assert_killed_by(out.status, SIGTERM, "SIGTERM must reach the exec'd process");
 }
 
 #[test]
-fn a_child_killed_by_sigint_reports_130() {
+fn a_child_killed_by_sigint_is_reported_as_a_signal_death() {
     let out = fixture(["--", "/bin/sh", "-c", "kill -INT $$"]);
-    assert_eq!(out.status.code(), Some(130));
+    assert_killed_by(out.status, SIGINT, "Ctrl+C must reach the exec'd process");
 }
 
 #[test]

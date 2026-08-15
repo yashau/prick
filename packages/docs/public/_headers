@@ -73,7 +73,7 @@
   #
   # What that concession costs is bounded by what this site is: no
   # authentication, no cookies, no session, no user-supplied content, no
-  # writeable endpoint, and no cross-origin read worth stealing. Every byte
+  # writable endpoint, and no cross-origin read worth stealing. Every byte
   # served is already public in the repository. An injected inline script would
   # need a way in first, and there is no input to inject through.
   #

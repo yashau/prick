@@ -1,6 +1,6 @@
 ---
 title: API reference
-description: The HTTP endpoints the Worker serves, the error envelope, and which routes are not mounted yet.
+description: The HTTP endpoints the Worker serves, the error envelope, the authentication model, and the concurrency and caching contracts.
 sidebar:
   order: 2
   label: API
@@ -10,11 +10,40 @@ The Worker serves a JSON API under `/api/*` and the SvelteKit admin UI
 everywhere else. Both call the same in-process domain layer, so authorization is
 written once rather than once per transport.
 
-:::caution[One endpoint exists]
-`GET /api/v1/health` is the only route mounted
-(`packages/app/src/lib/server/http/app.ts`). Everything else in this reference is
-marked as not implemented. The request schemas are written and validated
-(`packages/shared/src/api.ts`); the routes that would use them are not.
+An interactive reference is served by the Worker itself:
+
+| Path                   | What                                                |
+| ---------------------- | --------------------------------------------------- |
+| `/api/v1/docs`         | Scalar reference viewer                             |
+| `/api/v1/openapi.json` | The OpenAPI 3.1 document, generated from the router |
+
+The same document is committed at [`docs/openapi.json`](https://github.com/yashau/prick/blob/main/docs/openapi.json)
+and CI fails if it does not match the code, so the API surface shows up in a pull
+request diff even when the change that produced it is three files away.
+
+Both are unauthenticated. The document describes the _shape_ of the API — it is
+generated from the route table and from schemas that are already public in the
+repository, and it contains no project slugs, no key names, no identities and no
+data of any kind. Putting it behind Access would mean an operator cannot read the
+reference in order to work out how to authenticate.
+
+:::caution[`/api/v1/docs` executes third-party JavaScript]
+The viewer is a shell that loads its bundle from jsDelivr. Two things are done
+about that and one thing is not:
+
+- The CDN URL is **pinned to an exact version**. Scalar's default is
+  unversioned, which would make "whatever is latest when a browser asks" an
+  ungoverned dependency of your deployment; jsDelivr serves versioned artefacts
+  immutably, so a pinned URL is a fixed set of bytes.
+- The route carries its own **content security policy**, whose important clause
+  is `connect-src 'self'`. The page may fetch its own OpenAPI document and
+  nothing else, so a compromised bundle has no egress. `form-action 'none'` and
+  `base-uri 'none'` close the two ways a script gets data out without `fetch`.
+- **Residual risk:** the bundle still runs on this origin, and a browser attaches
+  the viewer's Access cookie to same-origin requests.
+
+The complete fix is to self-host the bundle as a static asset. If you are
+unwilling to accept the interim position, do not mount this route.
 :::
 
 ## Base path
@@ -27,37 +56,70 @@ Versioned from day one. The CLI is a separately released binary that users
 upgrade on their own schedule, so a deployed Worker will always be serving some
 older client.
 
-Slug alias routes of the form `/p/:slug/e/:slug/…` are planned for CLI
-ergonomics. They match **exactly**, never as a prefix.
+### Slug aliases
+
+Every environment-scoped route is served at two paths:
+
+```
+/api/v1/projects/{project}/environments/{env}/…   canonical
+/api/v1/p/{project}/e/{env}/…                     alias
+```
+
+Both mounts serve the same handlers — there is no second implementation to
+drift. They match **exactly**, never as a prefix, and that is a property of the
+slug grammar rather than of the router: a slug is lowercase alphanumerics with
+single interior hyphens, which excludes `/` (so a slug cannot add a path segment)
+and `:` (so the CLI's `project:environment` scope syntax has exactly one parse).
+
+Only the canonical form appears in the OpenAPI document. Documenting both would
+double it to say the same thing twice.
 
 ## Authentication
 
-Every route except `/health` requires a Cloudflare Access JWT.
+Every route except `/health`, `/openapi.json` and `/docs` requires a verified
+Cloudflare Access assertion.
 
-| Source                           | Notes                                                                             |
-| -------------------------------- | --------------------------------------------------------------------------------- |
-| `Cf-Access-Jwt-Assertion` header | Primary                                                                           |
-| `CF_Authorization` cookie        | Fallback. Cloudflare documents it as not guaranteed to be passed in every context |
-
-Service tokens present `CF-Access-Client-Id` and `CF-Access-Client-Secret`;
-Access exchanges those at the edge and the Worker sees the resulting JWT like any
-other.
+| Source                                            | Notes                                                                             |
+| ------------------------------------------------- | --------------------------------------------------------------------------------- |
+| `Cf-Access-Jwt-Assertion` header                  | Primary                                                                           |
+| `CF_Authorization` cookie                         | Fallback. Cloudflare documents it as not guaranteed to be passed in every context |
+| `CF-Access-Client-Id` + `CF-Access-Client-Secret` | Service tokens. Exchanged at the edge; the Worker never sees these two headers    |
 
 The Worker verifies the token itself rather than trusting that Access ran. See
 [Authentication](/guides/authentication#what-the-verifier-actually-checks) for
 the exact assertions.
+
+Three things happen on every authenticated request, in this order:
+
+1. The assertion is verified and classified. A non-empty `sub` with an `email`
+   is a user; a `common_name` with an empty `sub` is a service token.
+2. `503 NO_ADMINS_CONFIGURED` if neither `BOOTSTRAP_ADMINS` nor a usable global
+   admin grant exists. Failing closed beats an installation that answers
+   requests, denies every privileged action, and gives no indication why.
+3. The identity row is created or its `last_seen_at` touched. This is what makes
+   a denied service token grantable at all — Access issues the tokens, so the
+   first request from one is the only introduction there will ever be.
+
+:::note[Unknown endpoints answer 401, not 404]
+Authentication is mounted ahead of routing, so an anonymous caller is refused
+before the router decides whether a path exists. The alternative turns the status
+code into a route oracle: 404 versus 401 would map the entire surface, including
+endpoints added later, to an unauthenticated attacker.
+:::
 
 ## There is no CORS
 
 There is no CORS middleware in this app and there must never be one. Omitting
 `Access-Control-Allow-Origin` entirely is what stops any other site on the
 internet from reading a response from this API in a victim's browser, and the
-browser enforces it for free. The UI is same-origin, so it needs nothing.
+browser enforces it for free. The UI is same-origin, so it needs nothing. A
+client that wants cross-origin access wants a service token and a server-side
+call, which is what the CLI and the MCP package do.
 
 ## Request ids
 
 Every response carries `X-Request-Id`. A client-supplied value is echoed back if
-it matches `^[A-Za-z0-9._-]{1,64}$`; otherwise the Worker generates one.
+it matches `^[A-Za-z0-9._-]{1,64}$`; otherwise the Worker generates a UUIDv7.
 
 The id is stored on every audit row the request produces. That is the point: a
 user pastes the id from an error toast into a support thread, and an
@@ -80,32 +142,242 @@ Static assets are served by the Workers assets runtime **without invoking the
 Worker**, so no middleware can reach them. They get their headers from
 `packages/app/_headers` instead.
 
-Reveal and export responses are additionally specified to carry
-`Cache-Control: no-store`, `Cloudflare-CDN-Cache-Control: no-store` and
-`Vary: Cf-Access-Jwt-Assertion` — the last so a cached entry can never be served
-across identities. The middleware exists; the routes it binds to do not.
+### The two routes that return plaintext
 
-## `GET /api/v1/health`
+`GET …/secrets/{key}` and `GET …/secrets:export` additionally carry:
 
-The only implemented endpoint. Unauthenticated by design.
-
-```bash
-curl https://prick.example.com/api/v1/health
+```
+Cache-Control: no-store, no-cache, must-revalidate, private
+Cloudflare-CDN-Cache-Control: no-store
+Vary: Cf-Access-Jwt-Assertion
 ```
 
-```json
-{ "status": "ok", "version": "0.0.0-dev" }
+All three are necessary. `Cache-Control` covers the browser and intermediaries;
+Cloudflare's own edge cache does not necessarily honour it, so it is told
+separately; and `Vary` is what stops a cached entry ever being served across
+identities. They are applied by middleware bound to those two paths, above the
+route table, rather than by each handler — so the next value-returning route that
+forgets is a missing line somebody notices, not a convention somebody breaks.
+
+## Concurrency: `ETag` and `If-Match`
+
+`GET …/secrets` answers with a strong entity tag that **is** the environment's
+revision:
+
+```
+ETag: "3"
 ```
 
-The version string is currently a literal in the handler, not the deployed
-build's version.
+Send it back on a write and the write becomes conditional:
 
-:::danger[If this returns 200 to an unauthenticated caller, stop]
+```
+If-Match: "3"
+```
+
+A mismatch is `412` and the environment is left byte-for-byte unchanged. The
+guard is not `UPDATE … WHERE rev = ?` — D1 rolls a batch back when a statement
+_errors_, not when it changes zero rows, so a non-matching update would be a
+perfectly successful statement that affected nothing and the batch would commit
+the write it was supposed to prevent. It is a deliberate constraint violation
+inside the same transaction, whose failure mode _is_ the rollback.
+
+| Value                    | Meaning                                                            |
+| ------------------------ | ------------------------------------------------------------------ |
+| absent                   | Unconditional write                                                |
+| `*`                      | A guard on existence only                                          |
+| `"3"` or `W/"3"`         | Write only if the environment is at revision 3                     |
+| a list, or anything else | `400`. A malformed precondition is refused, never silently ignored |
+
+`expected_rev` in the body means the same thing. Sending both is allowed only
+when they agree; disagreement is a `400` rather than a precedence rule, because a
+precedence rule means one of the two silently does nothing.
+
+`If-Match` is evaluated by `secrets:batch` and `secrets:import`. On
+`secrets:rename` and `secrets:rollback` it is **refused with 400**: the domain
+layer exposes no revision guard on those, and a caller who sent a precondition
+believes their write is conditional.
+
+The read order matters and is deliberate: the revision is read _before_ the
+listing, so a concurrent write produces an `ETag` that is merely stale rather
+than one newer than the contents it labels. Fails closed in the only direction
+that matters.
+
+## Routes
+
+### Meta
+
+| Method | Path            | Notes                                                                     |
+| ------ | --------------- | ------------------------------------------------------------------------- |
+| `GET`  | `/health`       | Unauthenticated. `{ "service": "prick", "status": "ok", "version": "…" }` |
+| `GET`  | `/whoami`       | The resolved identity and the caller's **global** role                    |
+| `GET`  | `/openapi.json` | Unauthenticated. Describes shape; carries no data                         |
+| `GET`  | `/docs`         | Unauthenticated. Scalar viewer                                            |
+
+:::danger[If `/health` returns 200 to an unauthenticated caller, stop]
 `prk login` probes this endpoint first, and an unauthenticated `200` means
 Cloudflare Access is not in front of this hostname. Your secrets manager is open
 to the internet. This handler must never grow a field that reveals anything
-beyond "something is listening here".
+beyond "a prick server is listening here".
 :::
+
+`/health` answers `200` only once the fail-closed key ring middleware has
+succeeded, which is what makes `ok` mean something: an installation whose
+`MASTER_KEY` decodes to 31 bytes answers `500` here, not `200`.
+
+### Projects
+
+| Method   | Path                  | Requires              |
+| -------- | --------------------- | --------------------- |
+| `GET`    | `/projects`           | any identity (scoped) |
+| `POST`   | `/projects`           | **global** writer     |
+| `GET`    | `/projects/{project}` | reader (visibility)   |
+| `PATCH`  | `/projects/{project}` | project writer        |
+| `DELETE` | `/projects/{project}` | project admin         |
+
+`GET /projects` is scoped in the query, not filtered afterwards, so an actor with
+no grants receives `[]` rather than a refusal — and cannot infer the existence of
+anything from a count or a page boundary. `POST` requires _global_ writer because
+a project has no parent to be scoped to.
+
+`DELETE` is one statement. D1 enforces foreign keys, so `ON DELETE CASCADE`
+removes the environments, their secrets, the whole version history and every
+grant scoped to them inside the same transaction.
+
+### Environments
+
+| Method   | Path                                     | Requires          |
+| -------- | ---------------------------------------- | ----------------- |
+| `GET`    | `/projects/{project}/environments`       | reader            |
+| `POST`   | `/projects/{project}/environments`       | project writer    |
+| `GET`    | `/projects/{project}/environments/{env}` | reader            |
+| `DELETE` | `/projects/{project}/environments/{env}` | environment admin |
+
+Listing re-checks visibility per environment: a project-scoped grant covers all
+of them, an environment-scoped grant covers exactly one, and that caller reached
+the endpoint through a project made visible _by_ that grant.
+
+There is no reparent operation, and adding one is not a small change.
+`environments.project_id` is contractually immutable because `project_id` is
+excluded from the crypto AAD — a reparent that skipped re-encryption would appear
+to work, because nothing in the AAD would have changed.
+
+### Secrets
+
+All under `/projects/{project}/environments/{env}` (or the `/p/…/e/…` alias).
+
+| Method | Path                      | Requires | Returns values |
+| ------ | ------------------------- | -------- | -------------- |
+| `GET`  | `/secrets`                | reader   | no             |
+| `POST` | `/secrets:batch`          | writer   | no             |
+| `POST` | `/secrets:import`         | writer   | no             |
+| `GET`  | `/secrets:export`         | reader   | **yes**        |
+| `POST` | `/secrets:rename`         | writer   | no             |
+| `POST` | `/secrets:rollback`       | writer   | no             |
+| `GET`  | `/secrets/{key}`          | reader   | **yes**        |
+| `GET`  | `/secrets/{key}:reveal`   | reader   | **yes**        |
+| `GET`  | `/secrets/{key}/versions` | reader   | no             |
+
+`GET /secrets/{key}` and `GET /secrets/{key}:reveal` are the same operation. Both
+spellings exist because the browser client and the machine clients each guessed a
+different one, and the parse is unambiguous: a secret key is a POSIX environment
+variable name and cannot contain a colon. The response is `{ key, value }`.
+
+`GET /secrets` decrypts every row and discards the plaintext immediately. That
+looks wasteful and is not: `unreadable` cannot be determined any other way, because
+AES-GCM has no verify-without-decrypting operation — the tag check _is_ the
+decryption. A row that fails comes back **marked**, never omitted. A list that
+silently drops what it could not read turns a tamper attempt into a shorter `.env`
+file, and a shorter `.env` file into a production deploy with no `DATABASE_URL`.
+
+`GET /secrets:export` takes the opposite line for the same reason: a single
+unreadable row fails the whole export, rather than handing the operator a file
+that is silently missing a variable.
+
+`POST /secrets:batch` applies the whole body in **one** D1 transaction — revision
+bump, new versions, upserts, tombstones, deletes, audit row last. There is no
+partial application. On a version race the losing batch writes nothing and is
+retried once against freshly read state; a second loss is `409`.
+
+`POST /secrets:import` with `dry_run: true` computes the diff without writing,
+through the same planning function the write path uses. The diff carries key names
+and change kinds only. `changed` means "this key already existed and is being
+rewritten"; it does **not** mean the value differs, and it cannot — telling those
+apart would require decrypting every existing value to compare, which is a silent
+full-environment reveal performed by the screen whose purpose is to avoid one.
+
+`POST /secrets:rollback` moves **forward**: version N is decrypted and
+re-encrypted as `current + 1`. The old envelope is never resurrected, because its
+AAD binds it to version N.
+
+`POST /secrets:rename` decrypts under the old key's AAD and re-encrypts under the
+new one, in a single batch. There is no cheap rename and there cannot be one.
+
+### Access
+
+| Method   | Path                         | Requires                       |
+| -------- | ---------------------------- | ------------------------------ |
+| `GET`    | `/identities`                | any admin, at any scope        |
+| `PATCH`  | `/identities/{id}`           | **global** admin               |
+| `GET`    | `/grants`                    | any admin, at any scope        |
+| `POST`   | `/grants`                    | admin **at the scope granted** |
+| `DELETE` | `/grants/{id}`               | admin at the grant's scope     |
+| `GET`    | `/access/unknown-identities` | any admin, at any scope        |
+
+`PATCH /identities/{id}` requires _global_ admin because `disabled` is a kill
+switch that outranks every grant at every scope — including `BOOTSTRAP_ADMINS`.
+
+`POST /grants` requires admin at the scope being granted, which falls out of
+scope inheritance and needs no special case. That is the point: the special case
+is where privilege escalation lives. A duplicate is a `409`, not an upsert.
+
+`DELETE /grants/{id}` refuses to remove the last usable global administrator while
+`BOOTSTRAP_ADMINS` is empty (`409 LAST_ADMIN`). There is no recovery credential in
+this design, so the only way back from an accidental lockout is editing a var and
+redeploying — which is not a decision a confirmation dialog can make for you.
+
+`GET /access/unknown-identities` is read out of the audit log. A service token's
+`common_name` is `e367826f93b8d71185e03fe518aff3b4.access` and nobody maps that to
+"staging deploy" by looking at it, so the denial _is_ the introduction. The rows
+carry no id; match `subject` against `GET /identities` to obtain the `identity_id`
+a grant needs.
+
+### Audit
+
+| Method | Path     | Requires         |
+| ------ | -------- | ---------------- |
+| `GET`  | `/audit` | **global** admin |
+
+Keyset-paginated on the UUIDv7 primary key, never on `OFFSET`. The log is
+append-only and grows under the reader, so every insert between two `OFFSET` pages
+shifts the window by one and makes the reader silently skip a row.
+
+A filter naming a project that does not exist yields an empty page, not a `404` —
+the same non-oracle rule from the other direction.
+
+:::caution[This is stricter than it should be]
+The domain layer performs no scope narrowing on the log, so the transport gates it
+at global admin rather than serving a project admin the whole installation's
+events. A project admin ought to see their own project's events; that requires
+filtering in `core`, and this restriction lifts when it lands.
+:::
+
+### Admin
+
+| Method | Path             | Status today |
+| ------ | ---------------- | ------------ |
+| `GET`  | `/admin/keyring` | `501`        |
+| `POST` | `/admin/rekey`   | `501`        |
+
+Both are mounted and both answer `501 NOT_IMPLEMENTED`, because the domain
+functions are stubs. `501` is a truthful answer a client can branch on, whereas a
+`404` from an unmounted route is indistinguishable from a typo — and fixing the
+paths now means the settings screen and the cron trigger are written against the
+surface they will keep.
+
+`GET /admin/keyring` will report `safeToRemoveOldKey`, true only when every
+non-active key id has zero rows remaining. Removing `MASTER_KEY_OLD` while rows
+still reference a retired kid is the one irreversible mistake available in this
+design.
 
 ## Error envelope
 
@@ -129,6 +401,10 @@ The zod error formatter reads `issue.path` and `issue.message` and nothing else.
 by definition a request whose body contained a secret value — echoing the
 rejected input would put that plaintext in the response, the Worker log and the
 audit detail simultaneously.
+
+The path _is_ kept, and for a secrets map the path segment is the secret's key
+name. Key names are plaintext metadata: stored unencrypted, listed in the UI,
+printed in the audit log. It is the sibling field that holds the value.
 :::
 
 An unrecognised throwable becomes a bare `INTERNAL` with the constant message
@@ -137,40 +413,52 @@ nothing has established what it contains.
 
 ### Codes and statuses
 
-| Code                   | Status | Meaning                                                                  |
-| ---------------------- | ------ | ------------------------------------------------------------------------ |
-| `BAD_REQUEST`          | 400    | Malformed request                                                        |
-| `UNAUTHENTICATED`      | 401    | No valid Access assertion                                                |
-| `FORBIDDEN`            | 403    | Authenticated, but no grant covers this scope                            |
-| `NOT_FOUND`            | 404    | Absent **or** invisible — deliberately indistinguishable                 |
-| `CONFLICT`             | 409    | Uniqueness violation                                                     |
-| `VERSION_CONFLICT`     | 409    | Lost a race on the version uniqueness constraint, twice                  |
-| `LAST_ADMIN`           | 409    | Refusing to revoke the last global administrator                         |
-| `PRECONDITION_FAILED`  | 412    | `expected_rev` did not match. The environment is byte-for-byte unchanged |
-| `VALIDATION_FAILED`    | 422    | Schema rejection, including an unknown field                             |
-| `PAYLOAD_TOO_LARGE`    | 413    | Over a configured byte or count limit                                    |
-| `RATE_LIMITED`         | 429    | Slow down                                                                |
-| `INTERNAL`             | 500    | Unclassified failure                                                     |
-| `DECRYPT_FAILED`       | 500    | Authenticated decryption failed. Never swallowed                         |
-| `UNKNOWN_KID`          | 500    | The envelope names a master key the ring does not hold                   |
-| `SERVER_MISCONFIGURED` | 500    | Fail-closed configuration error, e.g. an invalid `MASTER_KEY`            |
-| `NOT_IMPLEMENTED`      | 501    | The route exists but the behaviour does not                              |
-| `NO_ADMINS_CONFIGURED` | 503    | Neither `BOOTSTRAP_ADMINS` nor a usable global admin grant exists        |
+| Code                            | Status | Meaning                                                               |
+| ------------------------------- | ------ | --------------------------------------------------------------------- |
+| `BAD_REQUEST`                   | 400    | Malformed request, or a precondition this API cannot express          |
+| `UNAUTHENTICATED`               | 401    | No valid Access assertion                                             |
+| `FORBIDDEN`                     | 403    | Authenticated, but no grant covers this scope                         |
+| `NOT_FOUND`                     | 404    | Absent **or** invisible — deliberately indistinguishable              |
+| `CONFLICT`                      | 409    | Uniqueness violation                                                  |
+| `VERSION_CONFLICT`              | 409    | Lost a race on the version uniqueness constraint, twice               |
+| `LAST_ADMIN`                    | 409    | Refusing to revoke the last global administrator                      |
+| `PRECONDITION_FAILED`           | 412    | `If-Match`/`expected_rev` did not match. The environment is unchanged |
+| `PAYLOAD_TOO_LARGE`             | 413    | Over a configured byte or count limit                                 |
+| `VALIDATION_FAILED`             | 422    | Schema rejection, including an unknown field                          |
+| `RATE_LIMITED`                  | 429    | Slow down                                                             |
+| `INTERNAL`                      | 500    | Unclassified failure                                                  |
+| `DECRYPT_FAILED`                | 500    | Authenticated decryption failed. Never swallowed                      |
+| `UNKNOWN_KID`                   | 500    | The envelope names a master key the ring does not hold                |
+| `SERVER_MISCONFIGURED`          | 500    | Fail-closed configuration error, e.g. an invalid `MASTER_KEY`         |
+| `NOT_IMPLEMENTED`               | 501    | The route exists but the behaviour does not                           |
+| `NO_ADMINS_CONFIGURED`          | 503    | Neither `BOOTSTRAP_ADMINS` nor a usable global admin grant exists     |
+| `IDENTITY_PROVIDER_UNAVAILABLE` | 503    | Cloudflare Access is unreachable or degraded right now                |
 
 Source: `packages/app/src/lib/server/core/errors.ts`.
 
-Two notes on that table:
+Three notes on that table:
 
 - `SERVER_MISCONFIGURED` is 500 rather than 503 on purpose. A 503 says "come back
   later"; a `MASTER_KEY` that decodes to 31 bytes will never come good on its
   own, and a client that retries is waiting for something that cannot happen.
-- `MISCONFIGURED` is a deprecated alias of `SERVER_MISCONFIGURED` with the same
-  status. It is still constructed in the auth modules and can still appear on the
-  wire in this build. Treat the two as the same condition.
+- `IDENTITY_PROVIDER_UNAVAILABLE` is the opposite case and is deliberately
+  distinct: Access returning 502 for thirty seconds resolves on its own. Folding
+  the two would tell a client to give up on a failure it should have retried.
+- `UNKNOWN_KID` is distinct from `DECRYPT_FAILED` because the two need opposite
+  responses: restore the retired key, versus investigate a compromise. The
+  `UNKNOWN_KID` message names the key id it wanted and lists the ones it holds.
 
-`UNKNOWN_KID` is distinct from `DECRYPT_FAILED` because the two need opposite
-responses: restore the retired key, versus investigate a compromise. The
-`UNKNOWN_KID` message names the key id it wanted and lists the ones it holds.
+### 404 is used for absent and invisible alike
+
+A resource you cannot see is reported exactly as one that does not exist — same
+status, same code, same message, same hint. Returning 403 for one and 404 for the
+other would make this API an oracle for which project names are in use in an
+organisation the caller has no access to, and slugs are things like
+`acme-payroll-migration`.
+
+403 appears only where the caller has already been shown that the resource exists
+by holding reader somewhere that covers it. There it leaks nothing they did not
+already know.
 
 ## Validation rules
 
@@ -180,8 +468,13 @@ Two framework-level rules apply to every route:
    silently dropped. The failure this prevents is concrete: a client sending
    `{"expectedRev": 3}` instead of `{"expected_rev": 3}` would otherwise get a
    200 and a write with no concurrency guard — exactly the request it believed it
-   was making, minus the safety.
+   was making, minus the safety. This applies to query strings and path
+   parameters as well as bodies.
 2. **The error formatter never echoes input values.**
+
+Query strings are coerced at the transport (`?limit=50` arrives as text), and
+nowhere else: the shared schemas stay the strict statement of what the domain
+layer accepts.
 
 ### Limits
 
@@ -194,24 +487,15 @@ Two framework-level rules apply to every route:
 | Slug                    | 64 characters, lowercase with single interior hyphens | —                  |
 | Description             | 1024 characters                                       | —                  |
 | Audit `reason`          | 512 characters                                        | —                  |
+| Rekey page              | 1 to 1000 rows                                        | —                  |
 
-## Planned routes
+`ENV_MAX_SECRETS` is enforced against the **resulting** environment, not only
+against the request: two merges of 300 keys each are individually under the cap
+and together over it, and the second is refused. The cap exists because a full
+replace must fit in one D1 batch — splitting it across batches would forfeit
+atomicity, so an oversized write is refused rather than made non-atomic.
 
-None of these are mounted. They are listed so the intended surface is on record,
-and because the request bodies they will take are already written and validated
-in `@prick/shared`.
-
-| Area         | Routes                                                         |
-| ------------ | -------------------------------------------------------------- |
-| Projects     | list, create, get, update, delete                              |
-| Environments | list, create, get, delete                                      |
-| Secrets      | list, reveal one, batch write, import (with `dry_run`), export |
-| Versions     | list, rollback                                                 |
-| Access       | identities, grants, `access/unknown-identities`                |
-| Audit        | query with keyset pagination                                   |
-| Admin        | `admin/rekey`                                                  |
-
-### Request bodies that already exist
+## Request bodies
 
 | Schema                  | Shape                                                                                                      |
 | ----------------------- | ---------------------------------------------------------------------------------------------------------- |
@@ -221,17 +505,23 @@ in `@prick/shared`.
 | `BatchBody`             | `{ mode: "merge" \| "replace", set?, delete?, expected_rev?, reason? }`                                    |
 | `ImportBody`            | `{ format: "env" \| "json", content, mode, dry_run, expected_rev?, reason? }`                              |
 | `RollbackBody`          | `{ key, to_version, reason? }`                                                                             |
+| `RenameBody`            | `{ from, to }`                                                                                             |
+| `RekeyBody`             | `{ limit }`                                                                                                |
 | `RevealQuery`           | `{ reason: "reveal" \| "copy" \| "export" \| "run" }`                                                      |
 | `CreateGrantBody`       | Discriminated on `scope_type`: `global`, `project` (+`project`), `environment` (+`project`, `environment`) |
 | `UpdateIdentityBody`    | `{ display_name?, disabled? }`                                                                             |
 | `AuditQuery`            | `{ project?, environment?, actor?, action?, outcome?, since?, until?, cursor?, limit }`                    |
 
-Two of those carry design decisions worth stating:
+Most live in `@prick/shared`, so the browser bundle and the MCP package validate
+against the same objects the Worker does. `RenameBody` and `RekeyBody` are
+transport-local.
+
+Two of them carry design decisions worth stating:
 
 - `BatchBody.mode` decides what happens to keys named in neither `set` nor
-  `delete`: `merge` leaves them alone, `replace` deletes them. The whole body is
-  applied in **one** D1 transaction, audit row included. There is no partial
-  application.
+  `delete`: `merge` leaves them alone, `replace` deletes them. A key named in
+  **both** is a 422 — one order stores the value and the other tombstones it, and
+  the request does not say which was meant.
 - `CreateGrantBody` is a discriminated union rather than a flat object with
   optional fields, so scope fields are required exactly where they are meaningful
   and rejected where they are not. A flat object would accept

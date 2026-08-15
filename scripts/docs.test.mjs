@@ -132,7 +132,7 @@ describe('status', () => {
     assert.equal(await main(['status'], h.io), 0);
   });
 
-  it('does not crash on unparseable gh output', async () => {
+  it('does not crash on malformed gh output', async () => {
     const h = harness({ ghResult: '<html>rate limited</html>' });
     assert.equal(await main(['status'], h.io), 1);
     assert.ok(h.err.join('\n').includes('could not parse'));

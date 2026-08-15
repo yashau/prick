@@ -24,7 +24,28 @@ extend-ignore-re = [
   # misspelling of "calf". Percent-encoding is machine-generated and is never
   # prose, so the whole token is skipped rather than allowlisting "caf".
   "[A-Za-z0-9._~-]*(?:%[0-9A-Fa-f]{2})+[A-Za-z0-9._~%-]*",
+
+  # Byte-escaped test vectors, e.g. b"caf\xe9-latin1" -- the Latin-1 encoding of
+  # "café" used to prove a non-UTF-8 argument survives exec byte for byte. Same
+  # shape of false positive as percent-encoding above: typos splits at the
+  # escape and reads the leading "caf" as "calf". Matched by the escape rather
+  # than by allowlisting "caf", so a genuine misspelling elsewhere still fires.
+  "[A-Za-z0-9._-]*(?:\\\\x[0-9A-Fa-f]{2})+[A-Za-z0-9._\\\\x-]*",
 ]
+
+[default.extend-words]
+# A variant spelling, not a misspelling. Both "unparsable" and "unparseable" are
+# attested; typos prefers the former. This codebase talks about unparseable
+# input constantly -- every classifier, every config loader, every response
+# reader -- so the choice is between one entry here and rewording the word out
+# of prose forever, in files nobody has written yet.
+unparseable = "unparseable"
+
+# Two-letter test literal. `aad.test.ts` proves the AAD encoder is injective by
+# exhibiting pairs that a naive concatenation would collide: ("a","ba") against
+# ("ab","a"). typos reads the bare "ba" as "by"/"be". The pair has to be exactly
+# these strings for the collision to exist, so the word cannot be reworded.
+ba = "ba"
 
 [default.extend-identifiers]
 # Possessives in Rust test names. An identifier cannot carry an apostrophe, so
@@ -37,3 +58,23 @@ the_default_format_matches_the_librarys = "the_default_format_matches_the_librar
 # produce different challenges and compare unequal, so the pair has to differ by
 # exactly one character.
 abd = "abd"
+
+# Pluralised SQL keywords in prose: "a series of multi-row INSERTs", "four
+# sequential DELETEs". typos' camel-case splitter cuts at the boundary between
+# the uppercase keyword and the lowercase plural, leaving "INSER" and "DELET".
+# The keywords are correct; only the split is wrong.
+INSERTs = "INSERTs"
+DELETEs = "DELETEs"
+
+# Leetspeak literal in the Access token harness -- a nonce value chosen to be
+# visibly synthetic so it cannot be mistaken for a real claim.
+n0nce = "n0nce"
+
+# Possessive in a Rust test name; see the note above the other two.
+an_exit_code_is_the_childs_own_and_not_a_translation_of_it = "an_exit_code_is_the_childs_own_and_not_a_translation_of_it"
+
+# A deliberately misspelled property name in a comment in auth/access.ts. The
+# comment's whole point is that `payload.common_nane` type-checks as `unknown`
+# and would silently classify every service token as a user -- correcting the
+# spelling would delete the example being warned about.
+common_nane = "common_nane"

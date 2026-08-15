@@ -44,6 +44,14 @@ describe("GET /api/v1/health", () => {
     await expect(response.json()).resolves.toMatchObject({ status: "ok" });
   });
 
+  it("identifies the service, so a captive portal cannot pass for one", async () => {
+    // A 200 with a JSON body is not on its own evidence of anything. `prk login`
+    // compares this constant before it decides where to send a credential.
+    const response = await get("/api/v1/health");
+
+    await expect(response.json()).resolves.toMatchObject({ service: "prick" });
+  });
+
   it("echoes a supplied X-Request-Id", async () => {
     const response = await get("/api/v1/health", { "X-Request-Id": "abc-123" });
 
@@ -79,8 +87,37 @@ describe("GET /api/v1/health", () => {
 });
 
 describe("unknown endpoints", () => {
-  it("answer 404 with the standard envelope", async () => {
+  it("answer 401 to an unauthenticated caller, not 404", async () => {
+    /*
+     * The route table is not enumerable without a credential.
+     *
+     * Authentication is mounted with `v1.use("*", ...)` ahead of every route
+     * under `/api/v1`, so an anonymous caller is refused BEFORE routing decides
+     * whether the path exists. The alternative -- routing first, so an unknown
+     * path 404s and a known one 401s -- turns the status code into a route
+     * oracle: an unauthenticated attacker could map the whole surface, including
+     * any endpoint added later, by diffing 404 against 401.
+     *
+     * It is the same argument as `test/http/keyring.test.ts`'s assertion that a
+     * misconfigured Worker answers 500 rather than 404 for an unknown route:
+     * whichever guard runs first must run before routing, or its absence shows
+     * through the status code.
+     */
     const response = await get("/api/v1/nope");
+
+    expect(response.status).toBe(401);
+    await expect(response.json()).resolves.toMatchObject({ code: "UNAUTHENTICATED" });
+  });
+
+  it("still carry the standard envelope and the request id", async () => {
+    const response = await get("/api/v1/nope", { "X-Request-Id": "trace-me" });
+
+    expect(response.headers.get("X-Request-Id")).toBe("trace-me");
+    await expect(response.json()).resolves.toMatchObject({ request_id: "trace-me" });
+  });
+
+  it("404 outside the versioned prefix, where there is nothing to protect", async () => {
+    const response = await get("/nope");
 
     expect(response.status).toBe(404);
     await expect(response.json()).resolves.toMatchObject({ code: "NOT_FOUND" });

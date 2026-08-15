@@ -216,6 +216,17 @@ description = "Fail if any source file exceeds 1000 lines"
 # author can act on.
 run = "node scripts/check-loc.mjs"
 
+[tasks.openapi]
+description = "Regenerate docs/openapi.json from the Hono router"
+run = "node scripts/openapi.mjs write"
+
+[tasks."openapi:check"]
+description = "Fail if docs/openapi.json is stale"
+# Also covered by test/http/openapi.test.ts, which deep-compares the committed
+# document against what the router actually serves. Kept as its own task so a
+# stale document fails with one obvious message rather than inside a suite.
+run = "node scripts/openapi.mjs check"
+
 [tasks."lint:actions"]
 description = "actionlint over .github/workflows"
 run = "actionlint"
@@ -476,6 +487,7 @@ depends = [
   "lint",
   "typecheck",
   "test",
+  "openapi:check",
   "deny",
   "audit",
   "miri",

@@ -1,0 +1,4821 @@
+{
+  "components": {
+    "schemas": {
+      "ApiError": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "hint": {
+            "type": "string"
+          },
+          "issues": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "message": {
+                  "type": "string"
+                },
+                "path": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "path",
+                "message"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "message": {
+            "type": "string"
+          },
+          "request_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message"
+        ],
+        "type": "object"
+      }
+    },
+    "securitySchemes": {
+      "accessAssertion": {
+        "description": "The signed Access JWT. Set by Cloudflare Access at the edge; the Worker verifies it itself rather than trusting that Access ran. Browsers may instead present the `CF_Authorization` cookie, which Cloudflare documents as not guaranteed to be passed in every context — the header is primary.",
+        "in": "header",
+        "name": "Cf-Access-Jwt-Assertion",
+        "type": "apiKey"
+      },
+      "accessClientId": {
+        "description": "An Access **service token** id. Presented with `CF-Access-Client-Secret`; Access exchanges the pair at the edge, so this header never reaches the Worker.",
+        "in": "header",
+        "name": "CF-Access-Client-Id",
+        "type": "apiKey"
+      },
+      "accessClientSecret": {
+        "description": "The matching Access service token secret. Required together with `CF-Access-Client-Id`.",
+        "in": "header",
+        "name": "CF-Access-Client-Secret",
+        "type": "apiKey"
+      }
+    }
+  },
+  "info": {
+    "description": "A self-hosted secrets manager on Cloudflare Workers and D1.\n\n**Slug alias routes.** Every environment-scoped route is served at two paths:\nthe canonical `/projects/{project}/environments/{env}/…` and the shorter\n`/p/{project}/e/{env}/…` for CLI ergonomics. Only the canonical form appears\nbelow; the alias is byte-identical in behaviour, matches **exactly** and never\nas a prefix.\n\n**There is no CORS.** This API emits no `Access-Control-Allow-Origin` and never\nwill. Omitting it is what stops another site reading a response in a victim's\nbrowser. The admin UI is same-origin and needs nothing.\n\n**`404` is used for absent and invisible alike.** A resource you cannot see is\nreported exactly as one that does not exist. The alternative leaks which project\nnames are in use to a caller with no grants at all.\n\n**Validation never echoes input.** A `422` body carries `issues` of\n`{path, message}`. The rejected value is dropped before the body is built, so a\nfailed secret write cannot put a plaintext value in a response, a log line or an\naudit row.",
+    "title": "prick",
+    "version": "0.0.0-dev"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/api/v1/access/unknown-identities": {
+      "get": {
+        "description": "Read out of the audit log rather than from a table of pending requests, because there is nothing to pend: Access authenticates the caller at the edge and this Worker learns a subject exists at the moment it refuses it.\n\nSubjects that DO hold a live grant are excluded — they were denied something narrower than what they hold, which is ordinary authorization working rather than a missing introduction.\n\nThere is no id in these rows. Match `subject` against `GET /identities` to obtain the `identity_id` that `POST /grants` needs.",
+        "operationId": "listUnknownIdentities",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "items": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "attempts": {
+                        "maximum": 9007199254740991,
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "firstSeenAt": {
+                        "maximum": 9007199254740991,
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "kind": {
+                        "enum": [
+                          "user",
+                          "service"
+                        ],
+                        "type": "string"
+                      },
+                      "lastSeenAt": {
+                        "maximum": 9007199254740991,
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "subject": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "subject",
+                      "firstSeenAt",
+                      "lastSeenAt",
+                      "attempts"
+                    ],
+                    "type": "object"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Denied subjects, most recently seen first."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`BAD_REQUEST` — a malformed `If-Match`, or a precondition this API cannot express."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`UNAUTHENTICATED` — no valid Cloudflare Access assertion was presented."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`FORBIDDEN` — authenticated, but no grant covers this scope. The denial is audited."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`NOT_FOUND` — absent **or** invisible, deliberately indistinguishable. Returning 403 for one and 404 for the other would turn this API into an oracle for which slugs are in use."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`VALIDATION_FAILED` — schema rejection, including an unknown field. `issues` carries `{path, message}` and never the submitted value."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`INTERNAL`, `DECRYPT_FAILED`, `UNKNOWN_KID` or `SERVER_MISCONFIGURED`."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`NO_ADMINS_CONFIGURED` or `IDENTITY_PROVIDER_UNAVAILABLE`."
+          }
+        },
+        "summary": "Subjects that authenticated, were denied, and hold no grant (\"Seen but not granted\")",
+        "tags": [
+          "access"
+        ]
+      }
+    },
+    "/api/v1/admin/keyring": {
+      "get": {
+        "description": "Which key ids exist, how many rows still reference each, and whether `MASTER_KEY_OLD` can be removed.\n\n`safeToRemoveOldKey` is true only when every non-active kid has zero rows remaining. Removing the old key while rows still reference a retired kid is the **one irreversible mistake** available in this design — those values can never be decrypted again — so the indicator only goes green at zero, and the UI has to be what tells you.\n\n**Not implemented yet:** answers `501`.",
+        "operationId": "getKeyringStatus",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "additionalProperties": false,
+                  "properties": {
+                    "activeKid": {
+                      "type": "string"
+                    },
+                    "entries": {
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "kid": {
+                            "type": "string"
+                          },
+                          "lastRekeyAt": {
+                            "anyOf": [
+                              {
+                                "maximum": 9007199254740991,
+                                "minimum": 0,
+                                "type": "integer"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "rowsRemaining": {
+                            "maximum": 9007199254740991,
+                            "minimum": 0,
+                            "type": "integer"
+                          },
+                          "status": {
+                            "enum": [
+                              "active",
+                              "retiring",
+                              "retired"
+                            ],
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "kid",
+                          "status",
+                          "rowsRemaining",
+                          "lastRekeyAt"
+                        ],
+                        "type": "object"
+                      },
+                      "type": "array"
+                    },
+                    "safeToRemoveOldKey": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "activeKid",
+                    "entries",
+                    "safeToRemoveOldKey"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "The ring."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`BAD_REQUEST` — a malformed `If-Match`, or a precondition this API cannot express."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`UNAUTHENTICATED` — no valid Cloudflare Access assertion was presented."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`FORBIDDEN` — authenticated, but no grant covers this scope. The denial is audited."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`NOT_FOUND` — absent **or** invisible, deliberately indistinguishable. Returning 403 for one and 404 for the other would turn this API into an oracle for which slugs are in use."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`VALIDATION_FAILED` — schema rejection, including an unknown field. `issues` carries `{path, message}` and never the submitted value."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`INTERNAL`, `DECRYPT_FAILED`, `UNKNOWN_KID` or `SERVER_MISCONFIGURED`."
+          },
+          "501": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`NOT_IMPLEMENTED` — the domain function is a stub in this build."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`NO_ADMINS_CONFIGURED` or `IDENTITY_PROVIDER_UNAVAILABLE`."
+          }
+        },
+        "summary": "Key ring status",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/api/v1/admin/rekey": {
+      "post": {
+        "description": "Incremental and resumable: a page per invocation, driven by this endpoint and by a cron trigger, so a large database never needs a batch that approaches the 30 s ceiling.\n\nThe re-encryption uses the **identical** AAD with the new `kid`, and the row's version is unchanged — a rekey alters the key that protects a row, never the row's identity.\n\n**Not implemented yet:** answers `501`.",
+        "operationId": "rekeyPage",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "additionalProperties": false,
+                "properties": {
+                  "limit": {
+                    "default": 100,
+                    "maximum": 1000,
+                    "minimum": 1,
+                    "type": "integer"
+                  }
+                },
+                "type": "object"
+              }
+            }
+          },
+          "description": "How many rows to re-encrypt in this invocation.",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "additionalProperties": false,
+                  "properties": {
+                    "rekeyed": {
+                      "maximum": 9007199254740991,
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "remaining": {
+                      "maximum": 9007199254740991,
+                      "minimum": 0,
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "rekeyed",
+                    "remaining"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Progress."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`BAD_REQUEST` — a malformed `If-Match`, or a precondition this API cannot express."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`UNAUTHENTICATED` — no valid Cloudflare Access assertion was presented."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`FORBIDDEN` — authenticated, but no grant covers this scope. The denial is audited."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`NOT_FOUND` — absent **or** invisible, deliberately indistinguishable. Returning 403 for one and 404 for the other would turn this API into an oracle for which slugs are in use."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`VALIDATION_FAILED` — schema rejection, including an unknown field. `issues` carries `{path, message}` and never the submitted value."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`INTERNAL`, `DECRYPT_FAILED`, `UNKNOWN_KID` or `SERVER_MISCONFIGURED`."
+          },
+          "501": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`NOT_IMPLEMENTED` — the domain function is a stub in this build."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`NO_ADMINS_CONFIGURED` or `IDENTITY_PROVIDER_UNAVAILABLE`."
+          }
+        },
+        "summary": "Re-encrypt one page of rows onto the active key",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/api/v1/audit": {
+      "get": {
+        "description": "Newest first. Pass the returned `cursor` back to page; `null` means the end of the log.\n\n`detail` is a structured blob whose shape is a closed union in the domain layer, chosen so that **no member has a field that could hold a secret value**. Key names appear throughout and are plaintext metadata by design.\n\nA `detail` written by an older build that this one cannot parse comes back as `null` rather than failing the page. That is the one place in this system where swallowing is right: the log is historical and append-only, and refusing a whole page because one old row is odd would make it unreadable exactly when it is being consulted.",
+        "operationId": "queryAudit",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "additionalProperties": false,
+                  "properties": {
+                    "cursor": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "entries": {
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "action": {
+                            "type": "string"
+                          },
+                          "actorKind": {
+                            "type": "string"
+                          },
+                          "actorSubject": {
+                            "type": "string"
+                          },
+                          "detail": {},
+                          "environmentId": {
+                            "anyOf": [
+                              {
+                                "format": "uuid",
+                                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                                "type": "string"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "id": {
+                            "format": "uuid",
+                            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                            "type": "string"
+                          },
+                          "outcome": {
+                            "type": "string"
+                          },
+                          "projectId": {
+                            "anyOf": [
+                              {
+                                "format": "uuid",
+                                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                                "type": "string"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "requestId": {
+                            "anyOf": [
+                              {
+                                "type": "string"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "targetKey": {
+                            "anyOf": [
+                              {
+                                "type": "string"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "ts": {
+                            "maximum": 9007199254740991,
+                            "minimum": 0,
+                            "type": "integer"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "ts",
+                          "requestId",
+                          "actorKind",
+                          "actorSubject",
+                          "action",
+                          "outcome",
+                          "projectId",
+                          "environmentId",
+                          "targetKey",
+                          "detail"
+                        ],
+                        "type": "object"
+                      },
+                      "type": "array"
+                    }
+                  },
+                  "required": [
+                    "entries",
+                    "cursor"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "One page of the log."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`BAD_REQUEST` — a malformed `If-Match`, or a precondition this API cannot express."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`UNAUTHENTICATED` — no valid Cloudflare Access assertion was presented."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`FORBIDDEN` — this endpoint currently requires **global admin**. The domain layer performs no scope narrowing on the log yet, so the transport fails closed rather than serving a project admin the whole installation's events."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`NOT_FOUND` — absent **or** invisible, deliberately indistinguishable. Returning 403 for one and 404 for the other would turn this API into an oracle for which slugs are in use."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`VALIDATION_FAILED` — schema rejection, including an unknown field. `issues` carries `{path, message}` and never the submitted value."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`INTERNAL`, `DECRYPT_FAILED`, `UNKNOWN_KID` or `SERVER_MISCONFIGURED`."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`NO_ADMINS_CONFIGURED` or `IDENTITY_PROVIDER_UNAVAILABLE`."
+          }
+        },
+        "summary": "Query the audit log",
+        "tags": [
+          "audit"
+        ]
+      }
+    },
+    "/api/v1/grants": {
+      "get": {
+        "description": "Expired grants are excluded — an expired grant is not a grant. A scoped admin sees the grants that touch what they administer and not the rest of the organisation's access graph.",
+        "operationId": "listGrants",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "items": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "environmentSlug": {
+                        "anyOf": [
+                          {
+                            "maxLength": 64,
+                            "minLength": 1,
+                            "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "expiresAt": {
+                        "anyOf": [
+                          {
+                            "maximum": 9007199254740991,
+                            "minimum": 0,
+                            "type": "integer"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "id": {
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                        "type": "string"
+                      },
+                      "identityId": {
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                        "type": "string"
+                      },
+                      "projectSlug": {
+                        "anyOf": [
+                          {
+                            "maxLength": 64,
+                            "minLength": 1,
+                            "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "role": {
+                        "enum": [
+                          "reader",
+                          "writer",
+                          "admin"
+                        ],
+                        "type": "string"
+                      },
+                      "scopeType": {
+                        "enum": [
+                          "global",
+                          "project",
+                          "environment"
+                        ],
+                        "type": "string"
+                      },
+                      "subject": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "identityId",
+                      "subject",
+                      "role",
+                      "scopeType",
+                      "projectSlug",
+                      "environmentSlug",
+                      "expiresAt"
+                    ],
+                    "type": "object"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Live grants."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`BAD_REQUEST` — a malformed `If-Match`, or a precondition this API cannot express."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`UNAUTHENTICATED` — no valid Cloudflare Access assertion was presented."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`FORBIDDEN` — authenticated, but no grant covers this scope. The denial is audited."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`NOT_FOUND` — absent **or** invisible, deliberately indistinguishable. Returning 403 for one and 404 for the other would turn this API into an oracle for which slugs are in use."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`VALIDATION_FAILED` — schema rejection, including an unknown field. `issues` carries `{path, message}` and never the submitted value."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`INTERNAL`, `DECRYPT_FAILED`, `UNKNOWN_KID` or `SERVER_MISCONFIGURED`."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`NO_ADMINS_CONFIGURED` or `IDENTITY_PROVIDER_UNAVAILABLE`."
+          }
+        },
+        "summary": "List grants",
+        "tags": [
+          "access"
+        ]
+      },
+      "post": {
+        "description": "Requires **admin at the scope being granted**, resolved through the same check every other operation uses — a project admin may grant within their project, only a global admin may grant globally. That falls out of scope inheritance and needs no special case, which is the point: the special case is where privilege escalation lives.\n\nA duplicate is a `409`, not an upsert. Silently upgrading an existing reader grant to admin because somebody re-submitted a form is precisely the change nobody would notice.\n\nThe body is discriminated on `scope_type`, so scope fields are required exactly where they are meaningful and rejected where they are not; a flat object would accept `{scope_type: \"global\", project: \"prod\"}` and have to guess.",
+        "operationId": "createGrant",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "oneOf": [
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "expires_at": {
+                        "anyOf": [
+                          {
+                            "maximum": 9007199254740991,
+                            "minimum": 0,
+                            "type": "integer"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "default": null
+                      },
+                      "identity_id": {
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                        "type": "string"
+                      },
+                      "role": {
+                        "enum": [
+                          "reader",
+                          "writer",
+                          "admin"
+                        ],
+                        "type": "string"
+                      },
+                      "scope_type": {
+                        "const": "global",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "scope_type",
+                      "identity_id",
+                      "role"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "expires_at": {
+                        "anyOf": [
+                          {
+                            "maximum": 9007199254740991,
+                            "minimum": 0,
+                            "type": "integer"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "default": null
+                      },
+                      "identity_id": {
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                        "type": "string"
+                      },
+                      "project": {
+                        "maxLength": 64,
+                        "minLength": 1,
+                        "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+                        "type": "string"
+                      },
+                      "role": {
+                        "enum": [
+                          "reader",
+                          "writer",
+                          "admin"
+                        ],
+                        "type": "string"
+                      },
+                      "scope_type": {
+                        "const": "project",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "scope_type",
+                      "project",
+                      "identity_id",
+                      "role"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "environment": {
+                        "maxLength": 64,
+                        "minLength": 1,
+                        "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+                        "type": "string"
+                      },
+                      "expires_at": {
+                        "anyOf": [
+                          {
+                            "maximum": 9007199254740991,
+                            "minimum": 0,
+                            "type": "integer"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "default": null
+                      },
+                      "identity_id": {
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                        "type": "string"
+                      },
+                      "project": {
+                        "maxLength": 64,
+                        "minLength": 1,
+                        "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+                        "type": "string"
+                      },
+                      "role": {
+                        "enum": [
+                          "reader",
+                          "writer",
+                          "admin"
+                        ],
+                        "type": "string"
+                      },
+                      "scope_type": {
+                        "const": "environment",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "scope_type",
+                      "project",
+                      "environment",
+                      "identity_id",
+                      "role"
+                    ],
+                    "type": "object"
+                  }
+                ]
+              }
+            }
+          },
+          "description": "The grant to create.",
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "additionalProperties": false,
+                  "properties": {
+                    "environmentSlug": {
+                      "anyOf": [
+                        {
+                          "maxLength": 64,
+                          "minLength": 1,
+                          "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "expiresAt": {
+                      "anyOf": [
+                        {
+                          "maximum": 9007199254740991,
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "id": {
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                      "type": "string"
+                    },
+                    "identityId": {
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                      "type": "string"
+                    },
+                    "projectSlug": {
+                      "anyOf": [
+                        {
+                          "maxLength": 64,
+                          "minLength": 1,
+                          "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "role": {
+                      "enum": [
+                        "reader",
+                        "writer",
+                        "admin"
+                      ],
+                      "type": "string"
+                    },
+                    "scopeType": {
+                      "enum": [
+                        "global",
+                        "project",
+                        "environment"
+                      ],
+                      "type": "string"
+                    },
+                    "subject": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "identityId",
+                    "subject",
+                    "role",
+                    "scopeType",
+                    "projectSlug",
+                    "environmentSlug",
+                    "expiresAt"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "The created grant."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`BAD_REQUEST` — a malformed `If-Match`, or a precondition this API cannot express."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`UNAUTHENTICATED` — no valid Cloudflare Access assertion was presented."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`FORBIDDEN` — authenticated, but no grant covers this scope. The denial is audited."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`NOT_FOUND` — absent **or** invisible, deliberately indistinguishable. Returning 403 for one and 404 for the other would turn this API into an oracle for which slugs are in use."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`CONFLICT` — that identity already holds a grant at this scope."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`VALIDATION_FAILED` — schema rejection, including an unknown field. `issues` carries `{path, message}` and never the submitted value."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`INTERNAL`, `DECRYPT_FAILED`, `UNKNOWN_KID` or `SERVER_MISCONFIGURED`."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`NO_ADMINS_CONFIGURED` or `IDENTITY_PROVIDER_UNAVAILABLE`."
+          }
+        },
+        "summary": "Create a grant",
+        "tags": [
+          "access"
+        ]
+      }
+    },
+    "/api/v1/grants/{id}": {
+      "delete": {
+        "description": "Refuses to remove the last global admin while `BOOTSTRAP_ADMINS` is empty. There is no recovery credential in this design — that is deliberate, and it means \"are you sure?\" is not a question a dialog can be trusted to ask. The only way back from an accidental lockout is editing a var and redeploying, so the operation is refused rather than confirmed.",
+        "operationId": "revokeGrant",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Revoked."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`BAD_REQUEST` — a malformed `If-Match`, or a precondition this API cannot express."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`UNAUTHENTICATED` — no valid Cloudflare Access assertion was presented."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`FORBIDDEN` — authenticated, but no grant covers this scope. The denial is audited."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`NOT_FOUND` — absent **or** invisible, deliberately indistinguishable. Returning 403 for one and 404 for the other would turn this API into an oracle for which slugs are in use."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`LAST_ADMIN` — this is the last usable global administrator and `BOOTSTRAP_ADMINS` is empty."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`VALIDATION_FAILED` — schema rejection, including an unknown field. `issues` carries `{path, message}` and never the submitted value."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`INTERNAL`, `DECRYPT_FAILED`, `UNKNOWN_KID` or `SERVER_MISCONFIGURED`."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`NO_ADMINS_CONFIGURED` or `IDENTITY_PROVIDER_UNAVAILABLE`."
+          }
+        },
+        "summary": "Revoke a grant",
+        "tags": [
+          "access"
+        ]
+      }
+    },
+    "/api/v1/health": {
+      "get": {
+        "description": "The only unauthenticated route. Answers `200` only once the fail-closed key ring middleware has succeeded, which is what makes `ok` mean something.\n\n**If this returns 200 to an unauthenticated caller, Cloudflare Access is not in front of this hostname.**",
+        "operationId": "health",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "additionalProperties": false,
+                  "properties": {
+                    "service": {
+                      "const": "prick",
+                      "type": "string"
+                    },
+                    "status": {
+                      "const": "ok",
+                      "type": "string"
+                    },
+                    "version": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "service",
+                    "status",
+                    "version"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "The server is listening and its key ring loaded."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`BAD_REQUEST` — a malformed `If-Match`, or a precondition this API cannot express."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`UNAUTHENTICATED` — no valid Cloudflare Access assertion was presented."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`FORBIDDEN` — authenticated, but no grant covers this scope. The denial is audited."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`NOT_FOUND` — absent **or** invisible, deliberately indistinguishable. Returning 403 for one and 404 for the other would turn this API into an oracle for which slugs are in use."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`VALIDATION_FAILED` — schema rejection, including an unknown field. `issues` carries `{path, message}` and never the submitted value."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`INTERNAL`, `DECRYPT_FAILED`, `UNKNOWN_KID` or `SERVER_MISCONFIGURED`."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`NO_ADMINS_CONFIGURED` or `IDENTITY_PROVIDER_UNAVAILABLE`."
+          }
+        },
+        "summary": "Liveness probe",
+        "tags": [
+          "meta"
+        ]
+      }
+    },
+    "/api/v1/identities": {
+      "get": {
+        "description": "Visible to **any** admin, at any scope — not global admin only. A project admin has to grant access within their project, and cannot do that without seeing who there is to grant it to; restricting this to global admins would make delegated administration decorative.\n\nAn identity row exists for every subject that has ever authenticated, including ones that were then denied: the row is written on the authenticated request itself, which is what makes a denied service token grantable at all.",
+        "operationId": "listIdentities",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "items": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "disabled": {
+                        "type": "boolean"
+                      },
+                      "displayName": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "id": {
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                        "type": "string"
+                      },
+                      "kind": {
+                        "enum": [
+                          "user",
+                          "service"
+                        ],
+                        "type": "string"
+                      },
+                      "lastSeenAt": {
+                        "anyOf": [
+                          {
+                            "maximum": 9007199254740991,
+                            "minimum": 0,
+                            "type": "integer"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "subject": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "kind",
+                      "subject",
+                      "displayName",
+                      "disabled",
+                      "lastSeenAt"
+                    ],
+                    "type": "object"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Identities, ordered by subject."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`BAD_REQUEST` — a malformed `If-Match`, or a precondition this API cannot express."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`UNAUTHENTICATED` — no valid Cloudflare Access assertion was presented."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`FORBIDDEN` — authenticated, but no grant covers this scope. The denial is audited."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`NOT_FOUND` — absent **or** invisible, deliberately indistinguishable. Returning 403 for one and 404 for the other would turn this API into an oracle for which slugs are in use."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`VALIDATION_FAILED` — schema rejection, including an unknown field. `issues` carries `{path, message}` and never the submitted value."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`INTERNAL`, `DECRYPT_FAILED`, `UNKNOWN_KID` or `SERVER_MISCONFIGURED`."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`NO_ADMINS_CONFIGURED` or `IDENTITY_PROVIDER_UNAVAILABLE`."
+          }
+        },
+        "summary": "List identities",
+        "tags": [
+          "access"
+        ]
+      }
+    },
+    "/api/v1/identities/{id}": {
+      "patch": {
+        "description": "Requires **global** admin, because `disabled` is a kill switch that outranks every grant at every scope — including `BOOTSTRAP_ADMINS`. A project admin flipping it would be revoking access to projects they have nothing to do with.\n\n`display_name` is not cosmetic: an access list of opaque `common_name` hex strings is unreadable, which is how a stale token survives three audits.",
+        "operationId": "updateIdentity",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "additionalProperties": false,
+                "properties": {
+                  "disabled": {
+                    "type": "boolean"
+                  },
+                  "display_name": {
+                    "anyOf": [
+                      {
+                        "maxLength": 128,
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "type": "object"
+              }
+            }
+          },
+          "description": "The fields to change.",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "additionalProperties": false,
+                  "properties": {
+                    "disabled": {
+                      "type": "boolean"
+                    },
+                    "displayName": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "id": {
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                      "type": "string"
+                    },
+                    "kind": {
+                      "enum": [
+                        "user",
+                        "service"
+                      ],
+                      "type": "string"
+                    },
+                    "lastSeenAt": {
+                      "anyOf": [
+                        {
+                          "maximum": 9007199254740991,
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "subject": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "kind",
+                    "subject",
+                    "displayName",
+                    "disabled",
+                    "lastSeenAt"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "The updated identity."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`BAD_REQUEST` — a malformed `If-Match`, or a precondition this API cannot express."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`UNAUTHENTICATED` — no valid Cloudflare Access assertion was presented."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`FORBIDDEN` — authenticated, but no grant covers this scope. The denial is audited."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`NOT_FOUND` — absent **or** invisible, deliberately indistinguishable. Returning 403 for one and 404 for the other would turn this API into an oracle for which slugs are in use."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`VALIDATION_FAILED` — schema rejection, including an unknown field. `issues` carries `{path, message}` and never the submitted value."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`INTERNAL`, `DECRYPT_FAILED`, `UNKNOWN_KID` or `SERVER_MISCONFIGURED`."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`NO_ADMINS_CONFIGURED` or `IDENTITY_PROVIDER_UNAVAILABLE`."
+          }
+        },
+        "summary": "Rename or disable an identity",
+        "tags": [
+          "access"
+        ]
+      }
+    },
+    "/api/v1/projects": {
+      "get": {
+        "description": "The projects visible to the caller. Scoping happens in the query, so the response cannot reveal the existence of a project the caller has no grant for. An environment-scoped grant makes its project visible, because there is no way to reach an environment except through one — but it confers no role AT the project scope.",
+        "operationId": "listProjects",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "items": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "description": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "environmentCount": {
+                        "maximum": 9007199254740991,
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "id": {
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                        "type": "string"
+                      },
+                      "name": {
+                        "type": "string"
+                      },
+                      "slug": {
+                        "maxLength": 64,
+                        "minLength": 1,
+                        "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+                        "type": "string"
+                      },
+                      "updatedAt": {
+                        "maximum": 9007199254740991,
+                        "minimum": 0,
+                        "type": "integer"
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "slug",
+                      "name",
+                      "description",
+                      "environmentCount",
+                      "updatedAt"
+                    ],
+                    "type": "object"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "The visible projects, ordered by slug."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`BAD_REQUEST` — a malformed `If-Match`, or a precondition this API cannot express."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`UNAUTHENTICATED` — no valid Cloudflare Access assertion was presented."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`FORBIDDEN` — authenticated, but no grant covers this scope. The denial is audited."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`NOT_FOUND` — absent **or** invisible, deliberately indistinguishable. Returning 403 for one and 404 for the other would turn this API into an oracle for which slugs are in use."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`VALIDATION_FAILED` — schema rejection, including an unknown field. `issues` carries `{path, message}` and never the submitted value."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`INTERNAL`, `DECRYPT_FAILED`, `UNKNOWN_KID` or `SERVER_MISCONFIGURED`."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`NO_ADMINS_CONFIGURED` or `IDENTITY_PROVIDER_UNAVAILABLE`."
+          }
+        },
+        "summary": "List projects",
+        "tags": [
+          "projects"
+        ]
+      },
+      "post": {
+        "description": "Requires **global** writer. Global because a project has no parent to be scoped to — there is nothing narrower the permission could mean. The insert and its audit row are one `batch()`.",
+        "operationId": "createProject",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "additionalProperties": false,
+                "properties": {
+                  "description": {
+                    "anyOf": [
+                      {
+                        "maxLength": 1024,
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "name": {
+                    "maxLength": 128,
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "slug": {
+                    "maxLength": 64,
+                    "minLength": 1,
+                    "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "slug",
+                  "name"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "description": "The project to create.",
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "additionalProperties": false,
+                  "properties": {
+                    "description": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "environmentCount": {
+                      "maximum": 9007199254740991,
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "id": {
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "slug": {
+                      "maxLength": 64,
+                      "minLength": 1,
+                      "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+                      "type": "string"
+                    },
+                    "updatedAt": {
+                      "maximum": 9007199254740991,
+                      "minimum": 0,
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "slug",
+                    "name",
+                    "description",
+                    "environmentCount",
+                    "updatedAt"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "The created project."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`BAD_REQUEST` — a malformed `If-Match`, or a precondition this API cannot express."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`UNAUTHENTICATED` — no valid Cloudflare Access assertion was presented."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`FORBIDDEN` — authenticated, but no grant covers this scope. The denial is audited."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`NOT_FOUND` — absent **or** invisible, deliberately indistinguishable. Returning 403 for one and 404 for the other would turn this API into an oracle for which slugs are in use."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`CONFLICT` — the slug is already in use."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`VALIDATION_FAILED` — schema rejection, including an unknown field. `issues` carries `{path, message}` and never the submitted value."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`INTERNAL`, `DECRYPT_FAILED`, `UNKNOWN_KID` or `SERVER_MISCONFIGURED`."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`NO_ADMINS_CONFIGURED` or `IDENTITY_PROVIDER_UNAVAILABLE`."
+          }
+        },
+        "summary": "Create a project",
+        "tags": [
+          "projects"
+        ]
+      }
+    },
+    "/api/v1/projects/{project}": {
+      "delete": {
+        "description": "Requires **admin** at the project scope. One statement: D1 enforces foreign keys, so `ON DELETE CASCADE` removes the environments, their secrets, the whole version history and every grant scoped to them inside the same transaction. The audit row records how many rows the cascade took.",
+        "operationId": "deleteProject",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`BAD_REQUEST` — a malformed `If-Match`, or a precondition this API cannot express."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`UNAUTHENTICATED` — no valid Cloudflare Access assertion was presented."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`FORBIDDEN` — authenticated, but no grant covers this scope. The denial is audited."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`NOT_FOUND` — absent **or** invisible, deliberately indistinguishable. Returning 403 for one and 404 for the other would turn this API into an oracle for which slugs are in use."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`VALIDATION_FAILED` — schema rejection, including an unknown field. `issues` carries `{path, message}` and never the submitted value."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`INTERNAL`, `DECRYPT_FAILED`, `UNKNOWN_KID` or `SERVER_MISCONFIGURED`."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`NO_ADMINS_CONFIGURED` or `IDENTITY_PROVIDER_UNAVAILABLE`."
+          }
+        },
+        "summary": "Delete a project",
+        "tags": [
+          "projects"
+        ]
+      },
+      "get": {
+        "description": "A project that does not exist and one the caller cannot see produce the identical `404`, down to the hint.",
+        "operationId": "getProject",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "additionalProperties": false,
+                  "properties": {
+                    "description": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "environmentCount": {
+                      "maximum": 9007199254740991,
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "id": {
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "slug": {
+                      "maxLength": 64,
+                      "minLength": 1,
+                      "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+                      "type": "string"
+                    },
+                    "updatedAt": {
+                      "maximum": 9007199254740991,
+                      "minimum": 0,
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "slug",
+                    "name",
+                    "description",
+                    "environmentCount",
+                    "updatedAt"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "The project."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`BAD_REQUEST` — a malformed `If-Match`, or a precondition this API cannot express."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`UNAUTHENTICATED` — no valid Cloudflare Access assertion was presented."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`FORBIDDEN` — authenticated, but no grant covers this scope. The denial is audited."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`NOT_FOUND` — absent **or** invisible, deliberately indistinguishable. Returning 403 for one and 404 for the other would turn this API into an oracle for which slugs are in use."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`VALIDATION_FAILED` — schema rejection, including an unknown field. `issues` carries `{path, message}` and never the submitted value."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`INTERNAL`, `DECRYPT_FAILED`, `UNKNOWN_KID` or `SERVER_MISCONFIGURED`."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`NO_ADMINS_CONFIGURED` or `IDENTITY_PROVIDER_UNAVAILABLE`."
+          }
+        },
+        "summary": "Get a project",
+        "tags": [
+          "projects"
+        ]
+      },
+      "patch": {
+        "description": "Requires writer at the project scope. The audit row records which FIELDS changed, by name, and never their contents.",
+        "operationId": "updateProject",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "additionalProperties": false,
+                "properties": {
+                  "description": {
+                    "anyOf": [
+                      {
+                        "maxLength": 1024,
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "name": {
+                    "maxLength": 128,
+                    "minLength": 1,
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              }
+            }
+          },
+          "description": "The fields to change. An omitted field is left alone; `description: null` clears it.",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "additionalProperties": false,
+                  "properties": {
+                    "description": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "environmentCount": {
+                      "maximum": 9007199254740991,
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "id": {
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "slug": {
+                      "maxLength": 64,
+                      "minLength": 1,
+                      "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+                      "type": "string"
+                    },
+                    "updatedAt": {
+                      "maximum": 9007199254740991,
+                      "minimum": 0,
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "slug",
+                    "name",
+                    "description",
+                    "environmentCount",
+                    "updatedAt"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "The updated project."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`BAD_REQUEST` — a malformed `If-Match`, or a precondition this API cannot express."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`UNAUTHENTICATED` — no valid Cloudflare Access assertion was presented."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`FORBIDDEN` — authenticated, but no grant covers this scope. The denial is audited."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`NOT_FOUND` — absent **or** invisible, deliberately indistinguishable. Returning 403 for one and 404 for the other would turn this API into an oracle for which slugs are in use."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`VALIDATION_FAILED` — schema rejection, including an unknown field. `issues` carries `{path, message}` and never the submitted value."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`INTERNAL`, `DECRYPT_FAILED`, `UNKNOWN_KID` or `SERVER_MISCONFIGURED`."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`NO_ADMINS_CONFIGURED` or `IDENTITY_PROVIDER_UNAVAILABLE`."
+          }
+        },
+        "summary": "Update a project",
+        "tags": [
+          "projects"
+        ]
+      }
+    },
+    "/api/v1/projects/{project}/environments": {
+      "get": {
+        "description": "Visibility is re-checked per environment. A project-scoped grant covers all of them; an environment-scoped grant covers exactly one — and that caller reached this endpoint through a project made visible BY that grant, so listing the siblings would be the leak the scope exists to prevent. The loop issues no additional queries.",
+        "operationId": "listEnvironments",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "items": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "description": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "id": {
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                        "type": "string"
+                      },
+                      "name": {
+                        "type": "string"
+                      },
+                      "projectId": {
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                        "type": "string"
+                      },
+                      "rev": {
+                        "maximum": 9007199254740991,
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "secretCount": {
+                        "maximum": 9007199254740991,
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "slug": {
+                        "maxLength": 64,
+                        "minLength": 1,
+                        "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+                        "type": "string"
+                      },
+                      "updatedAt": {
+                        "maximum": 9007199254740991,
+                        "minimum": 0,
+                        "type": "integer"
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "projectId",
+                      "slug",
+                      "name",
+                      "description",
+                      "rev",
+                      "secretCount",
+                      "updatedAt"
+                    ],
+                    "type": "object"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "The visible environments, ordered by slug."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`BAD_REQUEST` — a malformed `If-Match`, or a precondition this API cannot express."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`UNAUTHENTICATED` — no valid Cloudflare Access assertion was presented."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`FORBIDDEN` — authenticated, but no grant covers this scope. The denial is audited."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`NOT_FOUND` — absent **or** invisible, deliberately indistinguishable. Returning 403 for one and 404 for the other would turn this API into an oracle for which slugs are in use."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`VALIDATION_FAILED` — schema rejection, including an unknown field. `issues` carries `{path, message}` and never the submitted value."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`INTERNAL`, `DECRYPT_FAILED`, `UNKNOWN_KID` or `SERVER_MISCONFIGURED`."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`NO_ADMINS_CONFIGURED` or `IDENTITY_PROVIDER_UNAVAILABLE`."
+          }
+        },
+        "summary": "List a project's environments",
+        "tags": [
+          "environments"
+        ]
+      },
+      "post": {
+        "description": "Requires writer at the project scope.",
+        "operationId": "createEnvironment",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "additionalProperties": false,
+                "properties": {
+                  "description": {
+                    "anyOf": [
+                      {
+                        "maxLength": 1024,
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "name": {
+                    "maxLength": 128,
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "slug": {
+                    "maxLength": 64,
+                    "minLength": 1,
+                    "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "slug",
+                  "name"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "description": "The environment to create.",
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "additionalProperties": false,
+                  "properties": {
+                    "description": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "id": {
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "projectId": {
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                      "type": "string"
+                    },
+                    "rev": {
+                      "maximum": 9007199254740991,
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "secretCount": {
+                      "maximum": 9007199254740991,
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "slug": {
+                      "maxLength": 64,
+                      "minLength": 1,
+                      "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+                      "type": "string"
+                    },
+                    "updatedAt": {
+                      "maximum": 9007199254740991,
+                      "minimum": 0,
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "projectId",
+                    "slug",
+                    "name",
+                    "description",
+                    "rev",
+                    "secretCount",
+                    "updatedAt"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "The created environment."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`BAD_REQUEST` — a malformed `If-Match`, or a precondition this API cannot express."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`UNAUTHENTICATED` — no valid Cloudflare Access assertion was presented."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`FORBIDDEN` — authenticated, but no grant covers this scope. The denial is audited."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`NOT_FOUND` — absent **or** invisible, deliberately indistinguishable. Returning 403 for one and 404 for the other would turn this API into an oracle for which slugs are in use."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`CONFLICT` — the slug is already in use within this project."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`VALIDATION_FAILED` — schema rejection, including an unknown field. `issues` carries `{path, message}` and never the submitted value."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`INTERNAL`, `DECRYPT_FAILED`, `UNKNOWN_KID` or `SERVER_MISCONFIGURED`."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`NO_ADMINS_CONFIGURED` or `IDENTITY_PROVIDER_UNAVAILABLE`."
+          }
+        },
+        "summary": "Create an environment",
+        "tags": [
+          "environments"
+        ]
+      }
+    },
+    "/api/v1/projects/{project}/environments/{env}": {
+      "delete": {
+        "description": "Requires **admin** at the environment scope. One statement; the cascade is the database's. The audit row records how many secrets went with it.",
+        "operationId": "deleteEnvironment",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "env",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`BAD_REQUEST` — a malformed `If-Match`, or a precondition this API cannot express."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`UNAUTHENTICATED` — no valid Cloudflare Access assertion was presented."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`FORBIDDEN` — authenticated, but no grant covers this scope. The denial is audited."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`NOT_FOUND` — absent **or** invisible, deliberately indistinguishable. Returning 403 for one and 404 for the other would turn this API into an oracle for which slugs are in use."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`VALIDATION_FAILED` — schema rejection, including an unknown field. `issues` carries `{path, message}` and never the submitted value."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`INTERNAL`, `DECRYPT_FAILED`, `UNKNOWN_KID` or `SERVER_MISCONFIGURED`."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`NO_ADMINS_CONFIGURED` or `IDENTITY_PROVIDER_UNAVAILABLE`."
+          }
+        },
+        "summary": "Delete an environment",
+        "tags": [
+          "environments"
+        ]
+      },
+      "get": {
+        "description": "Carries `rev`, the optimistic-concurrency token. It is the same number the secret collection returns as its `ETag`.",
+        "operationId": "getEnvironment",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "env",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "additionalProperties": false,
+                  "properties": {
+                    "description": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "id": {
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "projectId": {
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                      "type": "string"
+                    },
+                    "rev": {
+                      "maximum": 9007199254740991,
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "secretCount": {
+                      "maximum": 9007199254740991,
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "slug": {
+                      "maxLength": 64,
+                      "minLength": 1,
+                      "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+                      "type": "string"
+                    },
+                    "updatedAt": {
+                      "maximum": 9007199254740991,
+                      "minimum": 0,
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "projectId",
+                    "slug",
+                    "name",
+                    "description",
+                    "rev",
+                    "secretCount",
+                    "updatedAt"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "The environment."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`BAD_REQUEST` — a malformed `If-Match`, or a precondition this API cannot express."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`UNAUTHENTICATED` — no valid Cloudflare Access assertion was presented."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`FORBIDDEN` — authenticated, but no grant covers this scope. The denial is audited."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`NOT_FOUND` — absent **or** invisible, deliberately indistinguishable. Returning 403 for one and 404 for the other would turn this API into an oracle for which slugs are in use."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`VALIDATION_FAILED` — schema rejection, including an unknown field. `issues` carries `{path, message}` and never the submitted value."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`INTERNAL`, `DECRYPT_FAILED`, `UNKNOWN_KID` or `SERVER_MISCONFIGURED`."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`NO_ADMINS_CONFIGURED` or `IDENTITY_PROVIDER_UNAVAILABLE`."
+          }
+        },
+        "summary": "Get an environment",
+        "tags": [
+          "environments"
+        ]
+      }
+    },
+    "/api/v1/projects/{project}/environments/{env}/secrets": {
+      "get": {
+        "description": "Key names, versions and metadata. **No values, ever.** Every row is nonetheless decrypted and the plaintext discarded immediately, because `unreadable` cannot be determined any other way — AES-GCM has no verify-without-decrypting operation, the tag check IS the decryption. A row that fails comes back marked rather than omitted, and the read is audited with `outcome: 'error'`.",
+        "operationId": "listSecrets",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "env",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "items": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "description": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "key": {
+                        "maxLength": 256,
+                        "minLength": 1,
+                        "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+                        "type": "string"
+                      },
+                      "kid": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "unreadable": {
+                        "type": "boolean"
+                      },
+                      "updatedAt": {
+                        "maximum": 9007199254740991,
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "updatedBy": {
+                        "type": "string"
+                      },
+                      "version": {
+                        "exclusiveMinimum": 0,
+                        "maximum": 9007199254740991,
+                        "type": "integer"
+                      }
+                    },
+                    "required": [
+                      "key",
+                      "description",
+                      "version",
+                      "updatedAt",
+                      "updatedBy",
+                      "kid",
+                      "unreadable"
+                    ],
+                    "type": "object"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "The secrets, ordered by key.",
+            "headers": {
+              "ETag": {
+                "description": "The environment's revision, as a strong entity tag. Send it back as `If-Match` on a write to make that write conditional.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`BAD_REQUEST` — a malformed `If-Match`, or a precondition this API cannot express."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`UNAUTHENTICATED` — no valid Cloudflare Access assertion was presented."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`FORBIDDEN` — authenticated, but no grant covers this scope. The denial is audited."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`NOT_FOUND` — absent **or** invisible, deliberately indistinguishable. Returning 403 for one and 404 for the other would turn this API into an oracle for which slugs are in use."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`VALIDATION_FAILED` — schema rejection, including an unknown field. `issues` carries `{path, message}` and never the submitted value."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`INTERNAL`, `DECRYPT_FAILED`, `UNKNOWN_KID` or `SERVER_MISCONFIGURED`."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`NO_ADMINS_CONFIGURED` or `IDENTITY_PROVIDER_UNAVAILABLE`."
+          }
+        },
+        "summary": "List an environment's secrets",
+        "tags": [
+          "secrets"
+        ]
+      }
+    },
+    "/api/v1/projects/{project}/environments/{env}/secrets/{key}": {
+      "get": {
+        "description": "Fetches exactly the one row and audits it BEFORE returning. `reason` is what makes the log answer \"did anyone take this\" rather than merely \"did anyone look at it\": the UI sends `copy` for the copy button and `reveal` for the eye toggle, and `prk run` sends `run`.\n\nA decrypt failure fails the request. It is never downgraded to an empty string, an omitted key or a `null`, and the audit row is written before the throw so the record of the attempt survives the failure.\n\n**Two spellings.** `…/secrets/{key}` and `…/secrets/{key}:reveal` are the same operation; the suffix is accepted because a secret key is a POSIX name and therefore cannot contain a colon, so the parse is unambiguous.",
+        "operationId": "revealSecret",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "env",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "key",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "additionalProperties": false,
+                  "properties": {
+                    "key": {
+                      "maxLength": 256,
+                      "minLength": 1,
+                      "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+                      "type": "string"
+                    },
+                    "value": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "key",
+                    "value"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "The key and its decrypted value.",
+            "headers": {
+              "Cache-Control": {
+                "description": "`no-store, no-cache, must-revalidate, private`.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Cloudflare-CDN-Cache-Control": {
+                "description": "`no-store`. Cloudflare's edge cache does not necessarily honour `Cache-Control`, so it is told separately.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Vary": {
+                "description": "`Cf-Access-Jwt-Assertion`, so a cached entry can never be served across identities.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`BAD_REQUEST` — a malformed `If-Match`, or a precondition this API cannot express."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`UNAUTHENTICATED` — no valid Cloudflare Access assertion was presented."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`FORBIDDEN` — authenticated, but no grant covers this scope. The denial is audited."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`NOT_FOUND` — absent **or** invisible, deliberately indistinguishable. Returning 403 for one and 404 for the other would turn this API into an oracle for which slugs are in use."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`VALIDATION_FAILED` — schema rejection, including an unknown field. `issues` carries `{path, message}` and never the submitted value."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`DECRYPT_FAILED` or `UNKNOWN_KID` — the stored bytes were not sealed against the identity they are being read under. Treat it as tampering until proven otherwise."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`NO_ADMINS_CONFIGURED` or `IDENTITY_PROVIDER_UNAVAILABLE`."
+          }
+        },
+        "summary": "Reveal one value",
+        "tags": [
+          "secrets"
+        ]
+      }
+    },
+    "/api/v1/projects/{project}/environments/{env}/secrets/{key}/versions": {
+      "get": {
+        "description": "Newest first, including tombstones — a `deleted` entry records that the key ceased to exist at that version, and occupies the number, which is what makes delete-then-recreate continue the sequence rather than collide with its own history.",
+        "operationId": "listSecretVersions",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "env",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "key",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "items": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "createdAt": {
+                        "maximum": 9007199254740991,
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "createdBy": {
+                        "type": "string"
+                      },
+                      "deleted": {
+                        "type": "boolean"
+                      },
+                      "kid": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "op": {
+                        "type": "string"
+                      },
+                      "version": {
+                        "exclusiveMinimum": 0,
+                        "maximum": 9007199254740991,
+                        "type": "integer"
+                      }
+                    },
+                    "required": [
+                      "version",
+                      "op",
+                      "createdAt",
+                      "createdBy",
+                      "kid",
+                      "deleted"
+                    ],
+                    "type": "object"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "The version history."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`BAD_REQUEST` — a malformed `If-Match`, or a precondition this API cannot express."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`UNAUTHENTICATED` — no valid Cloudflare Access assertion was presented."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`FORBIDDEN` — authenticated, but no grant covers this scope. The denial is audited."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`NOT_FOUND` — absent **or** invisible, deliberately indistinguishable. Returning 403 for one and 404 for the other would turn this API into an oracle for which slugs are in use."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`VALIDATION_FAILED` — schema rejection, including an unknown field. `issues` carries `{path, message}` and never the submitted value."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`INTERNAL`, `DECRYPT_FAILED`, `UNKNOWN_KID` or `SERVER_MISCONFIGURED`."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`NO_ADMINS_CONFIGURED` or `IDENTITY_PROVIDER_UNAVAILABLE`."
+          }
+        },
+        "summary": "List a key's version history",
+        "tags": [
+          "secrets"
+        ]
+      }
+    },
+    "/api/v1/projects/{project}/environments/{env}/secrets:batch": {
+      "post": {
+        "description": "One D1 `batch()` — a real transaction — containing the revision bump, the new versions, the upserts, the tombstones, the deletes and the audit row, in that order with the audit row LAST. There is no partial application: either every statement lands or none does.\n\n`mode` decides what happens to keys named in neither `set` nor `delete`: `merge` leaves them alone, `replace` deletes them. A key named in both is a 422, because one order stores the value and the other tombstones it and the request does not say which was meant.\n\nOn a version race the losing batch writes **nothing** and is retried once against freshly read state; a second loss is `409`.",
+        "operationId": "writeSecrets",
+        "parameters": [
+          {
+            "description": "The `ETag` from the most recent `GET` of this environment's secrets. A mismatch is `412` and the environment is left byte-for-byte unchanged. Equivalent to `expected_rev` in the body; sending both is allowed only when they agree.",
+            "in": "header",
+            "name": "If-Match",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "project",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "env",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "additionalProperties": false,
+                "properties": {
+                  "delete": {
+                    "items": {
+                      "maxLength": 256,
+                      "minLength": 1,
+                      "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+                      "type": "string"
+                    },
+                    "maxItems": 500,
+                    "type": "array"
+                  },
+                  "expected_rev": {
+                    "maximum": 9007199254740991,
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "mode": {
+                    "default": "merge",
+                    "enum": [
+                      "merge",
+                      "replace"
+                    ],
+                    "type": "string"
+                  },
+                  "reason": {
+                    "maxLength": 512,
+                    "type": "string"
+                  },
+                  "set": {
+                    "additionalProperties": {
+                      "type": "string"
+                    },
+                    "propertyNames": {
+                      "maxLength": 256,
+                      "minLength": 1,
+                      "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+                      "type": "string"
+                    },
+                    "type": "object"
+                  }
+                },
+                "type": "object"
+              }
+            }
+          },
+          "description": "The mutation to apply.",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "additionalProperties": false,
+                  "properties": {
+                    "added": {
+                      "items": {
+                        "maxLength": 256,
+                        "minLength": 1,
+                        "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+                        "type": "string"
+                      },
+                      "type": "array"
+                    },
+                    "changed": {
+                      "items": {
+                        "maxLength": 256,
+                        "minLength": 1,
+                        "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+                        "type": "string"
+                      },
+                      "type": "array"
+                    },
+                    "removed": {
+                      "items": {
+                        "maxLength": 256,
+                        "minLength": 1,
+                        "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+                        "type": "string"
+                      },
+                      "type": "array"
+                    },
+                    "rev": {
+                      "maximum": 9007199254740991,
+                      "minimum": 0,
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "rev",
+                    "added",
+                    "changed",
+                    "removed"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "The revision after the write, and the diff.",
+            "headers": {
+              "ETag": {
+                "description": "The environment's revision, as a strong entity tag. Send it back as `If-Match` on a write to make that write conditional.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`BAD_REQUEST` — a malformed `If-Match`, or a precondition this API cannot express."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`UNAUTHENTICATED` — no valid Cloudflare Access assertion was presented."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`FORBIDDEN` — authenticated, but no grant covers this scope. The denial is audited."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`NOT_FOUND` — absent **or** invisible, deliberately indistinguishable. Returning 403 for one and 404 for the other would turn this API into an oracle for which slugs are in use."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`VERSION_CONFLICT` — another writer took the same version twice. Nothing was written."
+          },
+          "412": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`PRECONDITION_FAILED` — `If-Match`/`expected_rev` did not match. The environment is byte-for-byte unchanged."
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`PAYLOAD_TOO_LARGE` — the write would leave more than `ENV_MAX_SECRETS` secrets, or the body is over `BODY_MAX_BYTES`. The cap exists because a full replace must fit in ONE batch; splitting it would forfeit atomicity, so the write is refused rather than made non-atomic."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`VALIDATION_FAILED` — schema rejection, including an unknown field. `issues` carries `{path, message}` and never the submitted value."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`INTERNAL`, `DECRYPT_FAILED`, `UNKNOWN_KID` or `SERVER_MISCONFIGURED`."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`NO_ADMINS_CONFIGURED` or `IDENTITY_PROVIDER_UNAVAILABLE`."
+          }
+        },
+        "summary": "Write an environment's secrets atomically",
+        "tags": [
+          "secrets"
+        ]
+      }
+    },
+    "/api/v1/projects/{project}/environments/{env}/secrets:export": {
+      "get": {
+        "description": "A flat map of key to plaintext. **One** audit row for the export as a whole — an export is one decision by one person at one instant, and five hundred rows describing it would make the log worse rather than more complete.\n\nA single unreadable row FAILS THE WHOLE EXPORT. That is the loud choice and it is the right one: the alternative hands the operator a file that is silently missing a variable, which they discover in production.",
+        "operationId": "exportSecrets",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "env",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "propertyNames": {
+                    "maxLength": 256,
+                    "minLength": 1,
+                    "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+                    "type": "string"
+                  },
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Every key and its decrypted value.",
+            "headers": {
+              "Cache-Control": {
+                "description": "`no-store, no-cache, must-revalidate, private`.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Cloudflare-CDN-Cache-Control": {
+                "description": "`no-store`. Cloudflare's edge cache does not necessarily honour `Cache-Control`, so it is told separately.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Vary": {
+                "description": "`Cf-Access-Jwt-Assertion`, so a cached entry can never be served across identities.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`BAD_REQUEST` — a malformed `If-Match`, or a precondition this API cannot express."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`UNAUTHENTICATED` — no valid Cloudflare Access assertion was presented."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`FORBIDDEN` — authenticated, but no grant covers this scope. The denial is audited."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`NOT_FOUND` — absent **or** invisible, deliberately indistinguishable. Returning 403 for one and 404 for the other would turn this API into an oracle for which slugs are in use."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`VALIDATION_FAILED` — schema rejection, including an unknown field. `issues` carries `{path, message}` and never the submitted value."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`DECRYPT_FAILED` or `UNKNOWN_KID` — one row could not be opened, so the export is refused rather than silently short."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`NO_ADMINS_CONFIGURED` or `IDENTITY_PROVIDER_UNAVAILABLE`."
+          }
+        },
+        "summary": "Export every value in the environment",
+        "tags": [
+          "secrets"
+        ]
+      }
+    },
+    "/api/v1/projects/{project}/environments/{env}/secrets:import": {
+      "post": {
+        "description": "With `dry_run: true` the server parses, validates and computes the diff **without writing**, through the same planning function the write path uses — so what it shows is what would happen rather than a second implementation that agrees by inspection.\n\nThe diff carries key names and change kinds only. `changed` means \"this key already existed and is being rewritten\"; it does **not** mean the value differs, and it cannot, because telling those apart would require decrypting every existing value to compare — a silent full-environment reveal performed by the screen whose purpose is to avoid one.",
+        "operationId": "importSecrets",
+        "parameters": [
+          {
+            "description": "The `ETag` from the most recent `GET` of this environment's secrets. A mismatch is `412` and the environment is left byte-for-byte unchanged. Equivalent to `expected_rev` in the body; sending both is allowed only when they agree.",
+            "in": "header",
+            "name": "If-Match",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "project",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "env",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "additionalProperties": false,
+                "properties": {
+                  "content": {
+                    "maxLength": 1048576,
+                    "type": "string"
+                  },
+                  "dry_run": {
+                    "default": false,
+                    "type": "boolean"
+                  },
+                  "expected_rev": {
+                    "maximum": 9007199254740991,
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "format": {
+                    "enum": [
+                      "env",
+                      "json"
+                    ],
+                    "type": "string"
+                  },
+                  "mode": {
+                    "default": "merge",
+                    "enum": [
+                      "merge",
+                      "replace"
+                    ],
+                    "type": "string"
+                  },
+                  "reason": {
+                    "maxLength": 512,
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "format",
+                  "content"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "description": "The blob, and how to apply it.",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "additionalProperties": false,
+                  "properties": {
+                    "added": {
+                      "items": {
+                        "maxLength": 256,
+                        "minLength": 1,
+                        "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+                        "type": "string"
+                      },
+                      "type": "array"
+                    },
+                    "applied": {
+                      "type": "boolean"
+                    },
+                    "changed": {
+                      "items": {
+                        "maxLength": 256,
+                        "minLength": 1,
+                        "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+                        "type": "string"
+                      },
+                      "type": "array"
+                    },
+                    "removed": {
+                      "items": {
+                        "maxLength": 256,
+                        "minLength": 1,
+                        "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+                        "type": "string"
+                      },
+                      "type": "array"
+                    },
+                    "warnings": {
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "key": {
+                            "type": "string"
+                          },
+                          "line": {
+                            "maximum": 9007199254740991,
+                            "minimum": -9007199254740991,
+                            "type": "integer"
+                          },
+                          "message": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "line",
+                          "key",
+                          "message"
+                        ],
+                        "type": "object"
+                      },
+                      "type": "array"
+                    }
+                  },
+                  "required": [
+                    "added",
+                    "changed",
+                    "removed",
+                    "applied",
+                    "warnings"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "The diff."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`BAD_REQUEST` — a malformed `If-Match`, or a precondition this API cannot express."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`UNAUTHENTICATED` — no valid Cloudflare Access assertion was presented."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`FORBIDDEN` — authenticated, but no grant covers this scope. The denial is audited."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`NOT_FOUND` — absent **or** invisible, deliberately indistinguishable. Returning 403 for one and 404 for the other would turn this API into an oracle for which slugs are in use."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`VERSION_CONFLICT` — another writer took the same version twice."
+          },
+          "412": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`PRECONDITION_FAILED` — the revision guard did not match."
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`PAYLOAD_TOO_LARGE` — over `ENV_MAX_SECRETS` or `BODY_MAX_BYTES`."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`VALIDATION_FAILED` — schema rejection, including an unknown field. `issues` carries `{path, message}` and never the submitted value."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`INTERNAL`, `DECRYPT_FAILED`, `UNKNOWN_KID` or `SERVER_MISCONFIGURED`."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`NO_ADMINS_CONFIGURED` or `IDENTITY_PROVIDER_UNAVAILABLE`."
+          }
+        },
+        "summary": "Import a `.env` or JSON blob",
+        "tags": [
+          "secrets"
+        ]
+      }
+    },
+    "/api/v1/projects/{project}/environments/{env}/secrets:rename": {
+      "post": {
+        "description": "There is no cheap rename and there cannot be one. The ciphertext is bound to the key NAME through the AAD, so moving the blob would fail its next tag check — and removing `key` from the AAD to make that work would reintroduce cross-key transplant, the vulnerability the AAD exists to close. So: decrypt under the old identity, re-encrypt under the new one, tombstone the old, all in one batch. The new version is `max(history of the DESTINATION key) + 1`, which matters when renaming onto a name that was previously used and deleted.",
+        "operationId": "renameSecret",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "env",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "additionalProperties": false,
+                "properties": {
+                  "from": {
+                    "maxLength": 256,
+                    "minLength": 1,
+                    "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+                    "type": "string"
+                  },
+                  "to": {
+                    "maxLength": 256,
+                    "minLength": 1,
+                    "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "from",
+                  "to"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "description": "The old and new key names. Never a value.",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "additionalProperties": false,
+                  "properties": {
+                    "rev": {
+                      "maximum": 9007199254740991,
+                      "minimum": 0,
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "rev"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "The revision after the rename."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`BAD_REQUEST` — a malformed `If-Match`, or a precondition this API cannot express."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`UNAUTHENTICATED` — no valid Cloudflare Access assertion was presented."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`FORBIDDEN` — authenticated, but no grant covers this scope. The denial is audited."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`NOT_FOUND` — absent **or** invisible, deliberately indistinguishable. Returning 403 for one and 404 for the other would turn this API into an oracle for which slugs are in use."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`CONFLICT` — a live secret already uses the destination name."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`VALIDATION_FAILED` — schema rejection, including an unknown field. `issues` carries `{path, message}` and never the submitted value."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`INTERNAL`, `DECRYPT_FAILED`, `UNKNOWN_KID` or `SERVER_MISCONFIGURED`."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`NO_ADMINS_CONFIGURED` or `IDENTITY_PROVIDER_UNAVAILABLE`."
+          }
+        },
+        "summary": "Rename a key",
+        "tags": [
+          "secrets"
+        ]
+      }
+    },
+    "/api/v1/projects/{project}/environments/{env}/secrets:rollback": {
+      "post": {
+        "description": "A rollback moves FORWARD. Version N is decrypted and re-encrypted as `current + 1` under fresh AAD; the old envelope is never resurrected, because its AAD binds it to version N and writing those exact bytes back as current would fail the next read's tag check. History is append-only in both directions.\n\nRolling back to a tombstone is a 422 — that version recorded a deletion and carries no value.",
+        "operationId": "rollbackSecret",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "env",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "additionalProperties": false,
+                "properties": {
+                  "key": {
+                    "maxLength": 256,
+                    "minLength": 1,
+                    "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+                    "type": "string"
+                  },
+                  "reason": {
+                    "maxLength": 512,
+                    "type": "string"
+                  },
+                  "to_version": {
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991,
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "key",
+                  "to_version"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "description": "The key and the version to restore.",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "additionalProperties": false,
+                  "properties": {
+                    "rev": {
+                      "maximum": 9007199254740991,
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "version": {
+                      "exclusiveMinimum": 0,
+                      "maximum": 9007199254740991,
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "rev",
+                    "version"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "The revision and the new version number."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`BAD_REQUEST` — a malformed `If-Match`, or a precondition this API cannot express."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`UNAUTHENTICATED` — no valid Cloudflare Access assertion was presented."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`FORBIDDEN` — authenticated, but no grant covers this scope. The denial is audited."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`NOT_FOUND` — absent **or** invisible, deliberately indistinguishable. Returning 403 for one and 404 for the other would turn this API into an oracle for which slugs are in use."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`VALIDATION_FAILED` — schema rejection, including an unknown field. `issues` carries `{path, message}` and never the submitted value."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`INTERNAL`, `DECRYPT_FAILED`, `UNKNOWN_KID` or `SERVER_MISCONFIGURED`."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`NO_ADMINS_CONFIGURED` or `IDENTITY_PROVIDER_UNAVAILABLE`."
+          }
+        },
+        "summary": "Roll a key back to an earlier version",
+        "tags": [
+          "secrets"
+        ]
+      }
+    },
+    "/api/v1/whoami": {
+      "get": {
+        "description": "Derived entirely from the VERIFIED Access assertion plus the identity row it resolved — never from a header a client controls.\n\n`role` is the caller's **global** role, or `null`. It is not the maximum over every scope: a project-scoped admin reports `null` here and is still an admin of that project.\n\n`bootstrap` is true while the caller is an administrator by virtue of `BOOTSTRAP_ADMINS` alone. It goes false the moment the self-heal has converted the var into a real, revocable grant — which happens on the first authenticated request — and the UI shows a banner for exactly as long as it is true.",
+        "operationId": "whoami",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "additionalProperties": false,
+                  "properties": {
+                    "bootstrap": {
+                      "type": "boolean"
+                    },
+                    "identityId": {
+                      "anyOf": [
+                        {
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "kind": {
+                      "enum": [
+                        "user",
+                        "service"
+                      ],
+                      "type": "string"
+                    },
+                    "role": {
+                      "anyOf": [
+                        {
+                          "enum": [
+                            "reader",
+                            "writer",
+                            "admin"
+                          ],
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "subject": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "subject",
+                    "identityId",
+                    "role",
+                    "bootstrap"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "The resolved identity."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`BAD_REQUEST` — a malformed `If-Match`, or a precondition this API cannot express."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`UNAUTHENTICATED` — no valid Cloudflare Access assertion was presented."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`FORBIDDEN` — authenticated, but no grant covers this scope. The denial is audited."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`NOT_FOUND` — absent **or** invisible, deliberately indistinguishable. Returning 403 for one and 404 for the other would turn this API into an oracle for which slugs are in use."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`VALIDATION_FAILED` — schema rejection, including an unknown field. `issues` carries `{path, message}` and never the submitted value."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`INTERNAL`, `DECRYPT_FAILED`, `UNKNOWN_KID` or `SERVER_MISCONFIGURED`."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`NO_ADMINS_CONFIGURED` or `IDENTITY_PROVIDER_UNAVAILABLE`."
+          }
+        },
+        "summary": "Who the server thinks you are",
+        "tags": [
+          "meta"
+        ]
+      }
+    }
+  },
+  "security": [
+    {
+      "accessClientId": [],
+      "accessClientSecret": []
+    },
+    {
+      "accessAssertion": []
+    }
+  ],
+  "servers": [
+    {
+      "description": "This deployment.",
+      "url": "/api/v1"
+    }
+  ],
+  "tags": [
+    {
+      "description": "Liveness and identity.",
+      "name": "meta"
+    },
+    {
+      "description": "Projects.",
+      "name": "projects"
+    },
+    {
+      "description": "Environments within a project.",
+      "name": "environments"
+    },
+    {
+      "description": "Secret metadata, values, history and bulk writes.",
+      "name": "secrets"
+    },
+    {
+      "description": "Identities and grants.",
+      "name": "access"
+    },
+    {
+      "description": "The append-only audit log.",
+      "name": "audit"
+    },
+    {
+      "description": "Key ring status and rekeying.",
+      "name": "admin"
+    }
+  ]
+}

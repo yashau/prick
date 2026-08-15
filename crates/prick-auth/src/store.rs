@@ -555,6 +555,14 @@ fn owner_only(path: &Path) -> std::io::Result<bool> {
     use std::os::unix::fs::PermissionsExt as _;
 
     let mode = std::fs::metadata(path)?.permissions().mode();
+    // clippy::verbose_bit_mask suggests `trailing_zeros() >= 6`. That is the
+    // same test and strictly less readable: `& 0o077 == 0` is THE idiomatic
+    // spelling of "group and other have no bits", and a permission check should
+    // look like a permission check. Suppressed rather than obeyed.
+    //
+    // This fires only on Unix, so it cannot be seen from the Windows dev
+    // machine -- it took a CI run on Linux to surface.
+    #[expect(clippy::verbose_bit_mask, reason = "reads as a permission mask, which is the point")]
     Ok(mode & 0o077 == 0)
 }
 

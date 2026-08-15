@@ -277,9 +277,9 @@ export async function updateProject(
  * environments, their secrets, their version history and every grant scoped to
  * them, in the same transaction, by itself.
  *
- * The alternative -- and what upstream did -- is four sequential DELETEs across
- * four round-trips, which is not atomic, and whose third failure leaves a
- * project whose environments are gone and whose grants still point at them.
+ * The alternative is four sequential DELETEs across four round-trips, which is
+ * not atomic, and whose third failure leaves a project whose environments are
+ * gone and whose grants still point at them.
  * There is no version of hand-rolled cascade that is better than the one the
  * database already implements correctly.
  */

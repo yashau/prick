@@ -487,11 +487,7 @@ export function renderPackages({
     for (const extra of ['README.md', 'LICENSE']) {
       const fromPackage = path.join(mcpSource, extra);
       const fromRoot = path.join(root, extra);
-      const source = existsSync(fromPackage)
-        ? fromPackage
-        : existsSync(fromRoot)
-          ? fromRoot
-          : null;
+      const source = existsSync(fromPackage) ? fromPackage : existsSync(fromRoot) ? fromRoot : null;
       if (source) copyFileSync(source, path.join(mcpOut, extra));
     }
 
