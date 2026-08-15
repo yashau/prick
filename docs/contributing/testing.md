@@ -144,8 +144,27 @@ a group holding no grants conferring nothing, an expired group grant lapsing
 exactly like a direct one, and a service token going through the identical code
 path.
 
-Still to write, when the domain functions exist: **rekey correctness** — a two-key
-ring, every value still decrypts, and no version changed.
+`packages/app/test/core/keyring.test.ts` is **rekey correctness**, and the three
+clauses are asserted together in one test because each alone is worthless:
+
+- **A genuine two-key ring.** The rows are seeded under a separate single-key ring
+  so they really predate the rotation, and the test asserts the active kid
+  actually changed and the old one is now the retired one. Rotating a key in
+  place would pass a weaker version of this.
+- **Every value still decrypts.** The environment carries history and a tombstone
+  — A@1, B@1, B@2, C@1 and a deleted C@2 — and every value row is decrypted
+  individually against an expected `key|version → plaintext` map, with the value
+  and tombstone counts both asserted so a silently skipped row cannot hide.
+- **No version changed.** `(id, environmentId, key, version, op)` is captured for
+  every row before and compared as a whole array after, so an appended, dropped
+  or renumbered row fails too.
+
+The suite also pins the properties the design turns on: `safeToRemoveOldKey` goes
+false while a single row still references a retired kid, a rekey is one `batch()`
+and a second run is a no-op, and a row that will not decrypt fails the page
+rather than being skipped. That last one is the load-bearing case — a skipped row
+still counts as gone, so the ring would report itself safe to prune while an
+unreadable value remained.
 
 ## CLI tests
 
