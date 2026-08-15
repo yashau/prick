@@ -1,0 +1,32 @@
+# .gitattributes fixes what git writes; this fixes what the editor writes.
+# Both are needed: an editor that appends a CRLF line to an otherwise-LF file
+# produces a mixed file that git then normalises on commit, which makes for a
+# confusing diff.
+root = true
+
+[*]
+charset                  = utf-8
+end_of_line              = lf
+insert_final_newline     = true
+trim_trailing_whitespace = true
+indent_style             = space
+indent_size              = 2
+max_line_length          = 100
+
+[*.rs]
+indent_size     = 4
+max_line_length = 100
+
+[*.{md,mdx}]
+# A two-space hard line break is meaningful in Markdown.
+trim_trailing_whitespace = false
+max_line_length          = off
+
+[*.{bat,cmd}]
+end_of_line = crlf
+
+[*.{yml,yaml,json,jsonc,json5,toml}]
+indent_size = 2
+
+[LICENSE]
+max_line_length = off

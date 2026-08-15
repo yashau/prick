@@ -1,0 +1,110 @@
+# =============================================================================
+# LINE ENDINGS
+#
+# `* text=auto eol=lf` does two things:
+#   1. text=auto -> git detects text vs binary and normalises to LF in the
+#                   object database on commit.
+#   2. eol=lf    -> on checkout, write LF to the WORKING TREE on every platform.
+#
+# `eol` OVERRIDES core.autocrlf and core.eol. A Windows contributor running the
+# Git-for-Windows default (core.autocrlf=true) still gets LF on disk. That is
+# the whole reason to do this here rather than telling people to set a git
+# config: it cannot be got wrong per-machine.
+# =============================================================================
+*                       text=auto eol=lf
+
+# --- Explicit text (defensive: overrides any bad content heuristic) ----------
+*.rs                    text eol=lf
+*.toml                  text eol=lf
+*.lock                  text eol=lf
+*.ts                    text eol=lf
+*.tsx                   text eol=lf
+*.js                    text eol=lf
+*.mjs                   text eol=lf
+*.cjs                   text eol=lf
+*.svelte                text eol=lf
+*.json                  text eol=lf
+*.jsonc                 text eol=lf
+*.json5                 text eol=lf
+*.css                   text eol=lf
+*.html                  text eol=lf
+*.md                    text eol=lf
+*.mdx                   text eol=lf
+*.yml                   text eol=lf
+*.yaml                  text eol=lf
+*.sql                   text eol=lf
+*.sh                    text eol=lf
+*.ps1                   text eol=lf
+*.svg                   text eol=lf
+*.snap                  text eol=lf
+*.txt                   text eol=lf
+*.trycmd                text eol=lf
+.gitignore              text eol=lf
+.gitattributes          text eol=lf
+.editorconfig           text eol=lf
+.npmrc                  text eol=lf
+LICENSE                 text eol=lf
+
+# --- MUST be CRLF ------------------------------------------------------------
+# cmd.exe's batch parser reads scripts byte-by-byte from a file offset. With
+# LF-only endings, `goto`/`call`/labels and multi-line blocks can be mis-parsed.
+# This is not cosmetic; LF batch files genuinely misbehave.
+*.bat                   text eol=crlf
+*.cmd                   text eol=crlf
+
+# --- Binary (`binary` is a macro for `-text -diff`) --------------------------
+*.png                   binary
+*.jpg                   binary
+*.jpeg                  binary
+*.gif                   binary
+*.ico                   binary
+*.webp                  binary
+*.avif                  binary
+*.woff                  binary
+*.woff2                 binary
+*.ttf                   binary
+*.otf                   binary
+*.eot                   binary
+*.pdf                   binary
+*.zip                   binary
+*.gz                    binary
+*.tgz                   binary
+*.xz                    binary
+*.zst                   binary
+*.7z                    binary
+*.wasm                  binary
+*.node                  binary
+*.dll                   binary
+*.dylib                 binary
+*.so                    binary
+*.exe                   binary
+*.a                     binary
+*.lib                   binary
+*.pdb                   binary
+*.rlib                  binary
+*.bin                   binary
+*.der                   binary
+*.p12                   binary
+*.sqlite                binary
+*.db                    binary
+
+# --- Generated / lockfiles ---------------------------------------------------
+# `-diff` collapses them in `git diff`; `linguist-generated` collapses them in
+# the GitHub UI. `merge=binary` forces an explicit conflict instead of a
+# textually-merged lockfile that is syntactically valid but semantically wrong.
+# Resolve by regenerating, never by hand.
+Cargo.lock              text eol=lf -diff linguist-generated=true merge=binary
+pnpm-lock.yaml          text eol=lf -diff linguist-generated=true merge=binary
+mise.lock               text eol=lf -diff linguist-generated=true merge=binary
+packages/app/worker-configuration.d.ts  text eol=lf -diff linguist-generated=true
+
+# --- Linguist ----------------------------------------------------------------
+docs/**                 linguist-documentation
+e2e/**                  linguist-vendored=false
+scripts/**              linguist-vendored=false
+
+# --- Keep source archives lean -----------------------------------------------
+.github/                export-ignore
+.devcontainer/          export-ignore
+e2e/                    export-ignore
+docs/                   export-ignore

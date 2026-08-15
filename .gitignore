@@ -1,0 +1,56 @@
+# --- Rust ---------------------------------------------------------------
+/target/
+**/*.rs.bk
+*.pdb
+
+# --- Node ---------------------------------------------------------------
+node_modules/
+.pnpm-store/
+*.tgz
+
+# --- Build output -------------------------------------------------------
+/dist/
+.svelte-kit/
+build/
+.vite/
+
+# --- Cloudflare ---------------------------------------------------------
+.wrangler/
+worker-configuration.d.ts.bak
+
+# --- Secrets: never commit ----------------------------------------------
+# .dev.vars holds MASTER_KEY and Access config for local development.
+# The example file IS committed; the real one never is.
+.dev.vars
+.dev.vars.*
+!.dev.vars.example
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+!**/testdata/**/*.key
+
+# --- Test output --------------------------------------------------------
+/e2e/test-results/
+/e2e/playwright-report/
+/e2e/.playwright/
+coverage/
+*.profraw
+
+# --- Tooling ------------------------------------------------------------
+.mise.local.toml
+mise.local.toml
+
+# --- Editors ------------------------------------------------------------
+.idea/
+*.swp
+*.swo
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+
+# --- OS -----------------------------------------------------------------
+.DS_Store
+Thumbs.db
+desktop.ini
