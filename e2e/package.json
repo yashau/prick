@@ -6,7 +6,8 @@
   "scripts": {
     "test": "playwright test",
     "test:ui": "playwright test --ui",
-    "install-browsers": "playwright install --with-deps chromium",
+    "install-browsers": "playwright install chromium",
+    "install-browser-deps": "playwright install-deps chromium",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {

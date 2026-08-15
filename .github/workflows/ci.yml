@@ -93,6 +93,15 @@ jobs:
               - 'pnpm-lock.yaml'
               - 'pnpm-workspace.yaml'
               - 'packages/**'
+              # The two ROOT files that govern the whole JS workspace rather
+              # than one package, and so were being missed: `vp lint`, `vp fmt`
+              # and `vp test` are invoked from the root and read the root
+              # `vite.config.ts` (without it `vp` walks the workspace and loads
+              # packages/app's config with the wrong cwd -- see the header of
+              # that file), and every package tsconfig extends
+              # `tsconfig.base.json`, so it governs `mise run typecheck`.
+              - 'vite.config.ts'
+              - 'tsconfig.base.json'
             e2e:
               - *js
               - 'e2e/**'
@@ -281,14 +290,29 @@ jobs:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
 
+      # Browser binaries only. `playwright install --with-deps` is NOT used, and
+      # neither is a separate `playwright install-deps` step.
+      #
+      # `--with-deps` runs `apt-get update && apt-get install` as root. On this
+      # image that installs nothing: ubuntu-24.04 ships Chrome, Chromium, Edge
+      # and Firefox as .deb packages, so apt has already pulled in every shared
+      # library Playwright's chromium links against. What it did do was hang.
+      # `azure.archive.ubuntu.com` is unreachable from the runner often enough
+      # to matter, apt applies no timeout of its own, and the step sat silent
+      # for 24 minutes until the job timeout killed it -- so `e2e` never ran at
+      # all, on any commit, while reporting only "cancelled".
+      #
+      # If a future image drops a library, this does not fail silently:
+      # Playwright refuses to launch and names the missing packages ("Host
+      # system is missing dependencies to run browsers"). Install exactly those,
+      # here, in a step of their own. Do not restore `--with-deps` -- that trades
+      # a named, five-second failure for an unbounded stall.
+      #
+      # `timeout-minutes` bounds the CDN download for the same reason: a stalled
+      # transfer should cost ten minutes, not the job's whole budget.
       - if: steps.playwright-cache.outputs.cache-hit != 'true'
+        timeout-minutes: 10
         run: mise run e2e:install
-
-      # Even on a cache hit, the host dependencies (fonts, codecs) live in
-      # /usr/lib rather than the cached browser directory, so they are never
-      # restored and must be installed every time.
-      - if: steps.playwright-cache.outputs.cache-hit == 'true'
-        run: pnpm --dir e2e exec playwright install-deps
 
       - run: mise run e2e
 

@@ -49,11 +49,16 @@ mirrors `ci.yml` exactly, so a green run here is a green run there.
 | `audit`         | Advisories against both dependency trees                                   | `audit:rust`, `audit:js`                                                                                      |
 | `miri`          | The purity proof for `prick-core`                                          | —                                                                                                             |
 | `build`         | CLI, Worker bundle and MCP server                                          | `build:rust`, `build:js`, `build:mcp`                                                                         |
-| `e2e`           | Playwright; `e2e:install` fetches the browsers first                       | —                                                                                                             |
+| `e2e`           | Playwright; `e2e:install` fetches the browsers first                       | `e2e:install`, `e2e:install:deps`                                                                             |
 | `version:check` | Every manifest carries the same version                                    | —                                                                                                             |
 
 `lint:js` splits further into `lint:js:app` and `lint:js:repo` — packages/app has to be linted from
 inside itself, because SvelteKit's plugin resolves `src/app.html` relative to the working directory.
+
+`e2e:install` downloads browser binaries and nothing else. `e2e:install:deps` installs the system
+libraries Chromium links against; it needs root, and CI deliberately does not run it, because the
+ubuntu-24.04 image already carries them and `apt-get update` on that runner stalls indefinitely often
+enough to have wedged the `e2e` job outright. Run it only on a bare Linux box.
 
 ### Version and release
 

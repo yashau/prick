@@ -356,9 +356,33 @@ run = "pnpm --dir packages/app run dev"
 
 [tasks."e2e:install"]
 description = "Download the Playwright browsers (CI runs this only on a cache miss)"
-# --with-deps installs the system libraries Chromium needs; it is a no-op on
-# macOS and Windows, so one invocation covers the whole matrix.
+# Browser binaries ONLY. This used to be `playwright install --with-deps`, and
+# the `--with-deps` half is now a separate task for two independent reasons.
+#
+# The first is that it does not belong in a task CI runs on a cache miss.
+# `--with-deps` shells out to `apt-get update && apt-get install` as root, and
+# apt is the one part of this that is neither cacheable nor bounded: it hung a
+# CI run for 24 minutes reaching a dead `azure.archive.ubuntu.com` before the
+# job timeout killed it. Downloading a browser from a CDN and mutating the
+# host's package database are not the same operation and should not fail as
+# one.
+#
+# The second is that a contributor typing `mise run e2e:install` should not
+# have a task silently escalate to root and install system packages.
 run = "pnpm --dir e2e run install-browsers"
+wait_for = ["bootstrap:js"]
+
+[tasks."e2e:install:deps"]
+description = "Install the system libraries Chromium needs (bare Linux only; needs root)"
+# NOT run by CI, deliberately -- see the e2e job in .github/workflows/ci.yml.
+# The GitHub ubuntu-24.04 image ships Chrome, Chromium, Edge and Firefox as
+# .deb packages, so apt has already pulled in every shared library Playwright's
+# chromium needs; running apt there costs a network round trip to install
+# nothing.
+#
+# This exists for a bare Linux box, where those libraries genuinely are absent.
+# It is a no-op on macOS and Windows.
+run = "pnpm --dir e2e run install-browser-deps"
 wait_for = ["bootstrap:js"]
 
 [tasks.e2e]
