@@ -1,9 +1,5 @@
 //! Exit codes, signals and job control.
 //!
-//! # Status
-//!
-//! Skeleton. The exit-code mapping is implemented; the signal handling is not.
-//!
 //! # The `SIGPIPE` regression
 //!
 //! The Rust runtime sets `SIGPIPE` to `SIG_IGN` before `main` runs, because a
@@ -12,20 +8,20 @@
 //! `SIGPIPE` ignored -- which is not what it was written to expect.
 //!
 //! Concretely, `prk run -- yes | head -1` **hangs forever**: `head` exits, the
-//! pipe closes, and `yes` never receives the signal that would stop it.
+//! pipe closes, and `yes` never receives the signal that would stop it. Every
+//! program in a pipeline that relies on `SIGPIPE` to know when to stop is
+//! affected, which is most of them.
 //!
-//! The fix is to reset `SIGPIPE` to `SIG_DFL` immediately before `exec`, inside
-//! `CommandExt::pre_exec`. That is a named regression test, not a comment.
+//! The fix is [`restore_default_dispositions`], called from `pre_exec`
+//! immediately before the image is replaced. Its regression test is
+//! `tests/unix_exec.rs::yes_piped_into_head_terminates_rather_than_hanging`.
 //!
-//! TODO:
+//! # The signal mask
 //!
-//! - `pre_exec` hook restoring `SIGPIPE` to `SIG_DFL` (this is the `unsafe`).
-//! - Windows: `SetConsoleCtrlHandler` plus a job object with
-//!   `KILL_ON_JOB_CLOSE`, so Ctrl-C reaches the whole tree and nothing is
-//!   orphaned when `prk` dies.
-//! - Integration tests: exit codes preserved, `SIGTERM` producing 143,
-//!   `SIGINT` producing 130, argv preserved byte for byte including non-UTF-8,
-//!   `yes | head -1` terminating, and `npm.cmd --version` working on Windows.
+//! Blocked signals are also inherited across `exec`, and a blocked signal is
+//! not something the child can discover or undo before it matters. `prk` does
+//! not block anything itself, but it may have been started by something that
+//! did, so the mask is cleared rather than assumed empty.
 
 /// The offset a shell adds to a signal number to form an exit status.
 pub const SIGNAL_EXIT_BASE: i32 = 128;
@@ -61,6 +57,51 @@ pub fn child_exit_status(code: Option<i32>, signal: Option<i32>) -> i32 {
     }
 }
 
+/// Restores the signal state a freshly-started program expects.
+///
+/// Runs in the child, between `fork` and `exec`, so **every call in here must
+/// be async-signal-safe**. `signal` and `sigprocmask` both are; allocating,
+/// locking, or formatting a string would not be.
+///
+/// Returns an error rather than aborting so the caller can report it; a failure
+/// here is not recoverable, but it is diagnosable.
+///
+/// # Errors
+///
+/// Whatever `signal(2)` or `sigprocmask(2)` reported.
+#[cfg(unix)]
+pub fn restore_default_dispositions() -> std::io::Result<()> {
+    // SAFETY: `signal` with SIG_DFL takes no pointer arguments and cannot fail
+    // for a valid signal number other than by returning SIG_ERR, which is
+    // checked. SIGPIPE is a valid signal number on every Unix.
+    //
+    // This runs after fork in the child, so the only thread in the process is
+    // this one and there is no lock to contend for.
+    let previous = unsafe { libc::signal(libc::SIGPIPE, libc::SIG_DFL) };
+    if previous == libc::SIG_ERR {
+        return Err(std::io::Error::last_os_error());
+    }
+
+    // SAFETY: `sigemptyset` writes through a pointer to a `sigset_t` this
+    // function owns and keeps alive for the duration of both calls.
+    // `sigprocmask` reads through that same pointer and is passed a null
+    // `oldset`, which the API documents as "do not report the previous mask".
+    //
+    // `sigset_t` has no invalid bit patterns, so the zeroed value handed to
+    // `sigemptyset` is sound to construct even before it initialises it.
+    unsafe {
+        let mut empty: libc::sigset_t = std::mem::zeroed();
+        if libc::sigemptyset(&raw mut empty) != 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        if libc::sigprocmask(libc::SIG_SETMASK, &raw const empty, std::ptr::null_mut()) != 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -94,5 +135,58 @@ mod tests {
     #[test]
     fn an_unknown_outcome_is_a_generic_failure_not_a_success() {
         assert_eq!(child_exit_status(None, None), 1);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_signal_numbers_match_the_platforms() {
+        assert_eq!(SIGINT, libc::SIGINT);
+        assert_eq!(SIGPIPE, libc::SIGPIPE);
+        assert_eq!(SIGTERM, libc::SIGTERM);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn restoring_dispositions_succeeds_and_actually_changes_sigpipe() {
+        // Runs in the test process rather than after a fork, which is the only
+        // way to observe the result. The disposition is put back afterwards so
+        // the rest of the suite still sees the runtime's setting.
+        //
+        // SAFETY: reading and restoring a signal disposition in a single-
+        // threaded observation window; no pointers are involved.
+        let original = unsafe { libc::signal(libc::SIGPIPE, libc::SIG_IGN) };
+        assert_ne!(original, libc::SIG_ERR);
+
+        restore_default_dispositions().expect("restoring dispositions must succeed");
+
+        // SAFETY: as above. Reads back what the call above installed.
+        let now = unsafe { libc::signal(libc::SIGPIPE, original) };
+        assert_eq!(now, libc::SIG_DFL, "SIGPIPE was not restored to its default disposition");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn restoring_dispositions_clears_the_signal_mask() {
+        // A blocked signal is inherited across exec, and the child has no way
+        // to discover that it was blocked before the fact matters.
+        //
+        // SAFETY: `blocked` and `current` are live locals for the duration of
+        // every call that writes through them, and the null `oldset` /
+        // `set` arguments are the documented "do not report" and "query only"
+        // forms.
+        let still_blocked = unsafe {
+            let mut blocked: libc::sigset_t = std::mem::zeroed();
+            libc::sigemptyset(&raw mut blocked);
+            libc::sigaddset(&raw mut blocked, libc::SIGUSR1);
+            libc::sigprocmask(libc::SIG_BLOCK, &raw const blocked, std::ptr::null_mut());
+
+            restore_default_dispositions().expect("restoring dispositions must succeed");
+
+            let mut current: libc::sigset_t = std::mem::zeroed();
+            libc::sigprocmask(libc::SIG_SETMASK, std::ptr::null(), &raw mut current);
+            libc::sigismember(&raw const current, libc::SIGUSR1)
+        };
+
+        assert_eq!(still_blocked, 0, "the signal mask was not cleared");
     }
 }

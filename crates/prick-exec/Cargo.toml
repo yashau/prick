@@ -9,12 +9,40 @@ repository.workspace = true
 homepage.workspace = true
 authors.workspace = true
 
-# Intentionally light. `libc` (for the SIGPIPE reset and exec), `which` (for
-# PATHEXT-aware resolution) and the Windows job-object bindings arrive with the
-# first real launch.
 [dependencies]
 prick-core = { workspace = true }
+secrecy = { workspace = true }
 thiserror = { workspace = true }
+
+# The SIGPIPE reset and the signal mask, both of which happen between fork and
+# exec and so must be async-signal-safe.
+[target.'cfg(unix)'.dependencies]
+libc = { workspace = true }
+
+# `which` is PATHEXT-aware, which is the whole reason it is here: `npm` on
+# Windows is `npm.cmd`, and std's own resolution only ever appends `.exe`.
+[target.'cfg(windows)'.dependencies]
+which = { workspace = true }
+windows-sys = { workspace = true, features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Security_Authorization",
+    "Win32_System_Console",
+    "Win32_System_JobObjects",
+    "Win32_System_Memory",
+    "Win32_System_Threading",
+] }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+
+# A test fixture, not a shipped artefact. The integration tests need a process
+# that calls into this crate and is then *replaced* by `exec`, which the test
+# harness itself cannot be. It is a real bin target so that cargo sets
+# CARGO_BIN_EXE_prick-exec-child for the tests and there is no path guessing.
+[[bin]]
+name = "prick-exec-child"
+path = "src/bin/child.rs"
 
 [lints]
 workspace = true

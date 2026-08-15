@@ -2,6 +2,8 @@
 
 use prick_core::classify::ErrorKind;
 
+use crate::response::{Classified, ResponseFacts};
+
 /// A transport-level outcome, before any HTTP status exists.
 ///
 /// Named separately from [`ErrorKind`] because producing one requires a socket;
@@ -32,25 +34,56 @@ impl Transport {
 /// A failed API call.
 ///
 /// Carries the request id so an operator can quote it and an administrator can
-/// find the exact audit row. It deliberately carries no response *body*: an
-/// error rendering path must not be able to echo a value the server sent.
+/// find the exact audit row, and the response facts so `prk doctor` can say
+/// what actually answered. It deliberately carries no response **body**: an
+/// error rendering path must not be able to echo something the server sent,
+/// because this client cannot tell a diagnostic from a secret.
 #[derive(Debug, Clone, thiserror::Error)]
 #[error("{message}")]
 pub struct ApiError {
     kind: ErrorKind,
     message: String,
     request_id: Option<String>,
+    // Boxed so the common `ApiError` stays small; a failure carrying nine
+    // optional strings by value would widen every `Result` in the crate.
+    facts: Option<Box<ResponseFacts>>,
 }
 
 impl ApiError {
     /// Builds an error of a given kind.
     pub fn new(kind: ErrorKind, message: impl Into<String>) -> Self {
-        Self { kind, message: message.into(), request_id: None }
+        Self { kind, message: message.into(), request_id: None, facts: None }
     }
 
     /// Builds an error from a transport outcome.
     pub fn transport(transport: Transport, message: impl Into<String>) -> Self {
         Self::new(transport.kind(), message)
+    }
+
+    /// Builds an error from a classified response.
+    ///
+    /// The request id is taken from the response rather than supplied, so it is
+    /// impossible to attach the wrong one.
+    pub fn from_response(facts: ResponseFacts, classified: Classified) -> Self {
+        Self {
+            kind: classified.kind,
+            message: classified.message,
+            request_id: facts.request_id.clone(),
+            facts: Some(Box::new(facts)),
+        }
+    }
+
+    /// Builds an error from a status code and the server's own message.
+    ///
+    /// Used when the server answered with a JSON error envelope, where its
+    /// message is more specific than anything this client could infer.
+    pub fn from_server(facts: ResponseFacts, message: impl Into<String>) -> Self {
+        Self {
+            kind: ErrorKind::from_status(facts.status),
+            message: message.into(),
+            request_id: facts.request_id.clone(),
+            facts: Some(Box::new(facts)),
+        }
     }
 
     /// Attaches the `X-Request-Id` the server echoed.
@@ -70,6 +103,11 @@ impl ApiError {
         self.request_id.as_deref()
     }
 
+    /// What the response said about itself, when there was a response.
+    pub fn facts(&self) -> Option<&ResponseFacts> {
+        self.facts.as_deref()
+    }
+
     /// The actionable next step for this failure.
     pub fn hint(&self) -> Option<&'static str> {
         self.kind.hint()
@@ -78,6 +116,11 @@ impl ApiError {
     /// The process exit code this failure should produce.
     pub fn exit_code(&self) -> u8 {
         self.kind.exit_code()
+    }
+
+    /// Whether retrying the identical request could plausibly succeed.
+    pub fn is_retryable(&self) -> bool {
+        self.kind.is_retryable()
     }
 }
 
@@ -112,5 +155,44 @@ mod tests {
     #[test]
     fn an_error_without_a_request_id_reports_none() {
         assert_eq!(ApiError::new(ErrorKind::NotFound, "no such project").request_id(), None);
+    }
+
+    #[test]
+    fn a_classified_response_carries_its_facts_and_its_request_id() {
+        let facts = ResponseFacts {
+            status: 403,
+            content_type: Some("text/html".to_owned()),
+            cf_ray: Some("8f0c-LHR".to_owned()),
+            request_id: Some("req-1".to_owned()),
+            ..ResponseFacts::default()
+        };
+        let err = ApiError::from_response(
+            facts,
+            Classified { kind: ErrorKind::Forbidden, message: "denied".to_owned() },
+        );
+
+        assert_eq!(err.kind(), ErrorKind::Forbidden);
+        assert_eq!(err.request_id(), Some("req-1"));
+        assert_eq!(err.facts().and_then(|f| f.cf_ray.as_deref()), Some("8f0c-LHR"));
+        assert_eq!(err.exit_code(), 4);
+    }
+
+    #[test]
+    fn a_server_envelope_keeps_the_servers_own_message() {
+        let facts = ResponseFacts { status: 409, ..ResponseFacts::default() };
+        let err = ApiError::from_server(facts, "another writer changed this environment");
+        assert_eq!(err.kind(), ErrorKind::Conflict);
+        assert_eq!(err.to_string(), "another writer changed this environment");
+        assert!(err.is_retryable());
+    }
+
+    #[test]
+    fn an_error_never_carries_a_response_body() {
+        // The type has nowhere to put one. This test exists so that adding a
+        // body field is a deliberate act with a failing test attached.
+        let facts = ResponseFacts { status: 500, ..ResponseFacts::default() };
+        let err = ApiError::from_server(facts, "boom");
+        let rendered = format!("{:?}", err.facts());
+        assert!(!rendered.contains("body"), "the facts grew a body field: {rendered}");
     }
 }

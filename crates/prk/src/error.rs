@@ -40,6 +40,19 @@ pub enum CliError {
     #[error(transparent)]
     Guard(#[from] prick_exec::GuardError),
 
+    /// The child process could not be started.
+    ///
+    /// Carries the shell's own codes -- 127 for not found, 126 for found but
+    /// not runnable -- rather than mapping onto the API taxonomy. A caller of
+    /// `prk run` is already branching on those, and a command that could not be
+    /// started must be indistinguishable from one a shell could not start.
+    #[error(transparent)]
+    Launch(#[from] prick_exec::LaunchError),
+
+    /// Authentication failed.
+    #[error(transparent)]
+    Auth(#[from] prick_auth::AuthError),
+
     /// A failure with no more specific type.
     #[error("{0}")]
     Other(String),
@@ -54,6 +67,11 @@ impl CliError {
     pub fn exit_code(&self) -> u8 {
         match self {
             Self::Api(err) => err.exit_code(),
+            Self::Auth(err) => err.exit_code(),
+            // 126 and 127 are outside the taxonomy on purpose: they are the
+            // shell's, and reproducing them exactly is what makes `prk run`
+            // transparent to a script.
+            Self::Launch(err) => u8::try_from(err.exit_code()).unwrap_or(EXIT_FAILURE),
             Self::Format(_) => prick_core::classify::EXIT_UNREPRESENTABLE,
             Self::Dotenv(_) | Self::Scope(_) | Self::Guard(_) => ErrorKind::Validation.exit_code(),
             Self::NotImplemented { .. } | Self::Other(_) => EXIT_FAILURE,
@@ -64,6 +82,8 @@ impl CliError {
     pub fn code(&self) -> &'static str {
         match self {
             Self::Api(err) => err.kind().code(),
+            Self::Auth(err) => err.code(),
+            Self::Launch(_) => "LAUNCH_FAILED",
             Self::Format(_) => "UNREPRESENTABLE_OUTPUT",
             Self::Dotenv(_) => "INVALID_DOTENV",
             Self::Scope(_) => "INVALID_SCOPE",
@@ -77,6 +97,8 @@ impl CliError {
     pub fn hint(&self) -> Option<&'static str> {
         match self {
             Self::Api(err) => err.hint(),
+            Self::Auth(err) => err.hint(),
+            Self::Launch(err) => err.hint(),
             Self::Format(_) => Some(
                 "The value contains a control character this format cannot encode. \
                  Use --format json or --format yaml, both of which can.",

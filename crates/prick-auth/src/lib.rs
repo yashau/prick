@@ -1,17 +1,17 @@
 //! Authentication against Cloudflare Access.
 //!
-//! # Status
-//!
-//! Skeleton. The credential model and the storage decision are settled; the
-//! handshake is not yet wired.
-//!
-//! # Planned module layout
+//! # Module layout
 //!
 //! | Module | Responsibility |
 //! |---|---|
 //! | [`credential`] | The two identity types, and where each is discovered |
-//! | [`oauth`] | Discovery, dynamic client registration, the PKCE handshake |
-//! | [`store`] | Persisting and loading tokens |
+//! | [`discovery`] | Probing `/health`, RFC 9728 and RFC 8414 metadata, RFC 7591 registration |
+//! | [`oauth`] | PKCE, the authorization request, the token endpoint, the whole login |
+//! | [`callback`] | The loopback listener and its forty-line HTTP parser |
+//! | [`session`] | Turning stored state into the credential a request carries |
+//! | [`store`] | Persisting tokens |
+//! | [`browser`] | Opening the system browser |
+//! | [`error`] | Why authentication failed, and what to do about it |
 //!
 //! # Two identity types, one login path
 //!
@@ -34,12 +34,30 @@
 //!   every update re-prompts for authorisation -- unusable from inside
 //!   `prk run`, which is exactly where a prompt cannot be answered.
 //!
-//! Keyring support stays available behind `--storage keyring` for people whose
-//! threat model wants it.
+//! `--storage keyring` exists in the interface and currently reports that the
+//! backend is not available in this build, rather than silently writing a file
+//! instead. See [`store::StorageBackend`].
+//!
+//! # What this crate never does
+//!
+//! It does not write a service token to disk. A token that arrived in the
+//! environment stays in the environment: persisting it would copy a credential
+//! out of a CI system's control and into a file the CI system does not clean
+//! up. `--save` is the only thing that changes that, and it is the caller's
+//! decision, not this crate's.
 
+pub mod browser;
+pub mod callback;
 pub mod credential;
+pub mod discovery;
+pub mod error;
 pub mod oauth;
+pub mod session;
 pub mod store;
 
-pub use credential::Credential;
-pub use store::StorageBackend;
+pub use credential::{Credential, ServiceToken, TokenSource, service_token_from_env};
+pub use discovery::Probe;
+pub use error::AuthError;
+pub use oauth::{LoginOptions, LoginOutcome, login};
+pub use session::{Resolved, resolve};
+pub use store::{StorageBackend, StoredSession, TokenStore, Tokens};

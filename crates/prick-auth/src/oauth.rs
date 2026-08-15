@@ -1,45 +1,43 @@
 //! The managed OAuth handshake.
 //!
-//! # Status
-//!
-//! Skeleton. The constants and the shape of the flow are settled; nothing
-//! opens a socket yet.
-//!
 //! # The flow `prk login <url>` performs
 //!
-//! 1. **Probe `/health`.** Three outcomes, all handled explicitly:
-//!    - `401` with a `WWW-Authenticate` header pointing at discovery: normal,
-//!      continue.
-//!    - `401` without it: managed OAuth is not enabled on the application.
-//!      Fail with an error naming the exact dashboard path to enable it.
-//!    - `200` with a JSON body, unauthenticated: **warn loudly.** An
-//!      unauthenticated secrets manager is reachable from the internet, and
-//!      that is the most important thing the tool will ever tell this operator.
-//! 2. **Discover** via RFC 8414 / RFC 9728 metadata.
-//! 3. **Register dynamically** for `http://127.0.0.1:<ephemeral>/callback`.
-//!    The port is whatever the OS assigns; nothing is hardcoded, so two
-//!    concurrent logins do not collide.
-//! 4. **PKCE S256.** Generate a verifier, derive the challenge with
-//!    [`prick_core::pkce::challenge_s256`], and **regenerate while
-//!    [`prick_core::pkce::is_acceptable_challenge`] is false** -- see that
-//!    module for the Cloudflare quirk this works around.
-//! 5. **Open the browser**, then accept exactly one request on the loopback
-//!    listener. `state` is compared with
-//!    [`prick_core::pkce::constant_time_eq`].
-//! 6. **Exchange** the code and store the tokens.
+//! 1. **Probe `/health`.** Three outcomes, all handled explicitly; see
+//!    [`crate::discovery::probe`].
+//! 2. **Discover** the authorization server via RFC 9728 and RFC 8414.
+//! 3. **Bind** a loopback listener on an OS-assigned port. This happens before
+//!    registration because the port is part of the redirect URI that gets
+//!    registered.
+//! 4. **Register dynamically** for `http://127.0.0.1:<port>/callback`.
+//! 5. **PKCE S256**, with the Cloudflare quirk handled -- see
+//!    [`generate_pkce`].
+//! 6. **Open the browser**, then accept exactly one request on the listener.
+//! 7. **Compare `state` in constant time.**
+//! 8. **Exchange** the code and store the tokens.
 //!
-//! TODO: implement steps 1-6. The CSPRNG (step 4) and the listener (step 5) are
-//! why this module cannot live in `prick-core`.
+//! # Why the `state` comparison is constant-time
+//!
+//! `state` arrives in a URL from an untrusted redirect. `==` on strings returns
+//! as soon as two bytes differ, so the time it takes leaks how long a common
+//! prefix was, and an attacker who can trigger repeated redirects can recover
+//! the value a byte at a time and then forge a callback.
+//!
+//! The window is small and the attack is fiddly. It is also entirely avoidable
+//! by calling [`prick_core::pkce::constant_time_eq`], which is why nothing here
+//! uses `==`.
 
-/// The loopback address the callback listener binds to.
-///
-/// `127.0.0.1`, never `localhost`: on a dual-stack host `localhost` may resolve
-/// to `::1`, and the redirect URI registered with the authorization server is a
-/// literal string that must match byte for byte.
-pub const CALLBACK_HOST: &str = "127.0.0.1";
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-/// The path the authorization server redirects back to.
-pub const CALLBACK_PATH: &str = "/callback";
+use secrecy::{ExposeSecret as _, SecretString};
+use serde::Deserialize;
+
+use prick_api::{Body, Client};
+use prick_core::pkce;
+
+use crate::callback::CallbackListener;
+use crate::discovery::{self, AuthorizationServer, Probe};
+use crate::error::AuthError;
+use crate::store::{StoredSession, Tokens};
 
 /// Bytes of entropy in the OAuth `state` parameter.
 pub const STATE_ENTROPY_BYTES: usize = 32;
@@ -47,29 +45,583 @@ pub const STATE_ENTROPY_BYTES: usize = 32;
 /// How long to wait for the browser round trip before giving up.
 pub const LOGIN_TIMEOUT_SECS: u64 = 300;
 
-/// Builds the redirect URI for an OS-assigned port.
+/// How long before expiry an access token is renewed.
 ///
-/// The port is only known after the listener binds, which is why this takes it
-/// as an argument rather than owning it.
-pub fn redirect_uri(port: u16) -> String {
-    format!("http://{CALLBACK_HOST}:{port}{CALLBACK_PATH}")
+/// A token that expires *during* the request it is about to authenticate is no
+/// more useful than one that has already expired, and the failure it produces
+/// is an intermittent 401 rather than a clean one.
+pub const REFRESH_SKEW_SECS: u64 = 60;
+
+/// How many times [`generate_pkce`] will resample before giving up.
+///
+/// About 3% of verifiers are rejected, so the chance of needing more than a
+/// handful is negligible and the chance of needing 64 is about one in 10^97.
+/// The bound exists so that a broken predicate is a clean failure rather than
+/// a process that spins forever.
+pub const MAX_VERIFIER_ATTEMPTS: usize = 64;
+
+/// The scopes requested, when the server does not narrow them.
+///
+/// `offline_access` is what produces a refresh token, and without one every
+/// access-token expiry would mean another browser round trip -- which is
+/// exactly the 15-minute-session problem transparent refresh exists to hide.
+const DESIRED_SCOPES: [&str; 4] = ["openid", "email", "profile", "offline_access"];
+
+/// A PKCE verifier and the challenge derived from it.
+#[derive(Debug, Clone)]
+pub struct Pkce {
+    /// The verifier, sent only to the token endpoint.
+    pub verifier: SecretString,
+    /// The challenge, sent in the authorization request.
+    pub challenge: String,
+}
+
+/// Generates a PKCE verifier whose challenge Cloudflare will accept.
+///
+/// # The Cloudflare quirk
+///
+/// Cloudflare's authorization endpoint rejects a `code_challenge` that does not
+/// begin with an alphanumeric character. base64url output begins with `-` or
+/// `_` roughly 3% of the time, so a generator that does not check produces an
+/// intermittent login failure at about that rate -- frequent enough to be a
+/// support burden, rare enough that every report looks like a flake.
+///
+/// The fix is rejection sampling: generate, check, regenerate. Truncating or
+/// substituting the first character instead would bias the verifier over a
+/// smaller set; resampling keeps it uniform over the accepted one.
+/// [`prick_core::pkce::is_usable_verifier`] is the predicate.
+///
+/// # Errors
+///
+/// [`AuthError::Io`] if the system CSPRNG is unavailable, or if the bound in
+/// [`MAX_VERIFIER_ATTEMPTS`] is exhausted -- which would mean the predicate is
+/// broken rather than that the sampling was unlucky.
+pub fn generate_pkce() -> Result<Pkce, AuthError> {
+    for _ in 0..MAX_VERIFIER_ATTEMPTS {
+        let mut bytes = [0u8; pkce::VERIFIER_ENTROPY_BYTES];
+        getrandom::fill(&mut bytes).map_err(|err| {
+            AuthError::Io(std::io::Error::other(format!("no system randomness: {err}")))
+        })?;
+
+        let verifier = pkce::verifier_from_bytes(&bytes);
+        if pkce::is_usable_verifier(&verifier) {
+            let challenge = pkce::challenge_s256(&verifier);
+            return Ok(Pkce { verifier: SecretString::from(verifier), challenge });
+        }
+    }
+
+    Err(AuthError::Io(std::io::Error::other(format!(
+        "could not generate an acceptable PKCE challenge in {MAX_VERIFIER_ATTEMPTS} attempts"
+    ))))
+}
+
+/// Generates the OAuth `state` parameter.
+///
+/// # Errors
+///
+/// [`AuthError::Io`] if the system CSPRNG is unavailable.
+pub fn generate_state() -> Result<String, AuthError> {
+    let mut bytes = [0u8; STATE_ENTROPY_BYTES];
+    getrandom::fill(&mut bytes).map_err(|err| {
+        AuthError::Io(std::io::Error::other(format!("no system randomness: {err}")))
+    })?;
+    Ok(pkce::verifier_from_bytes(&bytes))
+}
+
+/// Picks the scopes to request.
+///
+/// The intersection of what is wanted and what the server advertises. A server
+/// that advertises nothing gets the full list, because RFC 8414 makes
+/// `scopes_supported` optional and refusing to ask for anything would be worse
+/// than asking for something that is ignored.
+pub fn scopes_for(server: &AuthorizationServer) -> Vec<String> {
+    match server.scopes_supported.as_ref() {
+        Some(supported) => DESIRED_SCOPES
+            .iter()
+            .filter(|wanted| supported.iter().any(|offered| offered == *wanted))
+            .map(|scope| (*scope).to_owned())
+            .collect(),
+        None => DESIRED_SCOPES.iter().map(|scope| (*scope).to_owned()).collect(),
+    }
+}
+
+/// Builds the URL the browser is sent to.
+///
+/// Query parameters go through `url`'s encoder rather than `format!`, so a
+/// redirect URI or a state value cannot terminate the query and inject another
+/// parameter.
+///
+/// # Errors
+///
+/// [`AuthError::Discovery`] if the authorization endpoint is not a URL.
+pub fn authorization_url(
+    server: &AuthorizationServer,
+    client_id: &str,
+    redirect_uri: &str,
+    pkce_challenge: &str,
+    state: &str,
+) -> Result<String, AuthError> {
+    let mut url =
+        url::Url::parse(&server.authorization_endpoint).map_err(|err| AuthError::Discovery {
+            reason: format!(
+                "the authorization endpoint `{}` is not a URL: {err}",
+                server.authorization_endpoint
+            ),
+        })?;
+
+    let scopes = scopes_for(server).join(" ");
+    {
+        let mut query = url.query_pairs_mut();
+        query.append_pair("response_type", "code");
+        query.append_pair("client_id", client_id);
+        query.append_pair("redirect_uri", redirect_uri);
+        query.append_pair("state", state);
+        query.append_pair("code_challenge", pkce_challenge);
+        query.append_pair("code_challenge_method", pkce::METHOD);
+        if !scopes.is_empty() {
+            query.append_pair("scope", &scopes);
+        }
+    }
+
+    Ok(url.into())
+}
+
+/// A successful token endpoint response.
+#[derive(Debug, Deserialize)]
+struct TokenResponse {
+    access_token: String,
+    #[serde(default)]
+    refresh_token: Option<String>,
+    #[serde(default)]
+    expires_in: Option<u64>,
+}
+
+/// An RFC 6749 section 5.2 error response.
+#[derive(Debug, Deserialize)]
+struct OAuthErrorBody {
+    error: String,
+}
+
+/// Seconds since the Unix epoch.
+///
+/// A clock before 1970 is not a state worth modelling; it reads as zero, which
+/// makes every token look expired and produces a refresh rather than a panic.
+fn now() -> u64 {
+    SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |elapsed| elapsed.as_secs())
+}
+
+/// Posts to the token endpoint and interprets the result.
+///
+/// The one place `invalid_grant` is turned into [`AuthError::AuthExpired`], so
+/// every caller -- first exchange or transparent refresh -- reports an expired
+/// session the same way.
+async fn post_token(
+    client: &Client,
+    token_endpoint: &str,
+    form: &[(&str, &str)],
+) -> Result<Tokens, AuthError> {
+    let received = client.fetch(reqwest::Method::POST, token_endpoint, Body::Form(form)).await?;
+    let facts = &received.facts;
+
+    if facts.status >= 400 {
+        // RFC 6749 puts the machine-readable reason in the body, not the
+        // status: `invalid_grant` and `invalid_client` are both 400.
+        if let Ok(body) = serde_json::from_slice::<OAuthErrorBody>(received.body()) {
+            return Err(match body.error.as_str() {
+                // The refresh token was revoked, has expired, or belongs to a
+                // client registration the server has since forgotten. All three
+                // mean the same thing to a user: log in again.
+                "invalid_grant" => AuthError::AuthExpired,
+                other => AuthError::Denied { error: other.to_owned() },
+            });
+        }
+
+        return Err(match prick_api::response::classify(facts) {
+            Some(classified) => {
+                AuthError::Api(prick_api::ApiError::from_response(facts.clone(), classified))
+            }
+            None => AuthError::Api(prick_api::ApiError::from_server(
+                facts.clone(),
+                format!("the token endpoint returned HTTP {}", facts.status),
+            )),
+        });
+    }
+
+    let response: TokenResponse =
+        serde_json::from_slice(received.body()).map_err(|_| AuthError::Discovery {
+            reason: "the token endpoint returned a body with no access token in it".to_owned(),
+        })?;
+
+    Ok(Tokens {
+        access_token: SecretString::from(response.access_token),
+        refresh_token: response.refresh_token.map(SecretString::from),
+        expires_at: response.expires_in.map(|seconds| now().saturating_add(seconds)),
+    })
+}
+
+/// Exchanges an authorization code for tokens.
+///
+/// # Errors
+///
+/// [`AuthError::AuthExpired`] for `invalid_grant`, [`AuthError::Denied`] for
+/// any other OAuth error, or a transport failure.
+pub async fn exchange_code(
+    client: &Client,
+    token_endpoint: &str,
+    client_id: &str,
+    redirect_uri: &str,
+    code: &str,
+    verifier: &SecretString,
+) -> Result<Tokens, AuthError> {
+    post_token(
+        client,
+        token_endpoint,
+        &[
+            ("grant_type", "authorization_code"),
+            ("code", code),
+            ("redirect_uri", redirect_uri),
+            ("client_id", client_id),
+            ("code_verifier", verifier.expose_secret()),
+        ],
+    )
+    .await
+}
+
+/// Renews an access token from a refresh token.
+///
+/// The server may or may not return a new refresh token. When it does not, the
+/// existing one is kept: dropping it would turn every renewal into the last
+/// one, and the failure would only show up when the next renewal was due.
+///
+/// # Errors
+///
+/// [`AuthError::AuthExpired`] for `invalid_grant`, which is what a revoked or
+/// expired refresh token produces.
+pub async fn refresh(
+    client: &Client,
+    token_endpoint: &str,
+    client_id: &str,
+    refresh_token: &SecretString,
+) -> Result<Tokens, AuthError> {
+    let mut tokens = post_token(
+        client,
+        token_endpoint,
+        &[
+            ("grant_type", "refresh_token"),
+            ("refresh_token", refresh_token.expose_secret()),
+            ("client_id", client_id),
+        ],
+    )
+    .await?;
+
+    if tokens.refresh_token.is_none() {
+        tokens.refresh_token = Some(refresh_token.clone());
+    }
+    Ok(tokens)
+}
+
+/// Finds `state` and `code` in the callback's query parameters.
+///
+/// Rejects a redirect that carries a parameter twice: two `state` values means
+/// something is trying to make the comparison pick the convenient one.
+fn single<'a>(params: &'a [(String, String)], name: &str) -> Option<&'a str> {
+    let mut found = params.iter().filter(|(key, _)| key == name);
+    let first = found.next()?;
+    if found.next().is_some() {
+        return None;
+    }
+    Some(&first.1)
+}
+
+/// What a login needs beyond the server's own configuration.
+#[derive(Debug, Clone)]
+pub struct LoginOptions {
+    /// How long to wait for the browser round trip.
+    pub timeout: Duration,
+}
+
+impl Default for LoginOptions {
+    fn default() -> Self {
+        Self { timeout: Duration::from_secs(LOGIN_TIMEOUT_SECS) }
+    }
+}
+
+/// What the probe found, for the caller to report before the browser opens.
+#[derive(Debug, Clone)]
+pub struct LoginOutcome {
+    /// The session to store.
+    pub session: StoredSession,
+    /// What the unauthenticated probe revealed.
+    pub probe: Probe,
+}
+
+/// Runs the whole interactive login.
+///
+/// `open` is a parameter rather than a call into the browser opener so that the
+/// flow can be driven end to end by a test without a display. The CLI passes
+/// [`crate::browser::open`]; the test suite passes a closure that fetches the
+/// authorization URL itself.
+///
+/// # Errors
+///
+/// Any stage can fail; see [`AuthError`]. The two an operator acts on are
+/// [`AuthError::ManagedOAuthDisabled`], which names the dashboard setting, and
+/// [`AuthError::LoginTimeout`].
+pub async fn login<F>(
+    client: &Client,
+    api_url: &str,
+    options: &LoginOptions,
+    open: F,
+) -> Result<LoginOutcome, AuthError>
+where
+    F: FnOnce(&str) -> Result<(), AuthError>,
+{
+    // 1. Probe. An unprotected server is not a failure -- the secrets are
+    //    reachable either way -- but the caller has to be told, loudly.
+    let probe = discovery::probe(client).await?;
+    let metadata_url = match &probe {
+        Probe::ManagedOAuth { metadata_url } => metadata_url.clone(),
+        Probe::ManagedOAuthDisabled => return Err(AuthError::ManagedOAuthDisabled),
+        Probe::Unprotected => None,
+    };
+
+    // 2. Discover.
+    let issuer = match metadata_url {
+        Some(url) => {
+            let resource = discovery::fetch_protected_resource(client, &url).await?;
+            resource.authorization_servers.first().cloned().ok_or_else(|| AuthError::Discovery {
+                reason: format!("{url} names no authorization server"),
+            })?
+        }
+        None => api_url.to_owned(),
+    };
+    let server = discovery::fetch_authorization_server(client, &issuer).await?;
+
+    // 3. Bind first: the port is part of the redirect URI that gets registered.
+    let listener = CallbackListener::bind()?;
+    let redirect_uri = listener.redirect_uri();
+
+    // 4. Register.
+    let registration = discovery::register_client(client, &server, &redirect_uri).await?;
+
+    // 5. PKCE, with the Cloudflare leading-character quirk handled.
+    let pkce_pair = generate_pkce()?;
+    let state = generate_state()?;
+
+    // 6. Browser.
+    let authorize = authorization_url(
+        &server,
+        &registration.client_id,
+        &redirect_uri,
+        &pkce_pair.challenge,
+        &state,
+    )?;
+    open(&authorize)?;
+
+    // 7. One request, on a blocking thread so the reactor stays free.
+    let timeout = options.timeout;
+    let params = tokio::task::spawn_blocking(move || listener.wait_for_callback(timeout))
+        .await
+        .map_err(|err| AuthError::Io(std::io::Error::other(err.to_string())))??;
+
+    if let Some(error) = single(&params, "error") {
+        return Err(AuthError::Denied { error: error.to_owned() });
+    }
+
+    // 8. Constant-time comparison. `state` came from an untrusted redirect.
+    let returned = single(&params, "state").ok_or(AuthError::StateMismatch)?;
+    if !pkce::constant_time_eq(returned, &state) {
+        return Err(AuthError::StateMismatch);
+    }
+
+    let code = single(&params, "code").ok_or_else(|| AuthError::Denied {
+        error: "the redirect carried no authorization code".to_owned(),
+    })?;
+
+    // 9. Exchange.
+    let tokens = exchange_code(
+        client,
+        &server.token_endpoint,
+        &registration.client_id,
+        &redirect_uri,
+        code,
+        &pkce_pair.verifier,
+    )
+    .await?;
+
+    Ok(LoginOutcome {
+        session: StoredSession {
+            api_url: api_url.trim_end_matches('/').to_owned(),
+            issuer: server.issuer,
+            client_id: registration.client_id,
+            token_endpoint: server.token_endpoint,
+            tokens,
+        },
+        probe,
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[test]
-    fn the_redirect_uri_uses_a_literal_loopback_address() {
-        assert_eq!(redirect_uri(49152), "http://127.0.0.1:49152/callback");
-        // `localhost` may resolve to ::1 and break the byte-for-byte match.
-        assert!(!redirect_uri(1).contains("localhost"));
+    fn server() -> AuthorizationServer {
+        AuthorizationServer {
+            issuer: "https://example.cloudflareaccess.com".to_owned(),
+            authorization_endpoint: "https://example.cloudflareaccess.com/authorize".to_owned(),
+            token_endpoint: "https://example.cloudflareaccess.com/token".to_owned(),
+            registration_endpoint: Some("https://example.cloudflareaccess.com/register".to_owned()),
+            code_challenge_methods_supported: Some(vec!["S256".to_owned()]),
+            scopes_supported: None,
+        }
     }
 
     #[test]
-    fn the_redirect_uri_is_plain_http() {
-        // Loopback is exempt from the HTTPS requirement in RFC 8252, and a
-        // self-signed certificate here would only produce browser warnings.
-        assert!(redirect_uri(8080).starts_with("http://"));
+    fn a_generated_challenge_always_starts_with_an_alphanumeric() {
+        // The Cloudflare quirk. Without rejection sampling this fails about 3%
+        // of the time, which is the intermittent login failure the loop exists
+        // to remove -- so the assertion is run enough times to see it.
+        for _ in 0..200 {
+            let pair = generate_pkce().expect("the system CSPRNG must be available");
+            assert!(
+                pkce::is_acceptable_challenge(&pair.challenge),
+                "Cloudflare would reject `{}`",
+                pair.challenge
+            );
+            assert!(pkce::is_valid_verifier(pair.verifier.expose_secret()));
+        }
+    }
+
+    #[test]
+    fn the_challenge_is_derived_from_the_verifier_it_is_paired_with() {
+        let pair = generate_pkce().expect("generated");
+        assert_eq!(pkce::challenge_s256(pair.verifier.expose_secret()), pair.challenge);
+    }
+
+    #[test]
+    fn two_verifiers_are_never_the_same() {
+        let first = generate_pkce().expect("generated");
+        let second = generate_pkce().expect("generated");
+        assert_ne!(first.verifier.expose_secret(), second.verifier.expose_secret());
+    }
+
+    #[test]
+    fn a_verifier_never_renders_through_debug() {
+        let pair = generate_pkce().expect("generated");
+        let rendered = format!("{pair:?}");
+        assert!(
+            !rendered.contains(pair.verifier.expose_secret()),
+            "the verifier leaked through Debug: {rendered}"
+        );
+    }
+
+    #[test]
+    fn the_resampling_bound_is_generous_enough_to_never_be_hit_by_chance() {
+        // About 3% rejected, so 64 consecutive rejections has probability
+        // 0.03^64. Hitting the bound means the predicate is broken.
+        const { assert!(MAX_VERIFIER_ATTEMPTS >= 32) }
+    }
+
+    #[test]
+    fn state_is_long_random_and_url_safe() {
+        let first = generate_state().expect("generated");
+        let second = generate_state().expect("generated");
+        assert_ne!(first, second);
+        assert_eq!(first.len(), 43, "32 bytes of base64url is 43 characters");
+        assert!(first.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_')));
+    }
+
+    #[test]
+    fn the_authorization_url_carries_every_required_parameter() {
+        let url = authorization_url(
+            &server(),
+            "client-1",
+            "http://127.0.0.1:5000/callback",
+            "chal",
+            "st",
+        )
+        .expect("the endpoint is a URL");
+        let parsed = url::Url::parse(&url).expect("a URL was produced");
+        let params: std::collections::HashMap<_, _> = parsed.query_pairs().into_owned().collect();
+
+        assert_eq!(params["response_type"], "code");
+        assert_eq!(params["client_id"], "client-1");
+        assert_eq!(params["redirect_uri"], "http://127.0.0.1:5000/callback");
+        assert_eq!(params["state"], "st");
+        assert_eq!(params["code_challenge"], "chal");
+        assert_eq!(params["code_challenge_method"], "S256");
+        assert!(params["scope"].contains("offline_access"), "no refresh token would be issued");
+    }
+
+    #[test]
+    fn the_plain_pkce_method_is_never_requested() {
+        let url = authorization_url(&server(), "c", "http://127.0.0.1:1/callback", "chal", "st")
+            .expect("a URL");
+        assert!(url.contains("code_challenge_method=S256"));
+        assert!(!url.contains("plain"));
+    }
+
+    #[test]
+    fn query_parameters_are_encoded_rather_than_interpolated() {
+        // A state value containing `&` must not become a second parameter.
+        let url =
+            authorization_url(&server(), "c", "http://127.0.0.1:1/callback", "chal", "a&evil=1")
+                .expect("a URL");
+        let parsed = url::Url::parse(&url).expect("a URL");
+        let params: std::collections::HashMap<_, _> = parsed.query_pairs().into_owned().collect();
+        assert_eq!(params["state"], "a&evil=1");
+        assert!(!params.contains_key("evil"), "a parameter was injected through state");
+    }
+
+    #[test]
+    fn an_endpoint_that_is_not_a_url_is_reported_rather_than_concatenated() {
+        let mut server = server();
+        server.authorization_endpoint = "not a url".to_owned();
+        let err = authorization_url(&server, "c", "http://127.0.0.1:1/callback", "ch", "st")
+            .expect_err("a malformed endpoint");
+        assert!(matches!(err, AuthError::Discovery { .. }));
+    }
+
+    #[test]
+    fn scopes_are_narrowed_to_what_the_server_offers() {
+        let mut server = server();
+        server.scopes_supported = Some(vec!["openid".to_owned(), "email".to_owned()]);
+        assert_eq!(scopes_for(&server), ["openid", "email"]);
+
+        server.scopes_supported = None;
+        assert!(scopes_for(&server).contains(&"offline_access".to_owned()));
+    }
+
+    #[test]
+    fn a_server_offering_nothing_we_want_produces_no_scope_parameter() {
+        let mut server = server();
+        server.scopes_supported = Some(vec!["something_else".to_owned()]);
+        assert!(scopes_for(&server).is_empty());
+
+        let url = authorization_url(&server, "c", "http://127.0.0.1:1/callback", "ch", "st")
+            .expect("a URL");
+        assert!(!url.contains("scope="), "an empty scope was still sent: {url}");
+    }
+
+    #[test]
+    fn a_parameter_that_appears_twice_is_refused_rather_than_disambiguated() {
+        let params =
+            vec![("state".to_owned(), "a".to_owned()), ("state".to_owned(), "b".to_owned())];
+        assert_eq!(single(&params, "state"), None);
+
+        let params = vec![("state".to_owned(), "a".to_owned())];
+        assert_eq!(single(&params, "state"), Some("a"));
+        assert_eq!(single(&params, "code"), None);
+    }
+
+    #[test]
+    fn the_refresh_skew_is_long_enough_to_cover_a_request() {
+        assert_eq!(REFRESH_SKEW_SECS, 60);
+    }
+
+    #[test]
+    fn the_default_login_timeout_allows_for_a_real_sign_in() {
+        // Long enough for a password manager, a second factor and a redirect.
+        assert_eq!(LoginOptions::default().timeout.as_secs(), 300);
     }
 }

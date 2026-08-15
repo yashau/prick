@@ -4,7 +4,7 @@ members = ["crates/*", "xtask"]
 # The pnpm side of the repo lives under packages/ and e2e/. Cargo must never
 # walk into it: a stray Cargo.toml in a node_modules tree would otherwise be
 # picked up as a workspace member.
-exclude = ["packages", "e2e", "node_modules", "dist"]
+exclude = ["packages", "e2e", "action", "node_modules", "dist"]
 
 [workspace.package]
 # The git tag is the source of truth for the release version. Everything in the
@@ -37,6 +37,51 @@ serde_json = "1"
 # prick-core must stay FFI-free so `cargo miri test -p prick-core` is meaningful.
 sha2 = { version = "0.10", default-features = false, features = ["std"] }
 thiserror = "2"
+
+# --- impure crates only -----------------------------------------------------
+#
+# Nothing below may become a dependency of prick-core. `cargo miri test -p
+# prick-core` is what enforces that: miri cannot execute a syscall, so the
+# moment one of these reaches that crate its suite stops passing.
+
+# TLS is rustls + ring, everywhere, always. default-features = false is
+# load-bearing twice over: it keeps reqwest off `native-tls` (and therefore off
+# `openssl-sys`, whose aarch64-musl cross build is the worst part of Rust
+# release engineering), and it keeps rustls off `aws-lc-rs`, whose cmake/C
+# build would put a compiler toolchain on the critical path for every target.
+reqwest = { version = "0.12", default-features = false, features = [
+    "rustls-tls-manual-roots",
+    "charset",
+    "http2",
+    "json",
+    "gzip",
+    "system-proxy",
+] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
+# So a corporate TLS-inspecting proxy with a private certificate authority
+# works from the OS trust store without a flag or an environment variable.
+rustls-platform-verifier = "0.7"
+# current-thread. A CLI that issues one request at a time has no concurrency to
+# exploit, and a work-stealing scheduler is pure overhead and extra threads.
+tokio = { version = "1", default-features = false, features = ["rt", "net", "io-util", "time", "macros", "process", "sync"] }
+
+secrecy = { version = "0.10", features = ["serde"] }
+zeroize = "1"
+getrandom = "0.3"
+open = "5"
+# Reads the terminal device directly, so a masked prompt and a piped --stdin
+# never contend for the same stream.
+rpassword = "7"
+url = "2.5"
+miette = { version = "7", features = ["fancy"] }
+
+libc = "0.2"
+which = "8"
+windows-sys = "0.61"
+
+# dev-only
+tempfile = "3"
+wiremock = "0.6"
 
 [workspace.lints.rust]
 missing_docs = "warn"

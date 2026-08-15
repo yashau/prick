@@ -1,9 +1,5 @@
 //! `prk access`.
 //!
-//! # Status
-//!
-//! Argument definitions only.
-//!
 //! # The detail that makes this usable
 //!
 //! A service token's identity is its `common_name`, which looks like
@@ -22,6 +18,13 @@
 //! to prevent.
 
 use clap::Subcommand;
+
+use prick_core::scope::Scope;
+
+use crate::cli::GlobalArgs;
+use crate::commands::{Context, projects::confirm};
+use crate::error::CliError;
+use crate::output::Output;
 
 /// Access subcommands.
 #[derive(Debug, Subcommand)]
@@ -93,6 +96,99 @@ pub enum RoleArg {
     Admin,
 }
 
+impl RoleArg {
+    /// The name the API uses.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Reader => "reader",
+            Self::Writer => "writer",
+            Self::Admin => "admin",
+        }
+    }
+}
+
+/// Runs an access subcommand.
+///
+/// # Errors
+///
+/// [`CliError::Scope`] for an unparsable scope, [`CliError::Auth`] if no
+/// credential is available, and [`CliError::Api`] for anything the server
+/// reported.
+pub fn run(command: &AccessCommand, global: &GlobalArgs, out: Output) -> Result<(), CliError> {
+    let mut context = Context::new(global)?;
+    context.authenticate(out)?;
+    let client = context.client();
+
+    match command {
+        AccessCommand::List => {
+            let url = client.url(&["grants"]);
+            let grants: serde_json::Value = context.block_on(client.get_json(&url))?;
+            out.json(&grants);
+        }
+
+        AccessCommand::Identities { denied } => {
+            let url = if *denied {
+                client.url(&["access", "unknown-identities"])
+            } else {
+                client.url(&["access", "identities"])
+            };
+            let identities: serde_json::Value = context.block_on(client.get_json(&url))?;
+            out.json(&identities);
+
+            if *denied && !global.json {
+                out.note(
+                    "Grant one of these with `prk access grant <SUBJECT> --role reader --scope \
+                     <PROJECT>:<ENVIRONMENT>`.",
+                );
+            }
+        }
+
+        AccessCommand::Grant { subject, role, scope, expires_in } => {
+            // Parsed rather than passed through, so a malformed scope fails
+            // here with a message about scopes instead of at the server with a
+            // validation error about a field.
+            let parsed: Scope = scope.parse()?;
+
+            let url = client.url(&["grants"]);
+            let mut body = serde_json::json!({
+                "subject": subject,
+                "role": role.as_str(),
+                "scope": parsed.to_string(),
+            });
+            if let Some(days) = expires_in {
+                body["expires_in_days"] = serde_json::json!(days);
+            }
+
+            let created: serde_json::Value = context.block_on(client.post_json(&url, &body))?;
+
+            if global.json {
+                out.json(&created);
+            } else {
+                out.data(&format!("Granted {} to `{subject}` on `{parsed}`.", role.as_str()));
+            }
+        }
+
+        AccessCommand::Revoke { subject, scope } => {
+            let parsed: Scope = scope.parse()?;
+
+            if !confirm(global, out, &format!("Revoke `{subject}` on `{parsed}`"))? {
+                return Err(CliError::Other("cancelled".to_owned()));
+            }
+
+            let url = client.url(&["grants", subject, &parsed.to_string()]);
+            context.block_on(client.delete(&url))?;
+
+            if global.json {
+                out.json(&serde_json::json!({ "revoked": subject, "scope": parsed.to_string() }));
+            } else {
+                out.data(&format!("Revoked `{subject}` on `{parsed}`."));
+            }
+        }
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -104,5 +200,44 @@ mod tests {
         assert!(RoleArg::Reader < RoleArg::Writer);
         assert!(RoleArg::Writer < RoleArg::Admin);
         assert_eq!([RoleArg::Admin, RoleArg::Reader].into_iter().max(), Some(RoleArg::Admin));
+    }
+
+    #[test]
+    fn role_names_match_what_the_api_expects() {
+        assert_eq!(RoleArg::Reader.as_str(), "reader");
+        assert_eq!(RoleArg::Writer.as_str(), "writer");
+        assert_eq!(RoleArg::Admin.as_str(), "admin");
+    }
+
+    #[test]
+    fn a_scope_is_parsed_before_it_reaches_the_server() {
+        let scope: Scope = "billing:eu:west".parse().expect("a colon-bearing environment name");
+        assert_eq!(scope.project(), "billing");
+        // Split on the first colon only: `eu:west` is one environment name.
+        assert_eq!(scope.environment(), "eu:west");
+    }
+
+    #[test]
+    fn a_malformed_scope_fails_as_a_scope_error() {
+        let err: CliError = "no-colon".parse::<Scope>().unwrap_err().into();
+        assert_eq!(err.code(), "INVALID_SCOPE");
+        assert_eq!(err.exit_code(), 11);
+    }
+
+    #[test]
+    fn every_subcommand_reports_a_path() {
+        for command in [
+            AccessCommand::List,
+            AccessCommand::Identities { denied: true },
+            AccessCommand::Grant {
+                subject: "ci@example.com".to_owned(),
+                role: RoleArg::Reader,
+                scope: "*:*".to_owned(),
+                expires_in: None,
+            },
+            AccessCommand::Revoke { subject: "ci@example.com".to_owned(), scope: "*:*".to_owned() },
+        ] {
+            assert!(command.path().starts_with("access "));
+        }
     }
 }
