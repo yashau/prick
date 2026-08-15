@@ -508,6 +508,102 @@
       "get": {
         "description": "Newest first. Pass the returned `cursor` back to page; `null` means the end of the log.\n\n`detail` is a structured blob whose shape is a closed union in the domain layer, chosen so that **no member has a field that could hold a secret value**. Key names appear throughout and are plaintext metadata by design.\n\nA `detail` written by an older build that this one cannot parse comes back as `null` rather than failing the page. That is the one place in this system where swallowing is right: the log is historical and append-only, and refusing a whole page because one old row is odd would make it unreadable exactly when it is being consulted.",
         "operationId": "queryAudit",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "project",
+            "required": false,
+            "schema": {
+              "maxLength": 64,
+              "minLength": 1,
+              "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "environment",
+            "required": false,
+            "schema": {
+              "maxLength": 64,
+              "minLength": 1,
+              "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "actor",
+            "required": false,
+            "schema": {
+              "maxLength": 320,
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "action",
+            "required": false,
+            "schema": {
+              "maxLength": 64,
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "outcome",
+            "required": false,
+            "schema": {
+              "enum": [
+                "success",
+                "denied",
+                "error"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "since",
+            "required": false,
+            "schema": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "until",
+            "required": false,
+            "schema": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -5588,6 +5684,21 @@
         "description": "Fetches exactly the one row and audits it BEFORE returning. `reason` is what makes the log answer \"did anyone take this\" rather than merely \"did anyone look at it\": the UI sends `copy` for the copy button and `reveal` for the eye toggle, and `prk run` sends `run`.\n\nA decrypt failure fails the request. It is never downgraded to an empty string, an omitted key or a `null`, and the audit row is written before the throw so the record of the attempt survives the failure.\n\n**Two spellings.** `…/secrets/{key}` and `…/secrets/{key}:reveal` are the same operation; the suffix is accepted because a secret key is a POSIX name and therefore cannot contain a colon, so the parse is unambiguous.",
         "operationId": "revealSecret",
         "parameters": [
+          {
+            "in": "query",
+            "name": "reason",
+            "required": false,
+            "schema": {
+              "default": "reveal",
+              "enum": [
+                "reveal",
+                "copy",
+                "export",
+                "run"
+              ],
+              "type": "string"
+            }
+          },
           {
             "in": "path",
             "name": "project",

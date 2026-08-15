@@ -319,6 +319,9 @@ export function registerSecretRoutes(app: Hono<ApiEnv>): void {
       errors: {
         500: "`DECRYPT_FAILED` or `UNKNOWN_KID` — the stored bytes were not sealed against the identity they are being read under. Treat it as tampering until proven otherwise.",
       },
+      // `reason` is how the audit row for this read explains itself, so it
+      // belongs in the published contract rather than only in the validator.
+      query: RevealQuery,
     }),
     validate("param", RevealParams),
     validate("query", RevealQuery),

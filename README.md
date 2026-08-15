@@ -1,89 +1,149 @@
-# prick
+<div align="center">
 
-**P**ortable **R**untime **I**njection of **C**loudflare (stored) **K**eys.
+<img src="assets/brand/lockup.svg" alt="prick" width="380">
 
-A self-hosted secrets manager that runs entirely on your own Cloudflare account — one Worker, one D1
-database, and nothing else to operate.
+### **P**ortable **R**untime **I**njection of **C**loudflare (stored) **K**eys
+
+A self-hosted secrets manager that runs entirely on your own Cloudflare account.<br>
+One Worker, one D1 database, and nothing else to operate.
+
+[![CI](https://github.com/yashau/prick/actions/workflows/ci.yml/badge.svg)](https://github.com/yashau/prick/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/yashau/prick/actions/workflows/codeql.yml/badge.svg)](https://github.com/yashau/prick/actions/workflows/codeql.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-C8F93A?labelColor=238112)](LICENSE)
+[![Status](https://img.shields.io/badge/status-pre--release-8EDC20?labelColor=238112)](#status)
+
+</div>
+
+---
+
+```bash
+prk login https://secrets.example.com
+prk secrets set DATABASE_URL --project api --env production   # prompts, masked
+prk run --project api --env production -- ./deploy.sh         # injected, never written to disk
+```
 
 The name is the job description: keys live in your Cloudflare account, and `prk` injects them into a
 process at runtime — portably, and without ever touching disk.
 
-- **`prk`** — a single static Rust binary. No Node, no `wrangler`, no runtime dependencies.
-- **Web UI** — a SvelteKit admin app served from the same Worker.
-- **Cloudflare Access** — SSO for people, service tokens for CI. No passwords, no bearer tokens of
-  our own invention.
+## What it is
 
-```bash
-npm install -g @yashau/prick     # once a release is cut; until then: mise run build:rust
-
-prk login https://secrets.example.com
-prk secrets set DATABASE_URL --project api --env production   # prompts, masked
-prk run --project api --env production -- ./deploy.sh
-```
+|             |                                                                                                      |
+| :---------- | :--------------------------------------------------------------------------------------------------- |
+| **`prk`**   | A single static Rust binary. No Node, no `wrangler`, no runtime dependencies.                        |
+| **Web UI**  | A SvelteKit admin console served from the same Worker.                                               |
+| **Auth**    | Cloudflare Access — SSO for people, service tokens for CI. No credentials of our own invention.      |
+| **Storage** | D1. Values are AES-256-GCM, and each ciphertext is cryptographically bound to the row that holds it. |
 
 ## How it works
 
 ```
-prk / browser  ──▶  Cloudflare Access  ──▶  Worker  ──▶  D1
-                    (SSO / service          (Hono +      (values encrypted,
-                     tokens, at the edge)    SvelteKit)   AES-256-GCM + AAD)
+  prk ─────┐                    ┌───────────────────────────────┐
+           ├──▶ Cloudflare ────▶│  Worker                       │
+  browser ─┘      Access        │  · verifies the signed JWT    │──▶  D1
+                (SSO / tokens)  │  · resolves grants in D1      │   (encrypted)
+                                │  · encrypts, decrypts, audits │
+                                └───────────────────────────────┘
 ```
 
 Everything sits behind one Access-protected hostname. Access authenticates at the edge before the
 Worker runs; the Worker independently verifies the signed JWT to learn _who_ is calling, then
 consults its own grant table to decide _what_ they may do.
 
-Secret **values** are encrypted with AES-256-GCM under a key derived from your `MASTER_KEY` via
-HKDF-SHA256. Each ciphertext is bound to its row with additional authenticated data — environment,
-key name and version — so a ciphertext lifted from one row and pasted into another simply fails to
-decrypt.
+## Design decisions worth knowing
 
-## Design notes
+<table>
+<tr><td width="32%"><strong>Ciphertexts are bound to their row</strong></td>
+<td>Additional authenticated data covers purpose, environment, key name and version. A ciphertext lifted from one row and pasted into another does not decrypt — it fails authentication.</td></tr>
 
-A few decisions worth knowing before you adopt it:
+<tr><td><strong>Writes are atomic</strong></td>
+<td>A bulk write is a single D1 <code>batch()</code>, a real transaction. There is no window in which an environment is half-written.</td></tr>
 
-- **The CLI never talks to the Cloudflare API.** It is a pure HTTP client against your Worker. That
-  is why it needs no credentials beyond your Access session, and why it ships as one binary.
-- **Deployment is `wrangler deploy`.** Provisioning is a once-per-install job, so it belongs to
-  Cloudflare's own tooling rather than to a bespoke `init` command.
-- **Writes are atomic.** A bulk write is a single D1 `batch()` — a transaction. There is no window in
-  which an environment is half-written.
-- **Nothing mutates without an audit row**, because the audit insert is the last statement _inside_
-  the same transaction. If the audit write fails, the data write fails.
-- **`MASTER_KEY` is the whole ballgame.** Lose it and the data is unrecoverable; a D1 export without
-  it is just ciphertext. Rotation is designed to be incremental, with the UI computing when it is
-  safe to drop the retired key — but the job that does the re-encryption is **not implemented yet**,
-  so a rotation cannot currently be finished.
+<tr><td><strong>Nothing mutates unaudited</strong></td>
+<td>The audit insert is the last statement <em>inside</em> that same transaction. If the audit write fails, the data write fails.</td></tr>
+
+<tr><td><strong>Nothing is granted implicitly</strong></td>
+<td>An authenticated identity holding no grant gets nothing — and <strong>404, not 403</strong>, from every resource-addressed route, so it cannot enumerate what exists.</td></tr>
+
+<tr><td><strong>Failures are loud</strong></td>
+<td>A row that will not decrypt is reported, never skipped. A silently shorter <code>.env</code> is how a deploy loses <code>DATABASE_URL</code> and nobody finds out until the outage.</td></tr>
+
+<tr><td><strong>Secrets never reach the HTML</strong></td>
+<td>The secrets screen is client-rendered on purpose: no server render means no serialised page payload. CI fails the build if a server load so much as calls a reveal function.</td></tr>
+</table>
+
+## Access control
+
+Scope a grant at any level, combine them freely, hand them out through groups.
+
+```
+global                      admin     everything
+project      acme           writer    every environment in acme
+environment  acme/prod      reader    one environment
+group        platform-team  admin     conferred to every member
+```
+
+Roles are `reader < writer < admin`. Effective role is the maximum over direct grants **and** the
+grants of every group you belong to — purely additive, with no deny rules, because a deny that
+silently overrides an explicit grant is the most confusing thing an authorization system can have.
+
+`GET /identities/{id}/effective-permissions` answers _"why does Bob have production?"_ by naming the
+grant or group that conferred it.
+
+## Getting started
+
+Deploy it to your own account. This repository never deploys it for you.
+
+```bash
+git clone https://github.com/yashau/prick && cd prick
+mise trust && mise run bootstrap
+openssl rand -base64 32 | pnpm --filter @prick/app exec wrangler secret put MASTER_KEY
+pnpm --filter @prick/app exec wrangler d1 migrations apply prick --remote
+pnpm --filter @prick/app exec wrangler deploy
+```
+
+Then put **Cloudflare Access** in front of the hostname before you put a secret in it. The Worker
+ships with `workers_dev` and `preview_urls` disabled and CI asserts both on every push, because an
+unprotected hostname serves the entire application without a JWT.
+
+**[Quickstart](docs/getting-started/quickstart.md)** ·
+**[Authentication](docs/guides/authentication.md)** ·
+**[Access control](docs/guides/access-control.md)** ·
+**[Threat model](docs/architecture/threat-model.md)**
+
+## `MASTER_KEY` is the whole ballgame
+
+Lose it and every stored secret is unrecoverable. A D1 export without it is just ciphertext — which
+is a feature rather than a bug, and also the most common way people lose everything. Rotation is
+supported and incremental, and the settings screen tells you when it is safe to drop the retired
+key.
 
 ## Status
 
-Not production ready, but no longer a skeleton. The crypto, the Access
-verification and the authorization layer are implemented and tested; the domain
-layer — projects, environments, secrets, identities, grants, groups and the audit
-query — is written, and the whole HTTP API is mounted on top of it. `prk` logs in,
-stores its token, sends service-token headers and runs every subcommand.
+Pre-release. The architecture is settled and the test suite is real:
 
-Two things are still missing, and the documentation says so where it matters:
+<div align="center">
 
-- **The rekey job.** `GET /api/v1/admin/keyring` and `POST /api/v1/admin/rekey`
-  are mounted but answer `501`, so a rotation can be started and not finished.
-- **The web UI's data.** Every screen exists, but its server loads still read
-  fixture data rather than the domain layer.
+| Rust | Worker + UI | E2E | Scripts | Action | MCP |
+| ---: | ----------: | --: | ------: | -----: | --: |
+|  546 |        1080 |  90 |     206 |    110 |  73 |
 
-No release has been cut, so nothing is published to npm yet.
+</div>
+
+Nothing is published to npm yet, so `npm install -g @yashau/prick` does not work — build from source
+until the first release is cut.
 
 ## Development
 
-The only thing you need to install is [mise](https://mise.jdx.dev) — it pins every other tool.
+The only thing you install is [mise](https://mise.jdx.dev). It pins everything else.
 
 ```bash
-mise trust
-mise run bootstrap
-mise run dev
+mise run dev      # Worker + UI
+mise run test     # every suite
+mise run ci       # exact mirror of CI — run before opening a PR
 ```
 
-`mise run ci` mirrors CI exactly; run it before opening a PR. See `CONTRIBUTING.md`.
+See **[CONTRIBUTING.md](CONTRIBUTING.md)** and **[AGENTS.md](AGENTS.md)**.
 
 ## License
 
-MIT
+[MIT](LICENSE)

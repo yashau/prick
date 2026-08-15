@@ -55,8 +55,17 @@ export default defineConfig({
       title: SITE_TITLE,
       description: `${SITE_TAGLINE} -- a self-hosted secrets manager that runs on one Cloudflare Worker and a D1 database.`,
 
-      // Plain and legible; no logo asset to keep in sync.
       tagline: SITE_TAGLINE,
+
+      // The lockup already contains the wordmark, so `replacesTitle` stops the
+      // header rendering the name twice. Both variants point at the same file:
+      // the mark is legible on either background, so a second asset would be a
+      // second thing to keep in sync for no gain.
+      logo: {
+        light: "./src/assets/lockup.svg",
+        dark: "./src/assets/lockup.svg",
+        replacesTitle: true,
+      },
 
       social: [{ icon: "github", label: "GitHub", href: "https://github.com/yashau/prick" }],
 

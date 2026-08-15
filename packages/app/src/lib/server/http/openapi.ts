@@ -120,8 +120,55 @@ export interface RouteSpec {
   responses: Record<string, OpenAPIV3_1.ResponseObject>;
   requestBody?: OpenAPIV3_1.RequestBodyObject;
   parameters?: OpenAPIV3_1.ParameterObject[];
+  /**
+   * The SAME zod schema the route passes to `validate("query", …)`.
+   *
+   * Query parameters are derived from it rather than written out beside it,
+   * because two hand-maintained copies of the same contract drift and only one
+   * of them is executable. The document then describes exactly what the route
+   * accepts, including that `reason` on a reveal is how the audit row explains
+   * itself.
+   */
+  query?: ZodType;
   /** Statuses beyond the common set, e.g. 409 / 412 / 413 on a write. */
   errors?: Record<string, string>;
+}
+
+/**
+ * Flatten a zod object schema into OpenAPI query parameters.
+ *
+ * One parameter per top-level property; `required` comes from the schema, not
+ * from a guess. Nested objects are not expressible as query parameters and are
+ * skipped rather than silently serialised into something the route would
+ * reject.
+ */
+function queryParameters(schema: ZodType): OpenAPIV3_1.ParameterObject[] {
+  const json = z.toJSONSchema(schema, { io: "input" }) as {
+    properties?: Record<string, OpenAPIV3_1.SchemaObject>;
+    required?: string[];
+  };
+
+  const required = new Set(json.required ?? []);
+  const parameters: OpenAPIV3_1.ParameterObject[] = [];
+
+  for (const [name, property] of Object.entries(json.properties ?? {})) {
+    if (property.type === "object") continue;
+
+    const parameter: OpenAPIV3_1.ParameterObject = {
+      name,
+      in: "query",
+      required: required.has(name),
+      // openapi-types declares ParameterObject.schema as the OpenAPI 3.0 schema
+      // type even on the 3.1 namespace, so a genuine 3.1 schema does not
+      // structurally satisfy it. The document we emit IS 3.1; the cast is the
+      // library's type gap, not ours.
+      schema: property as OpenAPIV3_1.ParameterObject["schema"],
+    };
+    if (typeof property.description === "string") parameter.description = property.description;
+    parameters.push(parameter);
+  }
+
+  return parameters;
 }
 
 /**
@@ -147,7 +194,12 @@ export function describe(spec: RouteSpec) {
   };
 
   if (spec.requestBody !== undefined) options.requestBody = spec.requestBody;
-  if (spec.parameters !== undefined) options.parameters = spec.parameters;
+
+  const parameters = [
+    ...(spec.parameters ?? []),
+    ...(spec.query === undefined ? [] : queryParameters(spec.query)),
+  ];
+  if (parameters.length > 0) options.parameters = parameters;
 
   return describeRoute(options);
 }

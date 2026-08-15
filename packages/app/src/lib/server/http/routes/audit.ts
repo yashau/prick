@@ -41,6 +41,9 @@ export function auditRoutes(): Hono<ApiEnv> {
       errors: {
         403: "`FORBIDDEN` — the caller holds no admin grant at any scope. Admins see the log narrowed to what they administer: global admins see everything, a project or environment admin sees only rows within their own scope.",
       },
+      // Derived from the same schema the validator enforces, so the document
+      // cannot describe a filter the route rejects.
+      query: AuditQueryParams,
     }),
     validate("query", AuditQueryParams),
     async (c) => {
