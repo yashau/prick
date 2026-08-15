@@ -21,19 +21,6 @@ import { isBootstrapAdmin } from "./bootstrap.js";
  * authorization query, not two hundred.
  */
 
-/**
- * A scope, optionally carrying the project an environment belongs to.
- *
- * A project-scoped grant covers every environment in that project, so resolving
- * an environment scope needs the environment's `project_id`. Callers that
- * already loaded the environment pass it and save a query; callers that did not
- * omit it and it is looked up once and memoised.
- */
-export type AuthorizationScope =
-  | { type: "global" }
-  | { type: "project"; projectId: string }
-  | { type: "environment"; environmentId: string; projectId?: string };
-
 export interface AuthorizationSnapshot {
   /** `identities.id`, or `null` when this subject has never been recorded. */
   identityId: string | null;
@@ -217,11 +204,15 @@ async function projectOfEnvironment(ctx: CoreContext, environmentId: string): Pr
  * Grants are INHERITED downwards: a global grant covers every project, a
  * project grant covers every environment in it. They are never inherited
  * upwards -- an environment admin is not a project admin.
+ *
+ * Takes `Scope` from `core/context.ts` directly. This function used to declare
+ * a widened `AuthorizationScope` of its own, because `Scope`'s environment
+ * variant could not name the environment's project and a project-scoped grant
+ * covers every environment under it. `Scope` now carries an optional
+ * `projectId` on that variant, so the local type is gone and there is one scope
+ * type in the codebase again.
  */
-export async function resolveEffectiveRole(
-  ctx: CoreContext,
-  scope: AuthorizationScope | Scope,
-): Promise<Role | null> {
+export async function resolveEffectiveRole(ctx: CoreContext, scope: Scope): Promise<Role | null> {
   const snapshot = await resolveAuthorization(ctx);
 
   if (snapshot.disabled) return null;
@@ -240,10 +231,10 @@ export async function resolveEffectiveRole(
     return maxRole(effectiveGlobal, snapshot.byProject.get(scope.projectId) ?? null);
   }
 
+  // Present when the caller already loaded the environment row -- which is every
+  // caller in `core` -- and looked up and memoised for this request when not.
   const projectId =
-    "projectId" in scope && scope.projectId !== undefined
-      ? scope.projectId
-      : await projectOfEnvironment(ctx, scope.environmentId);
+    scope.projectId ?? (await projectOfEnvironment(ctx, scope.environmentId));
 
   const fromProject = projectId === null ? null : (snapshot.byProject.get(projectId) ?? null);
 
@@ -255,7 +246,7 @@ export async function resolveEffectiveRole(
 
 export async function can(
   ctx: CoreContext,
-  scope: AuthorizationScope | Scope,
+  scope: Scope,
   required: Role,
 ): Promise<boolean> {
   const role = await resolveEffectiveRole(ctx, scope);
@@ -274,7 +265,7 @@ export async function can(
  */
 export async function assertCan(
   ctx: CoreContext,
-  scope: AuthorizationScope | Scope,
+  scope: Scope,
   required: Role,
 ): Promise<void> {
   if (await can(ctx, scope, required)) return;
@@ -310,7 +301,7 @@ export async function assertCan(
  */
 async function recordDenial(
   ctx: CoreContext,
-  input: { action: string; scope: AuthorizationScope | Scope; disabled: boolean },
+  input: { action: string; scope: Scope; disabled: boolean },
 ): Promise<void> {
   const snapshot = await resolveAuthorization(ctx);
 

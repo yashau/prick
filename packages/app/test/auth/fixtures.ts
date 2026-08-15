@@ -83,6 +83,19 @@ export function testConfig(overrides: Partial<RuntimeConfig> = {}): RuntimeConfi
   return {
     accessTeam: "test-team",
     accessAud: "test-aud",
+    /*
+     * Written explicitly rather than left off.
+     *
+     * `RuntimeConfig.accessCertsUrl` is optional today only so this literal
+     * keeps compiling; the end state is a required field. Naming it here, even
+     * as `undefined`, means dropping the `?` in `core/context.ts` is a one-line
+     * change over there and not a compile error over here.
+     *
+     * `undefined` is also the right DEFAULT: it exercises the production path
+     * where the certs URL is derived from the team. Tests that need the mock
+     * origin pass its URL explicitly, one certs URL per test.
+     */
+    accessCertsUrl: undefined,
     bootstrapAdmins: [],
     requireCtxAccess: false,
     secretMaxBytes: 65536,

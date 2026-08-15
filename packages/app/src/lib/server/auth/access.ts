@@ -1,6 +1,6 @@
 import { verifyWithJwks } from "hono/jwt";
 
-import type { Actor } from "../core/context.js";
+import type { Actor, RuntimeConfig } from "../core/context.js";
 import { PrickError } from "../core/errors.js";
 import type { AccessClaims } from "./claims.js";
 import { classifyClaims } from "./claims.js";
@@ -61,38 +61,43 @@ export interface AccessVerifyOptions {
   clockSkewSeconds?: number;
 }
 
-/** The subset of `Env` this module reads. `Env` satisfies it structurally. */
-export interface AccessEnvLike {
-  ACCESS_TEAM: string;
-  ACCESS_AUD: string;
-  ACCESS_CERTS_URL?: string;
-}
-
 /**
- * Build verification options from Worker `vars`.
+ * Build verification options from the parsed runtime config.
+ *
+ * Reads `RuntimeConfig` rather than raw `vars`. This used to take a structural
+ * `AccessEnvLike` and pull `ACCESS_TEAM` / `ACCESS_AUD` / `ACCESS_CERTS_URL`
+ * straight off `env`, which made it the one place outside `loadRuntimeConfig`
+ * that parsed a `var` -- two readers of the same three strings, free to disagree
+ * about trimming and about what an empty string means.
  *
  * Fails closed on an unset `ACCESS_AUD`: an empty AUD tag would make the `aud`
  * assertion vacuous, and a verifier that accepts tokens minted for a DIFFERENT
- * Access application in the same account is not a verifier.
+ * Access application in the same account is not a verifier. This check lives
+ * here rather than in `loadRuntimeConfig` on purpose -- `/health` is
+ * unauthenticated by design and must not start failing because Access is
+ * misconfigured for the routes that are.
  */
-export function accessOptionsFromEnv(env: AccessEnvLike, now?: number): AccessVerifyOptions {
-  const team = (env.ACCESS_TEAM ?? "").trim();
-  const aud = (env.ACCESS_AUD ?? "").trim();
+export function accessOptionsFromConfig(
+  config: RuntimeConfig,
+  now?: number,
+): AccessVerifyOptions {
+  const team = config.accessTeam.trim();
+  const aud = config.accessAud.trim();
 
   if (team === "") {
-    throw new PrickError("MISCONFIGURED", "ACCESS_TEAM is not set.", {
+    throw new PrickError("SERVER_MISCONFIGURED", "ACCESS_TEAM is not set.", {
       hint: "Set ACCESS_TEAM in wrangler.jsonc to your Cloudflare Access team name and redeploy.",
     });
   }
 
   if (aud === "") {
-    throw new PrickError("MISCONFIGURED", "ACCESS_AUD is not set.", {
+    throw new PrickError("SERVER_MISCONFIGURED", "ACCESS_AUD is not set.", {
       hint: "Copy the Application Audience (AUD) tag from Zero Trust > Access > Applications > Overview into ACCESS_AUD and redeploy.",
     });
   }
 
   const options: AccessVerifyOptions = { team, aud };
-  if (env.ACCESS_CERTS_URL !== undefined) options.certsUrl = env.ACCESS_CERTS_URL;
+  if (config.accessCertsUrl !== undefined) options.certsUrl = config.accessCertsUrl;
   if (now !== undefined) options.now = now;
   return options;
 }

@@ -87,7 +87,7 @@ export function accessCertsUrl(team: string): string {
   const trimmed = team.trim();
 
   if (!/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/i.test(trimmed)) {
-    throw new PrickError("MISCONFIGURED", "ACCESS_TEAM is not a valid Access team name.", {
+    throw new PrickError("SERVER_MISCONFIGURED", "ACCESS_TEAM is not a valid Access team name.", {
       hint: 'Set ACCESS_TEAM in wrangler.jsonc to the <team> in "https://<team>.cloudflareaccess.com" and redeploy.',
     });
   }
@@ -112,14 +112,14 @@ export function resolveCertsUrl(team: string, override?: string | null | undefin
   try {
     parsed = new URL(override.trim());
   } catch {
-    throw new PrickError("MISCONFIGURED", "ACCESS_CERTS_URL is not a valid URL.", {
+    throw new PrickError("SERVER_MISCONFIGURED", "ACCESS_CERTS_URL is not a valid URL.", {
       hint: "Remove ACCESS_CERTS_URL to use the team default, or set it to an absolute https:// URL.",
     });
   }
 
   if (parsed.protocol !== "https:" || parsed.username !== "" || parsed.password !== "") {
     throw new PrickError(
-      "MISCONFIGURED",
+      "SERVER_MISCONFIGURED",
       "ACCESS_CERTS_URL must be an https:// URL without embedded credentials.",
       { hint: "Signing keys fetched over plaintext can be substituted in transit." },
     );
@@ -154,7 +154,7 @@ function parseJwks(body: unknown, url: string): JwksKey[] {
   const document = typeof body === "object" && body !== null ? (body as RawJwksDocument) : null;
 
   if (document === null || !Array.isArray(document.keys)) {
-    throw new PrickError("MISCONFIGURED", "The Access certs endpoint returned a malformed JWKS.", {
+    throw new PrickError("SERVER_MISCONFIGURED", "The Access certs endpoint returned a malformed JWKS.", {
       hint: `Expected a JSON document with a "keys" array from ${url}.`,
     });
   }
@@ -195,14 +195,14 @@ async function fetchJwks(url: string): Promise<JwksKey[]> {
       cf: { cacheTtl: 3600, cacheEverything: true },
     });
   } catch (cause) {
-    throw new PrickError("MISCONFIGURED", "Could not reach the Access certs endpoint.", {
+    throw new PrickError("SERVER_MISCONFIGURED", "Could not reach the Access certs endpoint.", {
       hint: `Fetching ${url} failed.`,
       cause,
     });
   }
 
   if (!response.ok) {
-    throw new PrickError("MISCONFIGURED", "The Access certs endpoint returned an error.", {
+    throw new PrickError("SERVER_MISCONFIGURED", "The Access certs endpoint returned an error.", {
       hint: `${url} responded with HTTP ${String(response.status)}.`,
     });
   }
@@ -211,7 +211,7 @@ async function fetchJwks(url: string): Promise<JwksKey[]> {
   try {
     body = await response.json();
   } catch (cause) {
-    throw new PrickError("MISCONFIGURED", "The Access certs endpoint returned invalid JSON.", {
+    throw new PrickError("SERVER_MISCONFIGURED", "The Access certs endpoint returned invalid JSON.", {
       hint: `Expected a JWKS document from ${url}.`,
       cause,
     });

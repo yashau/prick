@@ -36,9 +36,9 @@ describe("certs URL resolution", () => {
   });
 
   it("REJECTS a team name that is not a hostname label", () => {
-    throwsWith(() => accessCertsUrl("acme.evil.example/"), "MISCONFIGURED");
-    throwsWith(() => accessCertsUrl(""), "MISCONFIGURED");
-    throwsWith(() => accessCertsUrl("-acme"), "MISCONFIGURED");
+    throwsWith(() => accessCertsUrl("acme.evil.example/"), "SERVER_MISCONFIGURED");
+    throwsWith(() => accessCertsUrl(""), "SERVER_MISCONFIGURED");
+    throwsWith(() => accessCertsUrl("-acme"), "SERVER_MISCONFIGURED");
   });
 
   it("falls back to the team default when the override is blank", () => {
@@ -48,15 +48,15 @@ describe("certs URL resolution", () => {
   });
 
   it("REJECTS a plaintext certs URL", () => {
-    throwsWith(() => resolveCertsUrl("acme", "http://acme.example/certs"), "MISCONFIGURED");
+    throwsWith(() => resolveCertsUrl("acme", "http://acme.example/certs"), "SERVER_MISCONFIGURED");
   });
 
   it("REJECTS a certs URL carrying credentials", () => {
-    throwsWith(() => resolveCertsUrl("acme", "https://u:p@acme.example/certs"), "MISCONFIGURED");
+    throwsWith(() => resolveCertsUrl("acme", "https://u:p@acme.example/certs"), "SERVER_MISCONFIGURED");
   });
 
   it("REJECTS a certs URL that is not a URL", () => {
-    throwsWith(() => resolveCertsUrl("acme", "not a url"), "MISCONFIGURED");
+    throwsWith(() => resolveCertsUrl("acme", "not a url"), "SERVER_MISCONFIGURED");
   });
 });
 
@@ -213,14 +213,14 @@ describe("JWKS documents that must not be trusted", () => {
           certsUrl: certs.url,
           now: NOW,
         }),
-      "MISCONFIGURED",
+      "SERVER_MISCONFIGURED",
     );
   });
 
   it("REJECTS a JWKS document with no keys array", async () => {
     const certs = certsEndpoint("malformed");
 
-    await rejectsWith(async () => getJwks(certs.url, NOW), "MISCONFIGURED");
+    await rejectsWith(async () => getJwks(certs.url, NOW), "SERVER_MISCONFIGURED");
   });
 
   it("REJECTS every token when the JWKS is empty", async () => {

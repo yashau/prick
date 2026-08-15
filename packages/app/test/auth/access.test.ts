@@ -3,7 +3,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import {
   ACCESS_ASSERTION_COOKIE,
   ACCESS_ASSERTION_HEADER,
-  accessOptionsFromEnv,
+  accessOptionsFromConfig,
   actorFromClaims,
   assertCtxAccess,
   extractAssertion,
@@ -12,6 +12,7 @@ import {
   verifyAccessRequest,
   type AccessVerifyOptions,
 } from "../../src/lib/server/auth/access.js";
+import { testConfig } from "./fixtures.js";
 import { certsEndpoint, harnessKeys } from "./harness/client.js";
 import { mintJwt, mintServiceToken, mintUserToken, type AccessTokenOptions } from "./harness/mint.js";
 import type { CertsProfile, HarnessKeysResponse } from "./harness/protocol.js";
@@ -496,24 +497,49 @@ describe("assertion extraction", () => {
 // Configuration must fail closed
 // ---------------------------------------------------------------------------
 
-describe("accessOptionsFromEnv", () => {
+describe("accessOptionsFromConfig", () => {
   it("derives the certs URL from the team when none is configured", () => {
-    const resolved = accessOptionsFromEnv({ ACCESS_TEAM: "acme", ACCESS_AUD: "aud-tag" });
+    const resolved = accessOptionsFromConfig(
+      testConfig({ accessTeam: "acme", accessAud: "aud-tag" }),
+    );
 
     expect(resolved.team).toBe("acme");
     expect(resolved.aud).toBe("aud-tag");
     expect(resolved.certsUrl).toBeUndefined();
   });
 
+  it("passes the configured certs URL through", () => {
+    const resolved = accessOptionsFromConfig(
+      testConfig({ accessCertsUrl: "https://acme.example/certs" }),
+    );
+
+    expect(resolved.certsUrl).toBe("https://acme.example/certs");
+  });
+
   it("REJECTS an unset ACCESS_AUD rather than making the aud check vacuous", () => {
     throwsWith(
-      () => accessOptionsFromEnv({ ACCESS_TEAM: "acme", ACCESS_AUD: "" }),
-      "MISCONFIGURED",
+      () => accessOptionsFromConfig(testConfig({ accessAud: "" })),
+      "SERVER_MISCONFIGURED",
     );
   });
 
   it("REJECTS an unset ACCESS_TEAM", () => {
-    throwsWith(() => accessOptionsFromEnv({ ACCESS_TEAM: "  ", ACCESS_AUD: "x" }), "MISCONFIGURED");
+    throwsWith(
+      () => accessOptionsFromConfig(testConfig({ accessTeam: "  " })),
+      "SERVER_MISCONFIGURED",
+    );
+  });
+
+  /** The parsed config is the only reader of these vars now. */
+  it("verifies a real token from options built out of the config", async () => {
+    const certs = certsEndpoint("primary");
+    const resolved = accessOptionsFromConfig(
+      testConfig({ accessTeam: TEAM, accessAud: AUD, accessCertsUrl: certs.url }),
+      NOW,
+    );
+
+    const claims = await verifyAccessJwt(await userToken(), resolved);
+    expect(claims.email).toBe("Operator@Example.COM");
   });
 });
 

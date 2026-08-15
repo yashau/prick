@@ -40,7 +40,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "node --test",
+    "test": "node --import ./test/support/shared-ts-resolve.ts --test",
     "start": "node src/main.ts"
   },
   "dependencies": {
@@ -48,6 +48,7 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@prick/shared": "workspace:*",
     "@types/node": "^26.2.0",
     "typescript": "catalog:"
   },
