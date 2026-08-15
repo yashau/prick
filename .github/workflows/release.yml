@@ -1,0 +1,689 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Build and package everything, but claim no tag and publish nothing"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+# Never cancel a release. A cancelled run between `npm publish` and the dist-tag
+# flip leaves the registry in a half-published state that no rerun can undo,
+# because npm versions are immutable.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+env:
+  CARGO_INCREMENTAL: "0"
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: "1"
+  # CalVer is computed in UTC. A runner on any other zone would compute a
+  # different date for six hours a day.
+  TZ: UTC
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Decide the version and CLAIM it.
+  #
+  # The claim is the git tag itself. git refuses to create a ref that already
+  # exists, so pushing `vYYYY.MMDD.N` is an atomic compare-and-swap against the
+  # remote: two runs starting in the same second cannot both take the same N.
+  # There is no external mutex, no lock file and nothing to leak.
+  # ---------------------------------------------------------------------------
+  plan:
+    name: plan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    outputs:
+      # On a dry run nothing is claimed, so the planned version comes from the
+      # read-only step instead. Downstream jobs are identical either way.
+      version: ${{ steps.claim.outputs.version || steps.plan-only.outputs.version }}
+      tag: ${{ steps.claim.outputs.tag || format('v{0}', steps.plan-only.outputs.version) }}
+    steps:
+      # zizmor: ignore[artipacked]
+      # The credential is deliberately persisted: this job pushes the tag that
+      # claims the version. It is the one place in the repository that needs it.
+      - uses: actions/checkout@v7
+        with:
+          # N is derived from how many tags already exist for today, so the full
+          # tag list must be present -- a shallow clone silently computes N=0
+          # and the push then collides.
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: true
+
+      - uses: jdx/mise-action@v4
+
+      - name: Compute version (dry run)
+        if: inputs.dry_run
+        id: plan-only
+        run: |
+          set -euo pipefail
+          node scripts/version.mjs plan --github-output
+          echo "No tag is claimed on a dry run."
+
+      - name: Compute and claim version
+        if: ${{ !inputs.dry_run }}
+        id: claim
+        env:
+          GIT_AUTHOR_NAME: github-actions[bot]
+          GIT_AUTHOR_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
+          GIT_COMMITTER_NAME: github-actions[bot]
+          GIT_COMMITTER_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
+        run: |
+          set -euo pipefail
+
+          claimed=""
+          for attempt in 1 2 3 4 5; do
+            # Re-read the remote every attempt. A collision means somebody else
+            # took this N between our read and our push, so N must be recomputed
+            # against the tags that now exist rather than merely incremented.
+            git fetch --tags --force --prune --quiet origin
+
+            version="$(node scripts/version.mjs plan)"
+            tag="v${version}"
+            echo "attempt ${attempt}: trying to claim ${tag}"
+
+            git tag -- "$tag" || {
+              echo "local tag ${tag} already exists; re-reading remote"
+              git tag -d -- "$tag" >/dev/null 2>&1 || true
+              sleep $(( attempt * 3 ))
+              continue
+            }
+
+            if git push origin "refs/tags/${tag}"; then
+              claimed="$version"
+              break
+            fi
+
+            # Lost the race. Drop the local tag and try the next N.
+            echo "push of ${tag} was rejected -- another run claimed it first"
+            git tag -d -- "$tag" >/dev/null 2>&1 || true
+            sleep $(( attempt * 3 ))
+          done
+
+          if [ -z "$claimed" ]; then
+            echo "::error::Could not claim a version tag after 5 attempts."
+            exit 1
+          fi
+
+          echo "claimed ${claimed}"
+          {
+            echo "version=${claimed}"
+            echo "tag=v${claimed}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Summary
+        env:
+          DRY_RUN: ${{ inputs.dry_run }}
+          VERSION: ${{ steps.claim.outputs.version || steps.plan-only.outputs.version }}
+        run: |
+          {
+            echo "### Release plan"
+            echo
+            echo "- dry run: \`${DRY_RUN}\`"
+            echo "- version: \`${VERSION}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ---------------------------------------------------------------------------
+  # Six runner legs, eight artefacts. macOS and Windows each build two targets
+  # in one job: the macOS SDK is universal, and the Windows image ships both the
+  # x64 and ARM64 MSVC toolchains, so a second runner would buy nothing.
+  #
+  # No `cross`, no Docker, no qemu -- free arm64 runners exist now, so every
+  # target is built natively or by a first-party cross-linker.
+  # ---------------------------------------------------------------------------
+  build:
+    name: build (${{ matrix.name }})
+    needs: plan
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      # A partial set of binaries must never reach `package`. If one target
+      # fails to compile, the release does not happen.
+      fail-fast: true
+      matrix:
+        include:
+          - name: linux-x64-gnu
+            os: ubuntu-24.04
+            targets: x86_64-unknown-linux-gnu
+          - name: linux-x64-musl
+            os: ubuntu-24.04
+            targets: x86_64-unknown-linux-musl
+          - name: linux-arm64-gnu
+            os: ubuntu-24.04-arm
+            targets: aarch64-unknown-linux-gnu
+          - name: linux-arm64-musl
+            os: ubuntu-24.04-arm
+            targets: aarch64-unknown-linux-musl
+          - name: darwin
+            os: macos-15
+            targets: x86_64-apple-darwin aarch64-apple-darwin
+          - name: windows
+            os: windows-2025
+            targets: x86_64-pc-windows-msvc aarch64-pc-windows-msvc
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # The tag was created at this commit, so building the SHA is the same
+          # tree without racing the tag's propagation to the API.
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - uses: jdx/mise-action@v4
+
+      - name: Install musl toolchain
+        if: contains(matrix.targets, 'musl')
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends --yes musl-tools
+
+      - name: Add rustup targets
+        env:
+          TARGETS: ${{ matrix.targets }}
+        run: |
+          set -euo pipefail
+          for target in $TARGETS; do
+            rustup target add "$target"
+          done
+
+      # Stamp BEFORE compiling. env!("CARGO_PKG_VERSION") is baked in at compile
+      # time, so `prk --version` is correct by construction rather than by a
+      # second string somebody has to remember to update.
+      - name: Stamp version
+        env:
+          VERSION: ${{ needs.plan.outputs.version || '0.0.0-dev' }}
+        run: node scripts/version.mjs set "$VERSION"
+
+      - name: Build
+        env:
+          TARGETS: ${{ matrix.targets }}
+        run: |
+          set -euo pipefail
+          for target in $TARGETS; do
+            echo "::group::${target}"
+            # musl links statically via +crt-static (see .cargo/config.toml),
+            # which needs a musl-aware linker driver.
+            case "$target" in
+              *-linux-musl)
+                linker_var="CARGO_TARGET_$(printf '%s' "$target" | tr 'a-z-' 'A-Z_')_LINKER"
+                export "${linker_var}=musl-gcc"
+                ;;
+            esac
+            # cargo-auditable, not plain cargo: it embeds the resolved
+            # dependency list into the binary so `cargo audit bin ./prk` works
+            # on a downloaded artefact with no SBOM file alongside it.
+            mise run build:auditable "$target"
+            echo "::endgroup::"
+          done
+
+      - name: Collect binaries
+        env:
+          TARGETS: ${{ matrix.targets }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist/bin
+          for target in $TARGETS; do
+            out="dist/bin/${target}"
+            mkdir -p "$out"
+            if [ -f "target/${target}/dist/prk.exe" ]; then
+              cp "target/${target}/dist/prk.exe" "${out}/prk.exe"
+            elif [ -f "target/${target}/dist/prk" ]; then
+              cp "target/${target}/dist/prk" "${out}/prk"
+            else
+              echo "::error::No prk binary found for ${target} under target/${target}/dist/"
+              ls -R "target/${target}" || true
+              exit 1
+            fi
+          done
+          find dist/bin -type f -print
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: binaries-${{ matrix.name }}
+          path: dist/bin/
+          if-no-files-found: error
+          retention-days: 7
+
+  # ---------------------------------------------------------------------------
+  # Archives, checksums, the nine npm package trees, SBOMs and attestations.
+  # ---------------------------------------------------------------------------
+  package:
+    name: package
+    needs: [plan, build]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      # actions/attest needs all three. `artifact-metadata: write` became
+      # mandatory in February 2026; omitting it fails late and unhelpfully.
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - uses: jdx/mise-action@v4
+
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: binaries-*
+          merge-multiple: true
+          path: dist/bin
+
+      - name: Restore executable bits
+        run: |
+          set -euo pipefail
+          # The artifact upload/download round trip does not preserve mode bits.
+          find dist/bin -type f ! -name '*.exe' -exec chmod +x {} +
+          find dist/bin -type f -print
+
+      # -----------------------------------------------------------------------
+      # HARD GATE: every shipped binary must carry a readable embedded
+      # dependency list. A silently empty audit section is worse than no section
+      # at all, because `cargo audit bin` then produces something that looks
+      # like a clean report. Symbol stripping is the known way to lose it, so
+      # this must fail here rather than after publication.
+      # -----------------------------------------------------------------------
+      - name: Verify embedded audit data
+        env:
+          # prk depends on clap, reqwest and tokio; the real figure is in the
+          # hundreds. Anything below this means the section was lost, not that
+          # the dependency tree shrank.
+          MIN_EMBEDDED_CRATES: "20"
+        run: |
+          set -euo pipefail
+          failed=0
+          while IFS= read -r bin; do
+            echo "::group::cargo audit bin ${bin}"
+            status=0
+            out="$(mise run audit:bin "$bin" 2>&1)" || status=$?
+            printf '%s\n' "$out"
+            echo "::endgroup::"
+
+            count="$(
+              printf '%s\n' "$out" \
+                | sed -n 's/.*(\([0-9][0-9]*\) crate dependencies).*/\1/p' \
+                | head -n 1
+            )"
+
+            if [ -z "$count" ] || [ "$count" -lt "$MIN_EMBEDDED_CRATES" ]; then
+              echo "::error::${bin} carries no readable embedded dependency list (found '${count:-none}', need >= ${MIN_EMBEDDED_CRATES}). It was probably not built with cargo-auditable, or the audit section was stripped."
+              failed=1
+              continue
+            fi
+
+            if [ "$status" -ne 0 ]; then
+              echo "::error::cargo audit bin reported findings for ${bin} (exit ${status})."
+              failed=1
+              continue
+            fi
+
+            echo "${bin}: ${count} embedded crate dependencies, no findings"
+          done < <(find dist/bin -type f \( -name prk -o -name prk.exe \) | sort)
+
+          [ "$failed" -eq 0 ]
+
+      # Stamp again: the npm package.json files and the archive names are all
+      # generated in this job.
+      - name: Stamp version
+        env:
+          VERSION: ${{ needs.plan.outputs.version || '0.0.0-dev' }}
+        run: node scripts/version.mjs set "$VERSION"
+
+      - name: Build archives and checksums
+        env:
+          VERSION: ${{ needs.plan.outputs.version || '0.0.0-dev' }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist/assets
+          staging="$(mktemp -d)"
+
+          for dir in dist/bin/*/; do
+            target="$(basename "$dir")"
+            work="${staging}/prk-${VERSION}-${target}"
+            mkdir -p "$work"
+            cp "$dir"/prk* "$work/"
+            cp LICENSE README.md "$work/"
+
+            case "$target" in
+              *windows*)
+                ( cd "$staging" && zip -q -r "prk-${VERSION}-${target}.zip" "prk-${VERSION}-${target}" )
+                mv "${staging}/prk-${VERSION}-${target}.zip" dist/assets/
+                ;;
+              *)
+                tar -czf "dist/assets/prk-${VERSION}-${target}.tar.gz" -C "$staging" "prk-${VERSION}-${target}"
+                ;;
+            esac
+          done
+
+          # `sha256sum` output is exactly the two-column format that
+          # actions/attest consumes as `subject-checksums`.
+          ( cd dist/assets && sha256sum -- * > SHA256SUMS )
+          cat dist/assets/SHA256SUMS
+
+      # -----------------------------------------------------------------------
+      # The nine npm package trees: eight platform packages that declare `bin`
+      # directly plus the parent that depends on them optionally.
+      #
+      # Contract with scripts/: writes dist/npm/<pkg>/package.json for each,
+      # reading the compiled binaries out of --bin-dir.
+      # -----------------------------------------------------------------------
+      - name: Assemble npm packages
+        env:
+          VERSION: ${{ needs.plan.outputs.version || '0.0.0-dev' }}
+        run: |
+          set -euo pipefail
+          node scripts/npm-package.mjs \
+            --version "$VERSION" \
+            --bin-dir dist/bin \
+            --out dist/npm
+          find dist/npm -maxdepth 2 -name package.json -print
+
+      # SBOMs cover the whole repository -- both halves. The embedded audit data
+      # complements this for the Rust binaries; it does not replace it, because
+      # nothing in a stripped ELF describes the pnpm dependency tree.
+      - name: Generate SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          path: .
+          format: spdx-json
+          output-file: dist/prick-sbom.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
+
+      - name: Attest release artefacts
+        uses: actions/attest-build-provenance@v4
+        with:
+          # One call covers all eight archives plus SHA256SUMS itself.
+          subject-checksums: dist/assets/SHA256SUMS
+
+      - name: Attest SBOM
+        uses: actions/attest@v4
+        with:
+          subject-checksums: dist/assets/SHA256SUMS
+          sbom-path: dist/prick-sbom.spdx.json
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-assets
+          path: |
+            dist/assets/
+            dist/prick-sbom.spdx.json
+          if-no-files-found: error
+          retention-days: 7
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: npm-packages
+          path: dist/npm/
+          if-no-files-found: error
+          retention-days: 7
+
+  # ---------------------------------------------------------------------------
+  # Publish.
+  #
+  # npm versions are immutable; dist-tags are not. That asymmetry is the only
+  # atomicity primitive available, so everything lands under `next` first and
+  # `latest` moves only once all nine packages are readable from the registry
+  # and a real install has produced a working binary. The parent moves LAST:
+  # until it does, `npm install @yashau/prick` still resolves to the previous
+  # good release.
+  # ---------------------------------------------------------------------------
+  publish-npm:
+    name: publish-npm
+    needs: [plan, package]
+    if: ${{ !inputs.dry_run }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      # npm trusted publishing (OIDC). No long-lived token exists to leak, and
+      # provenance is attached automatically -- hence no --provenance flag.
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - uses: jdx/mise-action@v4
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: npm-packages
+          path: dist/npm
+
+      - name: Use a publish-capable npm # zizmor: ignore[adhoc-packages]
+        run: |
+          set -euo pipefail
+          # OIDC trusted publishing needs npm >= 11.5.1. pnpm is deliberately
+          # NOT used to publish: pnpm 11 dropped its npm CLI fallback and its
+          # own OIDC path regressed in 11.0.8.
+          # The publishing client itself cannot come from the workspace
+          # lockfile; it is what consumes the lockfile's output.
+          npm install --global npm@^11.5.1
+          npm --version
+
+      - name: Publish under the `next` tag
+        run: |
+          set -euo pipefail
+
+          # Package names are read out of the generated manifests rather than
+          # hardcoded here, so renaming a platform package cannot desynchronise
+          # the publish list from what was actually assembled.
+          parent=""
+          platforms=()
+          for manifest in dist/npm/*/package.json; do
+            dir="$(dirname "$manifest")"
+            name="$(jq -r '.name' "$manifest")"
+            if [ "$name" = "@yashau/prick" ]; then
+              parent="$dir"
+            else
+              platforms+=("$dir")
+            fi
+          done
+
+          if [ -z "$parent" ]; then
+            echo "::error::No parent package (@yashau/prick) found under dist/npm/."
+            exit 1
+          fi
+          if [ "${#platforms[@]}" -ne 8 ]; then
+            echo "::error::Expected 8 platform packages, found ${#platforms[@]}."
+            printf '%s\n' "${platforms[@]}"
+            exit 1
+          fi
+
+          publish_one() {
+            local dir="$1" name version
+            name="$(jq -r '.name' "${dir}/package.json")"
+            version="$(jq -r '.version' "${dir}/package.json")"
+            # Idempotent: a rerun of the same tag resumes rather than failing on
+            # the packages that already landed.
+            if npm view "${name}@${version}" version >/dev/null 2>&1; then
+              echo "${name}@${version} already published, skipping"
+              return 0
+            fi
+            echo "publishing ${name}@${version}"
+            npm publish "$dir" --tag next --access public
+          }
+
+          # Platform packages first. The parent's optionalDependencies point at
+          # them by exact version, so publishing the parent first would create a
+          # window in which it is installable and broken.
+          for dir in "${platforms[@]}"; do
+            publish_one "$dir"
+          done
+          publish_one "$parent"
+
+      - name: Verify registry propagation
+        env:
+          VERSION: ${{ needs.plan.outputs.version }}
+        run: |
+          set -euo pipefail
+          for manifest in dist/npm/*/package.json; do
+            name="$(jq -r '.name' "$manifest")"
+            ok=0
+            for attempt in $(seq 1 30); do
+              if npm view "${name}@${VERSION}" version >/dev/null 2>&1; then
+                ok=1
+                break
+              fi
+              echo "waiting for ${name}@${VERSION} (attempt ${attempt})"
+              sleep 10
+            done
+            if [ "$ok" -ne 1 ]; then
+              echo "::error::${name}@${VERSION} never became readable from the registry. The latest dist-tag has NOT been moved; the previous release is still current."
+              exit 1
+            fi
+            echo "${name}@${VERSION} is readable"
+          done
+
+      - name: Install smoke test # zizmor: ignore[adhoc-packages]
+        env:
+          VERSION: ${{ needs.plan.outputs.version }}
+        run: |
+          set -euo pipefail
+          work="$(mktemp -d)"
+          pushd "$work" >/dev/null
+          npm init --yes >/dev/null
+
+          # --ignore-scripts on purpose: a security-conscious user runs it, and
+          # the whole reason these are real platform packages rather than a
+          # postinstall downloader is that they must work without scripts.
+          # Installing from the public registry with no lockfile is the point:
+          # this reproduces exactly what a user gets.
+          npm install --ignore-scripts "@yashau/prick@${VERSION}"
+
+          bin="./node_modules/.bin/prk"
+          [ -x "$bin" ] || { echo "::error::prk was not installed as an executable."; exit 1; }
+
+          reported="$("$bin" --version)"
+          echo "prk --version -> ${reported}"
+          case "$reported" in
+            *"$VERSION"*) ;;
+            *) echo "::error::Installed binary reports '${reported}', expected it to contain '${VERSION}'."; exit 1 ;;
+          esac
+          popd >/dev/null
+
+          # Check the artefact that actually came back from the registry, not
+          # just the one built upstairs. The parent package's bin is a Node
+          # shim, so the native executable is located inside whichever platform
+          # package the install resolved to.
+          real="$(find "${work}/node_modules" -type f -name prk -not -path '*/.bin/*' -print -quit)"
+          if [ -z "$real" ]; then
+            echo "::error::Could not find the installed native binary under node_modules."
+            find "${work}/node_modules/@yashau" -maxdepth 3 -type f -print || true
+            exit 1
+          fi
+          echo "::group::cargo audit bin ${real}"
+          status=0
+          out="$(mise run audit:bin "$real" 2>&1)" || status=$?
+          printf '%s\n' "$out"
+          echo "::endgroup::"
+          count="$(printf '%s\n' "$out" | sed -n 's/.*(\([0-9][0-9]*\) crate dependencies).*/\1/p' | head -n 1)"
+          if [ -z "$count" ] || [ "$count" -lt 20 ]; then
+            echo "::error::The published binary carries no readable embedded dependency list."
+            exit 1
+          fi
+          if [ "$status" -ne 0 ]; then
+            echo "::error::cargo audit bin reported findings against the published binary."
+            exit 1
+          fi
+
+      - name: Move `latest`
+        env:
+          # OIDC covers `npm publish`. If the registry requires a credential for
+          # dist-tag mutation, an optional granular token is used for this step
+          # alone; absent the secret, the OIDC session is attempted.
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          VERSION: ${{ needs.plan.outputs.version }}
+        run: |
+          set -euo pipefail
+          if [ -n "${NPM_TOKEN:-}" ]; then
+            printf '//registry.npmjs.org/:_authToken=%s\n' "$NPM_TOKEN" >> "${HOME}/.npmrc"
+          fi
+
+          parent=""
+          platforms=()
+          for manifest in dist/npm/*/package.json; do
+            name="$(jq -r '.name' "$manifest")"
+            if [ "$name" = "@yashau/prick" ]; then parent="$name"; else platforms+=("$name"); fi
+          done
+
+          # This is the flip. Everything above it is reversible by doing nothing.
+          for name in "${platforms[@]}"; do
+            npm dist-tag add "${name}@${VERSION}" latest
+          done
+          # Parent last: this single call is what makes the release live.
+          npm dist-tag add "${parent}@${VERSION}" latest
+
+          echo "### Published \`${VERSION}\` to npm as \`latest\`" >> "$GITHUB_STEP_SUMMARY"
+
+  # ---------------------------------------------------------------------------
+  # GitHub release. Created as a draft with every asset attached, undrafted only
+  # once the upload has completed, so the release page is never visible in a
+  # state where a platform is missing.
+  # ---------------------------------------------------------------------------
+  github-release:
+    name: github-release
+    needs: [plan, package, publish-npm]
+    if: ${{ !inputs.dry_run }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: release-assets
+          path: dist
+
+      - name: Create draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.plan.outputs.tag }}
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "release ${TAG} already exists; refreshing assets"
+            gh release upload "$TAG" dist/assets/* dist/prick-sbom.spdx.json --clobber
+          else
+            gh release create "$TAG" \
+              --draft \
+              --title "$TAG" \
+              --generate-notes \
+              --verify-tag \
+              dist/assets/* dist/prick-sbom.spdx.json
+          fi
+
+      - name: Undraft
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.plan.outputs.tag }}
+          SERVER_URL: ${{ github.server_url }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          gh release edit "$TAG" --draft=false --latest
+          echo "### Released [\`${TAG}\`](${SERVER_URL}/${REPO}/releases/tag/${TAG})" >> "$GITHUB_STEP_SUMMARY"

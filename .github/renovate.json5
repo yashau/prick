@@ -1,0 +1,134 @@
+{
+  // Renovate rather than Dependabot for two concrete reasons: it has a `mise`
+  // manager, so the toolchain pins in mise.toml are maintained like any other
+  // dependency, and it understands the pnpm `catalog:` protocol, so a version
+  // pinned once for the whole workspace is bumped in one pull request instead
+  // of one per consumer.
+  $schema: "https://docs.renovatebot.com/renovate-schema.json",
+
+  extends: [
+    "config:recommended",
+    ":semanticCommits",
+    ":semanticCommitTypeAll(chore)",
+    ":dependencyDashboard",
+    // Rewrites every `uses:` to a 40-character commit SHA with the tag kept in
+    // a trailing comment. This is the same invariant `pinact run --check`
+    // enforces in CI; Renovate is what keeps it from rotting.
+    "helpers:pinGitHubActionDigests",
+  ],
+
+  timezone: "UTC",
+  schedule: ["* 0-6 * * 1"],
+  prConcurrentLimit: 6,
+  prHourlyLimit: 0,
+  rebaseWhen: "conflicted",
+
+  // Mirrors `minimumReleaseAge: 4320` in pnpm-workspace.yaml. Essentially every
+  // npm account compromise of the last two years was caught and unpublished
+  // inside 72 hours, so simply waiting is the highest-value control available.
+  // The two must stay in step: a Renovate pull request that pnpm then refuses
+  // to install is worse than no pull request.
+  minimumReleaseAge: "3 days",
+  internalChecksFilter: "strict",
+
+  // Squash-merge means the pull request title is the commit message.
+  commitMessageLowerCase: "auto",
+
+  lockFileMaintenance: {
+    enabled: true,
+    schedule: ["* 0-6 * * 1"],
+  },
+
+  vulnerabilityAlerts: {
+    // A published advisory has already had its cooling-off period. Waiting
+    // three more days to apply the fix is the wrong trade.
+    minimumReleaseAge: null,
+    schedule: ["at any time"],
+    labels: ["security"],
+    prPriority: 10,
+  },
+  osvVulnerabilityAlerts: true,
+
+  packageRules: [
+    {
+      matchManagers: ["github-actions"],
+      groupName: "github actions",
+      semanticCommitType: "ci",
+    },
+
+    {
+      // The toolchain: Rust, the date-pinned nightly, Node, pnpm, and the aqua
+      // tools. Grouped because they are one decision, and separated from
+      // application dependencies because a toolchain bump that breaks CI should
+      // not be tangled up with a library bump that does not.
+      matchManagers: ["mise"],
+      groupName: "toolchain (mise)",
+      semanticCommitType: "build",
+    },
+
+    {
+      // pnpm reads a single version per entry from the workspace catalog, so
+      // one pull request per catalog entry would be one pull request that
+      // touches every package. Group the whole catalog instead.
+      matchFileNames: ["pnpm-workspace.yaml"],
+      groupName: "pnpm catalog",
+    },
+
+    {
+      // The Cloudflare local-runtime stack. `@cloudflare/vitest-pool-workers`
+      // pins its own wrangler and miniflare; bumping vitest or wrangler
+      // independently produces failures inside miniflare that read as
+      // application bugs and cost hours to trace back to a version skew.
+      // These move together or not at all.
+      matchPackageNames: [
+        "wrangler",
+        "miniflare",
+        "vitest",
+        "@cloudflare/**",
+        "@vitest/**",
+        "vite",
+        "vite-plus",
+      ],
+      groupName: "cloudflare and vitest toolchain",
+      // Never let a patch bump of one member slip through on its own.
+      separateMinorPatch: false,
+      separateMajorMinor: false,
+    },
+
+    {
+      matchManagers: ["cargo"],
+      matchUpdateTypes: ["minor", "patch"],
+      groupName: "rust dependencies (non-major)",
+    },
+
+    {
+      // SvelteKit and Svelte move in lockstep with the adapter.
+      matchPackageNames: ["svelte", "@sveltejs/**"],
+      groupName: "svelte",
+    },
+
+    {
+      // Type definitions are noise on their own.
+      matchPackageNames: ["@types/**"],
+      groupName: "type definitions",
+      automerge: false,
+    },
+
+    {
+      // Nothing in a secrets manager gets a major version bump merged without a
+      // human reading the changelog.
+      matchUpdateTypes: ["major"],
+      dependencyDashboardApproval: true,
+      labels: ["major-update"],
+    },
+  ],
+
+  // shadcn-svelte components are vendored into the tree from the registry on
+  // purpose -- they are source, and edited. Renovate must not treat their
+  // upstream as a dependency.
+  ignorePaths: [
+    "**/node_modules/**",
+    "**/dist/**",
+    "packages/app/src/lib/components/ui/**",
+  ],
+}

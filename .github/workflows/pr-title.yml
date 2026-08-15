@@ -1,0 +1,68 @@
+name: PR title
+
+# This repository squash-merges, which means the pull request title becomes the
+# commit message on main verbatim. It is not a cosmetic check: the title is the
+# permanent record, and release notes are generated from it.
+#
+# Uses `pull_request` rather than `pull_request_target`. The title arrives in
+# the event payload, so no elevated token and no checkout of head code is
+# needed; a read-only token from a fork is sufficient.
+
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr-title-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: lint
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      pull-requests: read
+    steps:
+      - uses: amannn/action-semantic-pull-request@v6
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        with:
+          types: |
+            feat
+            fix
+            perf
+            refactor
+            docs
+            test
+            build
+            ci
+            chore
+            revert
+          scopes: |
+            cli
+            core
+            api
+            auth
+            exec
+            worker
+            ui
+            schema
+            crypto
+            ci
+            deps
+            docs
+          requireScope: false
+          # Conventional Commits subjects are lower case and have no trailing
+          # period, so that the generated changelog reads consistently.
+          subjectPattern: ^(?![A-Z])(?!.*\.$).+$
+          subjectPatternError: |
+            The subject "{subject}" of pull request "{title}" is invalid.
+            It must start with a lower-case character and must not end with a period.
+          # GitHub offers a single commit's message in place of the title when
+          # squashing a one-commit pull request, and it is easy to accept that
+          # by accident. Validate both.
+          validateSingleCommit: true

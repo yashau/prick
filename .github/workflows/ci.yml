@@ -1,0 +1,424 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Least privilege by default. Individual jobs widen this only where they must.
+permissions:
+  contents: read
+
+# Cancel superseded runs on a pull request, never on main: a main run feeds the
+# cache that every PR reads from, and a cancelled main run leaves it stale.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+env:
+  # Incremental artefacts are large, never reused across CI runs, and poison the
+  # cache with several hundred MB of dead weight.
+  CARGO_INCREMENTAL: "0"
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: "1"
+  # Version computation, audit timestamps and date-sensitive tests are all UTC.
+  # A runner defaulting to anything else would make them disagree with release.
+  TZ: UTC
+
+# Windows runners default to PowerShell. Pinning bash everywhere means a step
+# body behaves identically on all three operating systems.
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Which halves of the repository were touched. Everything downstream except
+  # `workflows` is gated on this, and every gated job is therefore allowed to
+  # report "skipped" -- see the `ci-ok` job for why that is safe.
+  # ---------------------------------------------------------------------------
+  changes:
+    name: changes
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      rust: ${{ steps.filter.outputs.rust }}
+      core: ${{ steps.filter.outputs.core }}
+      js: ${{ steps.filter.outputs.js }}
+      e2e: ${{ steps.filter.outputs.e2e }}
+      version: ${{ steps.filter.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - id: filter
+        uses: dorny/paths-filter@v4
+        with:
+          # Parsed as YAML by the action, so anchors work and nested lists are
+          # flattened. `common` is spliced into everything: a toolchain or CI
+          # change must re-run the whole graph.
+          filters: |
+            common: &common
+              - '.github/workflows/ci.yml'
+              - 'mise.toml'
+              - 'mise.lock'
+            rust: &rust
+              - *common
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - 'clippy.toml'
+              - 'rustfmt.toml'
+              - 'rust-toolchain.toml'
+              - 'deny.toml'
+              - '.cargo/**'
+              - '.config/**'
+              - 'crates/**'
+              - 'xtask/**'
+            # Deliberately NOT *rust. miri only ever runs against prick-core,
+            # so widening this to the whole workspace would pay 45 minutes of
+            # interpretation for a change miri cannot even observe.
+            core:
+              - *common
+              - 'Cargo.lock'
+              - 'rust-toolchain.toml'
+              - 'crates/prick-core/**'
+            js: &js
+              - *common
+              - 'package.json'
+              - 'pnpm-lock.yaml'
+              - 'pnpm-workspace.yaml'
+              - 'packages/**'
+            e2e:
+              - *js
+              - 'e2e/**'
+              - 'playwright.config.*'
+            version:
+              - *common
+              - 'scripts/**'
+              - 'Cargo.toml'
+              - 'package.json'
+              - 'packages/**/package.json'
+
+  # ---------------------------------------------------------------------------
+  # Rust
+  # ---------------------------------------------------------------------------
+  rust-fmt:
+    name: rust-fmt
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: jdx/mise-action@v4
+      - run: mise run fmt:check:rust
+
+  rust-lint:
+    name: rust-lint
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: jdx/mise-action@v4
+      - uses: Swatinem/rust-cache@v2
+        with:
+          # clippy and rustc emit different artefact sets for the same crate;
+          # sharing one key between them means each run evicts the other's.
+          shared-key: clippy
+          # Only main writes the cache. Otherwise 40 concurrent PRs race to
+          # overwrite each other and nobody gets a hit.
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - run: mise run lint:rust
+
+  rust-test:
+    name: rust-test (${{ matrix.os }})
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15, windows-2025]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: jdx/mise-action@v4
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: test-${{ matrix.os }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - run: mise run test:rust
+      # Doc tests are platform independent; running them three times buys
+      # nothing but minutes.
+      - if: matrix.os == 'ubuntu-24.04'
+        run: mise run test:doc
+
+  rust-deny:
+    name: rust-deny
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: jdx/mise-action@v4
+      # No rust-cache: cargo-deny reads Cargo.lock and never touches target/.
+      - run: mise run deny
+
+  rust-miri:
+    name: rust-miri
+    needs: changes
+    # Gated on prick-core alone. miri cannot execute network I/O, Command/exec
+    # or FFI, so the only crate it can run against is the pure one -- which is
+    # exactly the point: a green run is a machine-checked proof that prick-core
+    # is still pure, not a search for undefined behaviour.
+    if: needs.changes.outputs.core == 'true'
+    runs-on: ubuntu-24.04
+    # miri interprets rather than executes; 10-100x native is normal and a
+    # runaway test would otherwise sit on a runner for six hours.
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: jdx/mise-action@v4
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: miri
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - run: mise run miri
+
+  # ---------------------------------------------------------------------------
+  # JavaScript / TypeScript / Svelte
+  # ---------------------------------------------------------------------------
+  js-check:
+    name: js-check
+    needs: changes
+    if: needs.changes.outputs.js == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: jdx/mise-action@v4
+
+      # Node and pnpm come from mise, so setup-node's built-in cache is not
+      # available to us -- it keys off its own installation. Cache the pnpm
+      # content-addressable store directly instead.
+      - id: pnpm-store
+        run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/cache@v6
+        with:
+          path: ${{ steps.pnpm-store.outputs.path }}
+          key: pnpm-store-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            pnpm-store-${{ runner.os }}-
+
+      - run: pnpm install --frozen-lockfile
+
+      # Every one of these is a mise task, never a direct tool invocation. That
+      # indirection is what lets the JS toolchain be repointed underneath CI
+      # without touching this file.
+      - run: mise run typecheck
+      - run: mise run lint:js
+      - run: mise run lint:svelte
+      - run: mise run fmt:check:js
+      - run: mise run test:js
+      - run: mise run build:js
+
+  # ---------------------------------------------------------------------------
+  # End-to-end
+  # ---------------------------------------------------------------------------
+  e2e:
+    name: e2e
+    needs: [changes, js-check]
+    if: needs.changes.outputs.e2e == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: jdx/mise-action@v4
+
+      - id: pnpm-store
+        run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/cache@v6
+        with:
+          path: ${{ steps.pnpm-store.outputs.path }}
+          key: pnpm-store-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            pnpm-store-${{ runner.os }}-
+
+      - run: pnpm install --frozen-lockfile
+
+      # Browser binaries are ~400 MB and live outside the pnpm store, so they
+      # need their own entry. The lockfile hash is the right key: it is what
+      # pins the Playwright version that decides which revisions to download.
+      - id: playwright-cache
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+
+      - if: steps.playwright-cache.outputs.cache-hit != 'true'
+        run: mise run e2e:install
+
+      # Even on a cache hit, the host dependencies (fonts, codecs) live in
+      # /usr/lib rather than the cached browser directory, so they are never
+      # restored and must be installed every time.
+      - if: steps.playwright-cache.outputs.cache-hit == 'true'
+        run: pnpm --dir e2e exec playwright install-deps
+
+      - run: mise run e2e
+
+      - if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: playwright-report
+          path: |
+            e2e/playwright-report/
+            e2e/test-results/
+          retention-days: 7
+          if-no-files-found: ignore
+
+  # ---------------------------------------------------------------------------
+  # Repository-wide checks.
+  #
+  # Deliberately NOT gated on paths-filter. The upstream-reference grep is a
+  # project rule that must hold for every commit, and gating it on `.github/**`
+  # would mean a pull request touching only crates/ never runs it.
+  # ---------------------------------------------------------------------------
+  workflows:
+    name: workflows
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: jdx/mise-action@v4
+
+      - name: Lint workflows
+        run: mise run lint:actions
+
+      - name: Audit workflows
+        run: mise run lint:zizmor
+
+      - name: Actions pinned to digests
+        run: mise run lint:pinact
+
+      - name: Spell check
+        run: mise run lint:typos
+
+      - name: No upstream references
+        run: |
+          set -euo pipefail
+          # The two forbidden literals are reconstructed at run time on purpose.
+          # Writing them out would make this file match its own pattern, and the
+          # rule is absolute: they appear in no file in this repository.
+          w1="$(printf '%s' 'a2V5ZmxhcmU=' | base64 -d)"
+          w2="$(printf '%s' 'a2Zs' | base64 -d)"
+          pattern="${w1}|${w2}[_-]"
+          if grep -R -I -i -n -E \
+            --exclude-dir=.git \
+            --exclude-dir=node_modules \
+            --exclude-dir=target \
+            --exclude-dir=dist \
+            --exclude-dir=.svelte-kit \
+            --exclude-dir=.wrangler \
+            -e "$pattern" . ; then
+            echo "::error::Upstream references are not permitted anywhere in this repository (see .github/PULL_REQUEST_TEMPLATE.md)."
+            exit 1
+          fi
+          echo "Clean: no upstream references found."
+
+  # ---------------------------------------------------------------------------
+  # The version literal must be identical in Cargo.toml, every package.json and
+  # the git tag. There is no second representation, so there is nothing to drift
+  # -- this job is what keeps it that way.
+  # ---------------------------------------------------------------------------
+  version-sync:
+    name: version-sync
+    needs: changes
+    if: needs.changes.outputs.version == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: jdx/mise-action@v4
+      - run: mise run version:check
+
+  # ---------------------------------------------------------------------------
+  # THE ONLY REQUIRED STATUS CHECK.
+  #
+  # This is not a convenience aggregator, it is mandatory. Branch protection
+  # matches required checks by name; a job that never runs never reports, and a
+  # required check that is "skipped" blocks the pull request permanently. Since
+  # every job above is gated on paths-filter, requiring any of them directly
+  # would wedge every pull request that does not touch that path.
+  #
+  # So: require `ci-ok` and nothing else. It always runs, and it distinguishes
+  # "did not need to run" from "ran and failed".
+  # ---------------------------------------------------------------------------
+  ci-ok:
+    name: ci-ok
+    if: always()
+    needs:
+      - changes
+      - rust-fmt
+      - rust-lint
+      - rust-test
+      - rust-deny
+      - rust-miri
+      - js-check
+      - e2e
+      - workflows
+      - version-sync
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Check dependency results
+        env:
+          # Passed through the environment rather than interpolated into the
+          # script body, so no job output can be spliced into the shell.
+          NEEDS_JSON: ${{ toJSON(needs) }}
+        run: |
+          set -euo pipefail
+          printf '%s\n' "$NEEDS_JSON"
+          blocking="$(
+            printf '%s' "$NEEDS_JSON" \
+              | jq -r 'to_entries
+                       | map(select(.value.result != "success" and .value.result != "skipped"))
+                       | .[]
+                       | "  \(.key): \(.value.result)"'
+          )"
+          if [ -n "$blocking" ]; then
+            echo "::error::One or more required jobs did not pass:"
+            printf '%s\n' "$blocking"
+            exit 1
+          fi
+          echo "All jobs succeeded or were skipped."

@@ -1,0 +1,23 @@
+# Every path, one owner. Review is required on everything; the entries below
+# exist to make that explicit rather than to route to different people.
+*                       @yashau
+
+# Called out separately because a change here changes what "CI passed" means.
+# Only `ci-ok` is a required status check, so a job silently removed from its
+# `needs:` list stops blocking merges without any check disappearing from the
+# pull request.
+/.github/               @yashau
+/lefthook.yml           @yashau
+/mise.toml              @yashau
+
+# Supply chain. `[sources]` in deny.toml is what makes a git dependency
+# structurally unable to reach a release binary; pnpm-workspace.yaml carries the
+# npm-side policy, which pnpm 11 reads from nowhere else.
+/deny.toml              @yashau
+/pnpm-workspace.yaml    @yashau
+/Cargo.lock             @yashau
+/pnpm-lock.yaml         @yashau
+
+# Cryptography and authorization. A defect here is not a bug, it is a breach.
+/crates/prick-core/     @yashau
+/packages/app/src/lib/server/core/  @yashau

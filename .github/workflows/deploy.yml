@@ -1,0 +1,234 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+
+# Production deploys serialise and are never cancelled: interrupting one between
+# `d1 migrations apply` and `deploy` leaves the schema ahead of the code.
+# Preview deploys for a pull request may freely supersede each other.
+concurrency:
+  group: >-
+    deploy-${{ github.event_name == 'push'
+      && 'production'
+      || format('preview-{0}', github.event.pull_request.number) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  # The D1 binding as declared in packages/app/wrangler.jsonc.
+  D1_DATABASE: prick
+  TZ: UTC
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Deployment guard. Runs for every event including fork pull requests, needs
+  # no secrets, and blocks both deploy jobs.
+  #
+  # A workers.dev hostname that Cloudflare Access is not attached to is a
+  # complete bypass of the authentication model -- the entire application is
+  # reachable without a JWT. Same for preview URLs. These two settings are the
+  # only thing standing between "self-hosted secrets manager" and "public
+  # secrets manager", so they are asserted mechanically before anything is
+  # allowed to reach Cloudflare.
+  # ---------------------------------------------------------------------------
+  guard:
+    name: guard
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Assert workers.dev and preview URLs are disabled
+        run: |
+          set -euo pipefail
+          config=""
+          for candidate in packages/app/wrangler.jsonc packages/app/wrangler.json packages/app/wrangler.toml; do
+            if [ -f "$candidate" ]; then
+              config="$candidate"
+              break
+            fi
+          done
+          if [ -z "$config" ]; then
+            echo "::error::No wrangler configuration found under packages/app/."
+            exit 1
+          fi
+          echo "checking ${config}"
+
+          fail=0
+          for key in workers_dev preview_urls; do
+            if ! grep -Eq "\"?${key}\"?[[:space:]]*[:=][[:space:]]*false" "$config"; then
+              echo "::error file=${config}::${key} must be explicitly set to false. Leaving it unset exposes a hostname that Cloudflare Access does not protect, which bypasses authentication entirely."
+              fail=1
+            fi
+          done
+          [ "$fail" -eq 0 ]
+          echo "Deployment guard passed."
+
+  # ---------------------------------------------------------------------------
+  # Preview: same-repository pull requests only.
+  #
+  # This uses `pull_request`, NOT `pull_request_target`. `pull_request_target`
+  # runs in the context of the base repository with full access to secrets while
+  # checking out attacker-controlled code -- the exact shape of the March 2026
+  # trivy-action incident. zizmor flags it, and there is no version of it that
+  # is safe here.
+  #
+  # The same-repository condition means fork pull requests skip this job rather
+  # than failing on a missing secret.
+  # ---------------------------------------------------------------------------
+  preview:
+    name: preview
+    needs: guard
+    if: >-
+      github.event_name == 'pull_request'
+      && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    environment:
+      name: preview
+      url: ${{ steps.deploy.outputs.deployment-url }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: jdx/mise-action@v4 # zizmor: ignore[cache-poisoning]
+        with:
+          # Read-only: this workflow holds deploy credentials and must never
+          # write an entry that a later privileged run would consume.
+          cache_save: false
+
+      - id: pnpm-store
+        run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/cache/restore@v6
+        with:
+          path: ${{ steps.pnpm-store.outputs.path }}
+          key: pnpm-store-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            pnpm-store-${{ runner.os }}-
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: mise run build:js
+
+      # Migrations run BEFORE the deploy, and are additive-only by convention
+      # (expand/contract: release N adds nullable and backfills, N+1 tightens,
+      # N+2 drops). Because a preview version shares the production database,
+      # this ordering is what makes "old code, new schema" the only state that
+      # ever exists in the window between the two steps.
+      - name: Apply D1 migrations
+        uses: cloudflare/wrangler-action@v4
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: packages/app
+          packageManager: pnpm
+          command: d1 migrations apply ${{ env.D1_DATABASE }} --remote
+
+      # `versions upload` publishes a version without shifting any production
+      # traffic to it; the preview alias is the only way to reach it.
+      - name: Upload preview version
+        id: deploy
+        uses: cloudflare/wrangler-action@v4
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: packages/app
+          packageManager: pnpm
+          command: versions upload --preview-alias pr-${{ github.event.pull_request.number }}
+
+      - name: Summary
+        env:
+          # Through the environment, never interpolated into the script body:
+          # DEPLOY_URL is an action output and so is not ours to trust.
+          ALIAS: pr-${{ github.event.pull_request.number }}
+          DEPLOY_URL: ${{ steps.deploy.outputs.deployment-url }}
+        run: |
+          {
+            echo "### Preview deployed"
+            echo
+            echo "- alias: \`${ALIAS}\`"
+            echo "- url: ${DEPLOY_URL}"
+            echo
+            echo "The preview is behind Cloudflare Access, like production."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ---------------------------------------------------------------------------
+  # Production: push to main.
+  # ---------------------------------------------------------------------------
+  production:
+    name: production
+    needs: guard
+    if: github.event_name == 'push'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    environment:
+      name: production
+      url: ${{ steps.deploy.outputs.deployment-url }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: jdx/mise-action@v4 # zizmor: ignore[cache-poisoning]
+        with:
+          # Read-only: this workflow holds deploy credentials and must never
+          # write an entry that a later privileged run would consume.
+          cache_save: false
+
+      - id: pnpm-store
+        run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/cache/restore@v6
+        with:
+          path: ${{ steps.pnpm-store.outputs.path }}
+          key: pnpm-store-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            pnpm-store-${{ runner.os }}-
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: mise run build:js
+
+      - name: Apply D1 migrations
+        uses: cloudflare/wrangler-action@v4
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: packages/app
+          packageManager: pnpm
+          command: d1 migrations apply ${{ env.D1_DATABASE }} --remote
+
+      - name: Deploy
+        id: deploy
+        uses: cloudflare/wrangler-action@v4
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: packages/app
+          packageManager: pnpm
+          command: deploy
+
+      - name: Summary
+        env:
+          COMMIT: ${{ github.sha }}
+          DEPLOY_URL: ${{ steps.deploy.outputs.deployment-url }}
+        run: |
+          {
+            echo "### Production deployed"
+            echo
+            echo "- commit: \`${COMMIT}\`"
+            echo "- url: ${DEPLOY_URL}"
+          } >> "$GITHUB_STEP_SUMMARY"

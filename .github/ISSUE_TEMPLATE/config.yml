@@ -1,0 +1,17 @@
+# Blank issues are disabled so that a security report cannot be filed as an
+# untemplated public issue by someone who simply clicked past the chooser.
+blank_issues_enabled: false
+
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/yashau/prick/security/advisories/new
+    about: >
+      Private disclosure, never a public issue. This is a secrets manager: a
+      public report is a live exploit notice for every deployment that has not
+      patched yet.
+
+  - name: Ask a question or discuss an idea
+    url: https://github.com/yashau/prick/discussions
+    about: >
+      For usage questions, deployment help and half-formed ideas. Bug reports
+      and concrete proposals belong in issues.

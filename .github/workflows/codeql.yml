@@ -1,0 +1,63 @@
+name: CodeQL
+
+# Deliberately a separate workflow, and deliberately NOT part of the `ci-ok`
+# gate. CodeQL's value is a triaged queue of findings in the Security tab, not a
+# red X on a pull request: it is slower than the rest of CI, its rule set moves
+# without us changing anything, and a false positive that blocks merges gets
+# switched off within a week. Alerts are reviewed; they do not block.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Weekly, so a newly published rule reaches a quiet main rather than
+    # surprising whoever opens the next pull request.
+    - cron: "17 4 * * 1"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: codeql-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  analyze:
+    name: analyze (${{ matrix.language }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      security-events: write
+      # Required for CodeQL to read workflow run metadata on private repos.
+      actions: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # `actions` analyses the workflows in this directory: injection into
+          # `run:` bodies, unpinned third-party actions, over-broad permissions.
+          - language: actions
+          - language: javascript-typescript
+          - language: rust
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v4
+        with:
+          languages: ${{ matrix.language }}
+          # No build is performed for any of the three. Rust supports only
+          # `none`; for the other two it avoids installing a toolchain and
+          # running arbitrary build scripts purely to satisfy the extractor.
+          build-mode: none
+          queries: security-and-quality
+
+      - name: Analyze
+        uses: github/codeql-action/analyze@v4
+        with:
+          category: /language:${{ matrix.language }}

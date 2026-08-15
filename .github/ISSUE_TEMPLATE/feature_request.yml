@@ -1,0 +1,71 @@
+name: Feature request
+description: Propose a capability that does not exist yet.
+labels: ["enhancement", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Proposals that describe a concrete problem get built. Proposals that
+        describe a solution in the abstract usually do not, because there is no
+        way to tell whether the solution actually addresses anything.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem are you trying to solve?
+      description: >
+        What are you doing today instead, and what does it cost you?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What would you like to happen?
+      description: >
+        For CLI changes, write the command line you wish existed and the output
+        you wish it produced.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Which part of the system?
+      options:
+        - CLI (prk)
+        - Web UI
+        - API / Worker
+        - Authentication and authorization
+        - Encryption and key management
+        - Audit
+        - Documentation
+        - Packaging and distribution
+        - Not sure
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: What alternatives have you considered?
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: constraints
+    attributes:
+      label: Constraints you have checked
+      description: >
+        These are settled design decisions rather than open questions. A
+        proposal that requires reversing one is not necessarily rejected, but it
+        needs to argue the case explicitly.
+      options:
+        - label: >
+            This does not require the CLI to call the Cloudflare API or to bundle
+            a deployment tool.
+        - label: >
+            This does not require secret values to be rendered on the server or
+            to appear in a server-rendered page payload.
+        - label: >
+            This does not require a second representation of the version number.

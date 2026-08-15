@@ -1,0 +1,81 @@
+# Git hooks.
+#
+# Two rules govern everything in this file.
+#
+# 1. pre-commit is for fast checks only. A hook that takes forty seconds is a
+#    hook that gets `--no-verify`'d, and once that habit forms every check in it
+#    is dead -- including the ones that were cheap. So pre-commit runs
+#    formatters and single-pass linters over STAGED FILES ONLY, and anything
+#    that compiles the workspace goes in pre-push.
+#
+# 2. Every job body is one executable with arguments. No pipes, no `&&`, no
+#    `$(...)`, no globs, no `if`. lefthook hands the string to the platform
+#    shell, which on this repository's primary development machine is Windows:
+#    a body that works in Git Bash and fails in PowerShell is a body that works
+#    for exactly one contributor. Anything needing branching belongs in a mise
+#    task or a script under scripts/.
+#
+# Bypass with `git commit --no-verify` when you must. CI re-runs all of it, so
+# bypassing costs you a round trip rather than letting something through.
+
+assert_lefthook_installed: true
+colors: true
+
+pre-commit:
+  parallel: true
+  jobs:
+    # Formatters run first conceptually, and re-stage what they rewrite, so the
+    # commit contains the formatted bytes rather than failing and making you run
+    # the formatter yourself.
+    - name: rustfmt
+      glob: "*.rs"
+      # --edition is passed explicitly: rustfmt invoked directly does not read
+      # the edition from Cargo.toml the way `cargo fmt` does, and 2015-mode
+      # formatting of 2024 code is silently wrong rather than an error.
+      run: rustfmt --edition 2024 {staged_files}
+      stage_fixed: true
+
+    - name: fmt-js
+      glob: "*.{js,mjs,cjs,ts,mts,cts,jsx,tsx,svelte,json,jsonc,json5,css,md,yml,yaml,html}"
+      run: vp fmt {staged_files}
+      stage_fixed: true
+
+    - name: lint-js
+      glob: "*.{js,mjs,cjs,ts,mts,cts,jsx,tsx,svelte}"
+      run: vp lint {staged_files}
+
+    - name: typos
+      run: typos {staged_files}
+
+    # Workflow files are the one thing in this repository with no local test:
+    # a syntax error is discovered by pushing it. Both of these are sub-second.
+    - name: actionlint
+      glob: ".github/workflows/*.{yml,yaml}"
+      run: actionlint {staged_files}
+
+    - name: zizmor
+      glob: ".github/workflows/*.{yml,yaml}"
+      run: zizmor --no-progress --persona=regular {staged_files}
+
+    # The version literal must be identical in Cargo.toml, every package.json
+    # and the git tag. Cheap to check, tedious to discover during a release.
+    - name: version-drift
+      glob: "{Cargo.toml,**/package.json,scripts/version.mjs}"
+      run: mise run version:check
+
+pre-push:
+  parallel: true
+  jobs:
+    # Everything here compiles or executes the workspace, which is why none of
+    # it is in pre-commit. Pushing is already a moment you wait for.
+    - name: clippy
+      run: mise run lint:rust
+
+    - name: test-rust
+      run: mise run test:rust
+
+    - name: typecheck
+      run: mise run typecheck
+
+    - name: test-js
+      run: mise run test:js
