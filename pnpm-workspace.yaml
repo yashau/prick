@@ -11,6 +11,7 @@
 
 packages:
   - packages/app
+  - packages/docs
   - packages/shared
   - packages/npm/prick
   - e2e

@@ -1,0 +1,44 @@
+# Local development secrets for the app Worker.
+#
+# Copy to `.dev.vars` (gitignored) and fill in. Wrangler loads `.dev.vars` from
+# this directory automatically; `mise.toml` additionally loads a repo-root
+# `.dev.vars` if you prefer to keep one file for the whole workspace.
+#
+# NOTHING HERE IS A REAL SECRET. Do not paste production values into this file.
+
+# --- Encryption -------------------------------------------------------------
+# Base64 of exactly 32 random bytes. Generate with:
+#   openssl rand -base64 32
+#
+# This key is the whole ballgame: a D1 export without it is just ciphertext,
+# and losing it makes every stored secret unrecoverable. In production it is a
+# Worker secret (`wrangler secret put MASTER_KEY`), never a var.
+MASTER_KEY="ZGV2ZWxvcG1lbnQtb25seS1rZXktbm90LWZvci1wcm9kIQ=="
+
+# Retired keys, comma-separated, kept decryptable during a rotation. Leave
+# empty unless you are mid-rotation. Do not remove a retired key until zero
+# rows still reference it -- the settings screen reports when that is true.
+# MASTER_KEY_OLD=""
+
+# --- Cloudflare Access ------------------------------------------------------
+# In production these are `vars` in wrangler.jsonc. Locally they let the test
+# harness mint tokens the Worker will accept.
+#
+# ACCESS_TEAM is your Zero Trust team name, so that the certs endpoint is
+#   https://<team>.cloudflareaccess.com/cdn-cgi/access/certs
+# ACCESS_AUD is the Application Audience tag of the Access application, found
+#   under Zero Trust > Access controls > Applications > your app > Overview.
+ACCESS_TEAM="example-team"
+ACCESS_AUD="0000000000000000000000000000000000000000000000000000000000000000"
+
+# Override the JWKS endpoint. Used by tests to point at a local mock origin;
+# leave unset in normal development so the real endpoint is derived from
+# ACCESS_TEAM.
+# ACCESS_CERTS_URL=""
+
+# --- Bootstrap --------------------------------------------------------------
+# Comma-separated emails (and/or Access service-token common names) treated as
+# global admins, evaluated live. This is the break-glass path: it anchors
+# bootstrap to whoever can deploy, who can already read MASTER_KEY anyway.
+# Empty it once a real grant exists.
+BOOTSTRAP_ADMINS="you@example.com"

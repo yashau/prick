@@ -1,0 +1,25 @@
+{
+  "name": "@prick/docs",
+  "version": "0.0.0-dev",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "astro dev",
+    "build": "astro build",
+    "preview": "wrangler dev",
+    "typecheck": "astro check",
+    "deploy:dry-run": "wrangler deploy --dry-run"
+  },
+  "dependencies": {
+    "@astrojs/starlight": "^0.41.7",
+    "astro": "^7.2.1"
+  },
+  "devDependencies": {
+    "@astrojs/check": "^0.9.10",
+    "typescript": "catalog:",
+    "wrangler": "catalog:"
+  },
+  "engines": {
+    "node": ">=26"
+  }
+}

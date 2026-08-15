@@ -1,0 +1,5 @@
+# Astro build output. The root .gitignore's `/dist/` rule is anchored to the
+# repository root, so it does not cover this one.
+dist/
+.astro/
+.wrangler/

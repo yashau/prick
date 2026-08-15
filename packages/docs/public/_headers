@@ -1,0 +1,87 @@
+# =============================================================================
+# Response headers for the docs site.
+#
+# Everything here is served DIRECTLY by the Workers assets runtime -- there is
+# no Worker script in this project at all -- so this file is the only place
+# response headers can come from.
+#
+# Files in `public/` are copied verbatim into `dist/`, and `dist/` is the assets
+# directory, so this lands at the root of the deployed site where the assets
+# runtime looks for it.
+#
+# RELATIONSHIP TO packages/app/_headers: that file protects an
+# Access-authenticated application holding decrypted secrets. This one protects
+# a public site whose entire content is already readable on GitHub. They are
+# intentionally different documents and neither should be edited to match the
+# other.
+# =============================================================================
+
+/*
+  # Never let a browser guess a type. A .md or .pf_fragment served as
+  # text/html would be the cheapest possible stored XSS on a docs site.
+  X-Content-Type-Options: nosniff
+
+  # Clickjacking. Both this and the CSP `frame-ancestors` below are present
+  # because they are enforced by different browser generations.
+  X-Frame-Options: DENY
+
+  # Origin cross-site, full URL same-origin. Documentation URLs are not
+  # sensitive, and stripping the referrer entirely would make it impossible for
+  # the projects we link out to to see that the traffic came from here.
+  Referrer-Policy: strict-origin-when-cross-origin
+
+  # Served only over HTTPS.
+  Strict-Transport-Security: max-age=63072000; includeSubDomains; preload
+
+  # No hardware, no autoplay, no ad-tech.
+  Permissions-Policy: accelerometer=(), autoplay=(), browsing-topics=(), camera=(), display-capture=(), geolocation=(), gyroscope=(), interest-cohort=(), magnetometer=(), microphone=(), midi=(), payment=(), publickey-credentials-get=(), screen-wake-lock=(), serial=(), usb=(), xr-spatial-tracking=()
+
+  # ---------------------------------------------------------------------------
+  # Content-Security-Policy.
+  #
+  # `default-src 'none'` is the base: anything not named below is refused. Every
+  # directive that follows was derived from what the BUILT site actually loads,
+  # not from a template:
+  #
+  #   script-src   'self'              Astro's bundles and /pagefind/pagefind.js
+  #                'unsafe-inline'     see the note below
+  #                'wasm-unsafe-eval'  Pagefind compiles a WebAssembly index
+  #                                    (dist/pagefind/wasm.*.pagefind)
+  #   style-src    'self' 'unsafe-inline'
+  #                                    ~300 inline style attributes per page
+  #                                    from Starlight components and Expressive
+  #                                    Code; see astro.config.ts
+  #   worker-src   'self'              Pagefind runs its search in
+  #                                    /pagefind/pagefind-worker.js. It builds
+  #                                    the Worker from a same-origin URL, never
+  #                                    a blob:, so blob: is not granted.
+  #   connect-src  'self'              Pagefind fetches its index shards and
+  #                                    result fragments
+  #   img-src      'self' data:        data: covers small assets Astro inlines
+  #   font-src     'self'              the build currently ships no webfonts;
+  #                                    'self' keeps a future one working without
+  #                                    reopening this file
+  #
+  # ON 'unsafe-inline' FOR SCRIPTS -- a deliberate, bounded decision:
+  # Starlight runs a handful of inline scripts before paint (restoring the
+  # dark/light choice and the sidebar scroll position) precisely so the page
+  # does not flash. Their hashes differ per page, and this file serves one
+  # static header set for every path, so per-page hashes cannot be expressed
+  # here. Astro can emit them as a <meta> policy instead -- and that path was
+  # tried and rejected because the same mechanism breaks every inline style
+  # attribute on the site (the reasoning is recorded in astro.config.ts).
+  #
+  # What that concession costs is bounded by what this site is: no
+  # authentication, no cookies, no session, no user-supplied content, no
+  # writeable endpoint, and no cross-origin read worth stealing. Every byte
+  # served is already public in the repository. An injected inline script would
+  # need a way in first, and there is no input to inject through.
+  #
+  # `object-src`, `base-uri` and `form-action` are still nailed shut, because
+  # those are the directives that turn a hypothetical injection into a real
+  # one: `base-uri` stops an injected <base> silently repointing every relative
+  # URL on the page, and `form-action` stops anything exfiltrating to another
+  # origin. This site has no forms at all -- the search box is entirely
+  # client-side.
+  # ---------------------------------------------------------------------------
+  Content-Security-Policy: default-src 'none'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; worker-src 'self'; manifest-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; object-src 'none'

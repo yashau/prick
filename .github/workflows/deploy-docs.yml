@@ -1,0 +1,117 @@
+name: Deploy docs
+
+# The documentation site is a SEPARATE Cloudflare Worker from the application,
+# so it gets a separate workflow. Keeping them apart means a typo in a Markdown
+# file cannot trigger a production deploy of the secrets manager, and a schema
+# migration cannot be blocked behind a docs build.
+on:
+  push:
+    branches: [main]
+    paths:
+      # The content ...
+      - 'docs/**'
+      # ... the renderer ...
+      - 'packages/docs/**'
+      # ... and this workflow itself, so a change to the deploy steps is
+      # exercised on the commit that makes it rather than on some later,
+      # unrelated docs edit.
+      - '.github/workflows/deploy-docs.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Docs deploys serialise but are never cancelled. There is no migration step to
+# be interrupted here, but `wrangler deploy` uploads the asset manifest and then
+# the assets themselves; killing a run between the two publishes a version whose
+# manifest references assets that were never uploaded.
+concurrency:
+  group: deploy-docs
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  deploy:
+    name: deploy
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment:
+      name: docs
+      url: ${{ steps.deploy.outputs.deployment-url }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: jdx/mise-action@3c2e0cf82a5b2e5249f0d3635a4d83d0ae861518 # v4.2.5
+        with:
+          # Caching is off in BOTH directions because this workflow holds
+          # Cloudflare deploy credentials.
+          #
+          #   cache_save: false  would only stop us writing an entry that a
+          #                      later privileged run consumes.
+          #   cache: false       also stops us READING one -- which is the
+          #                      actual cache-poisoning path: a lower-privilege
+          #                      workflow writes a malicious entry, and this
+          #                      job restores it and publishes the result.
+          #
+          # A cold toolchain install costs ~30s. Deploys are not hot-path.
+          cache: false
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Build
+        run: pnpm --filter @prick/docs run build
+
+      # Fail loudly if the build produced nothing. `wrangler deploy` on an empty
+      # assets directory succeeds and replaces a working site with a blank one,
+      # so the emptiness has to be caught here rather than discovered by a
+      # reader.
+      - name: Verify build output
+        run: |
+          set -euo pipefail
+          dist=packages/docs/dist
+          if [ ! -f "$dist/index.html" ]; then
+            echo "::error::${dist}/index.html is missing. The docs build produced no home page."
+            exit 1
+          fi
+          pages=$(find "$dist" -name '*.html' | wc -l)
+          echo "built ${pages} HTML page(s)"
+          if [ "$pages" -lt 2 ]; then
+            echo "::error::Only ${pages} HTML page(s) were built. Expected the 404 page plus content from docs/."
+            exit 1
+          fi
+          if [ ! -d "$dist/pagefind" ]; then
+            echo "::error::${dist}/pagefind is missing. Site search would be dead on arrival."
+            exit 1
+          fi
+          echo "pages=${pages}" >> "$GITHUB_ENV"
+
+      - name: Deploy
+        id: deploy
+        uses: cloudflare/wrangler-action@ebbaa1584979971c8614a24965b4405ff95890e0 # v4.0.0
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: packages/docs
+          packageManager: pnpm
+          command: deploy
+
+      - name: Summary
+        env:
+          # Through the environment, never interpolated into the script body:
+          # DEPLOY_URL is an action output and so is not ours to trust.
+          COMMIT: ${{ github.sha }}
+          DEPLOY_URL: ${{ steps.deploy.outputs.deployment-url }}
+          PAGES: ${{ env.pages }}
+        run: |
+          {
+            echo "### Docs deployed"
+            echo
+            echo "- commit: \`${COMMIT}\`"
+            echo "- pages: ${PAGES}"
+            echo "- url: ${DEPLOY_URL}"
+          } >> "$GITHUB_STEP_SUMMARY"

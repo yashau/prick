@@ -1,0 +1,62 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+
+  // A SEPARATE Worker from the application. Different name, different
+  // deployment workflow (.github/workflows/deploy-docs.yml), different
+  // hostname. Nothing here touches D1, MASTER_KEY or Cloudflare Access.
+  "name": "prick-docs",
+  "compatibility_date": "2026-08-01",
+
+  // ===========================================================================
+  // THIS WORKER IS PUBLIC, AND THAT IS CORRECT. DO NOT COPY THE APP'S SETTINGS
+  // HERE, AND DO NOT COPY THESE TO THE APP.
+  //
+  // packages/app/wrangler.jsonc sets `workers_dev: false` and
+  // `preview_urls: false`, and CI greps for both. That is not general hygiene
+  // -- it is specific to that Worker. Cloudflare Access attaches to a
+  // HOSTNAME, not to a Worker, so a *.workers.dev hostname or a per-version
+  // preview URL serves the application with no authentication whatsoever:
+  // every project, every environment, every reveal endpoint, open to the
+  // internet. Those two lines are the whole of what prevents that.
+  //
+  // None of that reasoning applies here. This Worker serves pre-rendered
+  // Markdown that is already public on GitHub. It has no bindings, no secrets,
+  // no database and no authenticated surface, so there is nothing for an
+  // unprotected hostname to expose. A workers.dev URL is a convenience for
+  // checking a build, and preview URLs per pull request are useful for
+  // reviewing documentation changes before they merge.
+  //
+  // Both settings are therefore left at their defaults, ON PURPOSE. If you
+  // arrived here from the app's config intending to make the two match: they
+  // must not match. The asymmetry is the point.
+  // ===========================================================================
+
+  // ---------------------------------------------------------------------------
+  // Static assets, and nothing else.
+  //
+  // There is no `main`. This is an assets-only Worker: the runtime serves
+  // `dist/` directly and no JavaScript of ours ever executes. Consequently
+  // there is also no `binding` -- a binding exists so that Worker code can
+  // fetch an asset, and there is no Worker code here.
+  //
+  // `not_found_handling` points at the 404 page Starlight generates. Left at
+  // its default ("none") a miss would return a bare, unstyled 404 from the
+  // runtime.
+  // ---------------------------------------------------------------------------
+  "assets": {
+    "directory": "./dist",
+    "not_found_handling": "404-page",
+  },
+
+  // The custom hostname. Uncomment and set it before the first real deploy;
+  // until then the deploy lands on the workers.dev subdomain, which for this
+  // Worker is harmless (see above).
+  //
+  // "routes": [
+  //   { "pattern": "docs.prick.dev", "custom_domain": true }
+  // ],
+
+  "observability": {
+    "enabled": true,
+  },
+}
