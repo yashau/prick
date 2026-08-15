@@ -69,8 +69,7 @@ async function ringA(): Promise<Keyring> {
 async function sealed(): Promise<{ keyring: Keyring; envelope: string }> {
   const keyring = await ringA();
   const envelope = await encryptSecretValue({
-    dek: keyring.active.dek,
-    kid: keyring.active.kid,
+    ringKey: keyring.active,
     environmentId: ENV_A,
     key: KEY,
     version: VERSION,
@@ -158,8 +157,7 @@ describe("a sealed secret value", () => {
 
     const seal = (maxBytes: number) =>
       encryptSecretValue({
-        dek: keyring.active.dek,
-        kid: keyring.active.kid,
+        ringKey: keyring.active,
         environmentId: ENV_A,
         key: KEY,
         version: VERSION,
@@ -186,8 +184,7 @@ describe("a sealed secret value", () => {
     const keyring = await ringA();
     const seal = () =>
       encryptSecretValue({
-        dek: keyring.active.dek,
-        kid: keyring.active.kid,
+        ringKey: keyring.active,
         environmentId: ENV_A,
         key: KEY,
         version: VERSION,
@@ -423,8 +420,7 @@ describe("unknown key id", () => {
   it("decrypts a row written under a retired key once that key is in the ring", async () => {
     const retiredRing = await buildKeyring({ active: MASTER_B, retired: [] });
     const envelope = await encryptSecretValue({
-      dek: retiredRing.active.dek,
-      kid: retiredRing.active.kid,
+      ringKey: retiredRing.active,
       environmentId: ENV_A,
       key: KEY,
       version: VERSION,
@@ -461,8 +457,7 @@ describe("unknown key id", () => {
     // finished rekeying yet" would be a window in which transplant works.
     const retiredRing = await buildKeyring({ active: MASTER_B, retired: [] });
     const envelope = await encryptSecretValue({
-      dek: retiredRing.active.dek,
-      kid: retiredRing.active.kid,
+      ringKey: retiredRing.active,
       environmentId: ENV_A,
       key: KEY,
       version: VERSION,
@@ -704,11 +699,13 @@ describe("the v0 legacy format", () => {
     return encodeBase64Url(bytes);
   }
 
-  it("decrypts", async () => {
+  it("is refused unless a caller opts in", async () => {
     const keyring = await ringA();
     const envelope = await legacyEnvelope(keyring, FIXTURE);
 
-    await expect(
+    // The default. A caller that has not thought about the legacy format gets
+    // a refusal, not an unbound ciphertext.
+    await expectRejection(
       decryptSecretValue({
         keyring,
         envelope,
@@ -716,13 +713,10 @@ describe("the v0 legacy format", () => {
         key: KEY,
         version: VERSION,
       }),
-    ).resolves.toBe(FIXTURE);
-  });
+      CryptoFormatError,
+    );
 
-  it("can be refused explicitly", async () => {
-    const keyring = await ringA();
-    const envelope = await legacyEnvelope(keyring, FIXTURE);
-
+    // And explicitly refusing behaves the same as omitting it.
     await expectRejection(
       decryptSecretValue({
         keyring,
@@ -736,13 +730,59 @@ describe("the v0 legacy format", () => {
     );
   });
 
+  it("decrypts for the import path that opts in", async () => {
+    const keyring = await ringA();
+    const envelope = await legacyEnvelope(keyring, FIXTURE);
+
+    await expect(
+      decryptSecretValue({
+        keyring,
+        envelope,
+        environmentId: ENV_A,
+        key: KEY,
+        version: VERSION,
+        allowLegacyV0: true,
+      }),
+    ).resolves.toBe(FIXTURE);
+  });
+
+  it("is opened by a retired key when the active one does not fit", async () => {
+    // v0 carries no kid, so the ring is tried in order. The loop must not stop
+    // at the first failure -- and must still throw if none of them work.
+    const writer = await buildKeyring({ active: MASTER_B, retired: [] });
+    const envelope = await legacyEnvelope(writer, FIXTURE);
+    const reader = await buildKeyring({ active: MASTER_A, retired: [MASTER_B] });
+
+    await expect(
+      decryptSecretValue({
+        keyring: reader,
+        envelope,
+        environmentId: ENV_A,
+        key: KEY,
+        version: VERSION,
+        allowLegacyV0: true,
+      }),
+    ).resolves.toBe(FIXTURE);
+
+    await expectRejection(
+      decryptSecretValue({
+        keyring: await buildKeyring({ active: MASTER_A, retired: [] }),
+        envelope,
+        environmentId: ENV_A,
+        key: KEY,
+        version: VERSION,
+        allowLegacyV0: true,
+      }),
+      DecryptFailedError,
+    );
+  });
+
   it("is never emitted by the encrypt path", async () => {
     const keyring = await ringA();
 
     for (let i = 0; i < 24; i += 1) {
       const envelope = await encryptSecretValue({
-        dek: keyring.active.dek,
-        kid: keyring.active.kid,
+        ringKey: keyring.active,
         environmentId: ENV_A,
         key: KEY,
         version: i,
