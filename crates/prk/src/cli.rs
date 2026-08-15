@@ -4,7 +4,11 @@
 //! parses with it, xtask generates shell completions and man pages from it, and
 //! the docs are checked against it. There is no second description to drift.
 
+use std::path::PathBuf;
+
+use clap::builder::TypedValueParser as _;
 use clap::{ArgAction, Args, Parser, Subcommand, ValueEnum};
+use secrecy::SecretString;
 
 use crate::commands;
 
@@ -97,6 +101,54 @@ pub struct GlobalArgs {
     /// Base URL of the prick server.
     #[arg(long, global = true, value_name = "URL", env = "PRK_API_URL")]
     pub api_url: Option<String>,
+
+    /// Access service-token client id, for machine authentication.
+    ///
+    /// Not secret: this is the `common_name` the server records as the caller,
+    /// so it is safe on a command line and in a log. Its secret half is not.
+    ///
+    /// When neither this flag nor `PRK_ACCESS_CLIENT_ID` is set,
+    /// `CF_ACCESS_CLIENT_ID` and `CF_ACCESS_CLIENT_SECRET` are read instead, so
+    /// a pipeline already configured for `cloudflared access` works unchanged.
+    #[arg(long, global = true, value_name = "ID", env = "PRK_ACCESS_CLIENT_ID")]
+    pub access_client_id: Option<String>,
+
+    /// Access service-token client secret. Visible to other processes.
+    ///
+    /// A value passed here appears in `ps` output for every user on the machine
+    /// and is written to your shell history. That is a property of how
+    /// arguments are passed, not of this program, and nothing done here can
+    /// remove it.
+    ///
+    /// Prefer `PRK_ACCESS_CLIENT_SECRET`, or `--access-client-secret-file`, on
+    /// any machine you do not exclusively control.
+    #[arg(
+        long,
+        global = true,
+        value_name = "SECRET",
+        env = "PRK_ACCESS_CLIENT_SECRET",
+        // Without this clap prints the variable's VALUE in --help. On a machine
+        // where the token is configured, `prk --help` would display it.
+        hide_env_values = true,
+        // Wrapped the moment clap produces it. `GlobalArgs` derives `Debug` and
+        // `-vv` renders diagnostics, so a plain `String` here would be one
+        // `{:?}` away from putting a live credential in a log; `SecretString`'s
+        // own `Debug` is the redaction, which makes that a non-event rather
+        // than a rule somebody has to remember.
+        value_parser = clap::builder::StringValueParser::new().map(SecretString::from),
+    )]
+    pub access_client_secret: Option<SecretString>,
+
+    /// Read the Access service-token client secret from FILE, or from stdin if
+    /// FILE is `-`.
+    ///
+    /// One trailing newline is stripped, so a file written by `echo` works. The
+    /// secret never reaches argv this way. Takes precedence over
+    /// `--access-client-secret` and `PRK_ACCESS_CLIENT_SECRET`, and requires
+    /// `--access-client-id` or `PRK_ACCESS_CLIENT_ID` rather than silently
+    /// falling back to the `CF_*` pair.
+    #[arg(long, global = true, value_name = "FILE")]
+    pub access_client_secret_file: Option<PathBuf>,
 
     /// Project to operate on.
     #[arg(short = 'P', long, global = true, value_name = "PROJECT", env = "PRK_PROJECT")]
@@ -204,6 +256,8 @@ mod tests {
             "-y",
             "--api-url",
             "https://prick.example.com",
+            "--access-client-id",
+            "abc.access",
             "--project",
             "billing",
             "--env",
@@ -220,9 +274,66 @@ mod tests {
         assert!(cli.global.no_input);
         assert!(cli.global.yes);
         assert_eq!(cli.global.api_url.as_deref(), Some("https://prick.example.com"));
+        assert_eq!(cli.global.access_client_id.as_deref(), Some("abc.access"));
         assert_eq!(cli.global.project.as_deref(), Some("billing"));
         assert_eq!(cli.global.env.as_deref(), Some("eu:west"));
         assert_eq!(cli.global.timeout, 5);
+    }
+
+    #[test]
+    fn a_client_secret_never_survives_being_formatted() {
+        use secrecy::ExposeSecret;
+
+        let cli =
+            Cli::try_parse_from(["prk", "--access-client-secret", "hunter2", "whoami"]).unwrap();
+
+        assert_eq!(
+            cli.global.access_client_secret.as_ref().map(ExposeSecret::expose_secret),
+            Some("hunter2")
+        );
+
+        // `GlobalArgs` is `Debug`, and `-vv` renders diagnostics. This is the
+        // property that makes that combination safe.
+        let rendered = format!("{:?}", cli.global);
+        assert!(!rendered.contains("hunter2"), "a client secret leaked through Debug: {rendered}");
+    }
+
+    #[test]
+    fn the_client_secret_can_come_from_a_file_or_stdin_instead_of_argv() {
+        let from_file =
+            Cli::try_parse_from(["prk", "--access-client-secret-file", "/run/token", "whoami"])
+                .unwrap();
+        assert_eq!(
+            from_file.global.access_client_secret_file.as_deref(),
+            Some(std::path::Path::new("/run/token"))
+        );
+
+        let from_stdin =
+            Cli::try_parse_from(["prk", "--access-client-secret-file", "-", "whoami"]).unwrap();
+        assert_eq!(
+            from_stdin.global.access_client_secret_file.as_deref(),
+            Some(std::path::Path::new("-"))
+        );
+    }
+
+    #[test]
+    fn the_client_secrets_help_says_that_an_inline_value_is_visible() {
+        // The flag exists because some pipelines have nothing else, but its
+        // cost has to be stated where somebody will read it.
+        let command = Cli::command();
+        let arg = command
+            .get_arguments()
+            .find(|arg| arg.get_id() == "access_client_secret")
+            .expect("--access-client-secret exists");
+
+        let help = arg.get_long_help().map(ToString::to_string).unwrap_or_default();
+        assert!(help.contains("ps"), "{help}");
+        assert!(help.contains("history"), "{help}");
+        assert!(help.contains("--access-client-secret-file"), "{help}");
+
+        // Without this, `prk --help` on a machine where the token is configured
+        // prints the token.
+        assert!(arg.is_hide_env_values_set(), "--help would display the secret's value");
     }
 
     #[test]

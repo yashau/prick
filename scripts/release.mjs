@@ -25,24 +25,27 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { parseArgs } from 'node:util';
 
-import { PARENT_PACKAGE, PLATFORMS } from './npm-package.mjs';
+import { MCP_PACKAGE, PARENT_PACKAGE, PLATFORMS } from './npm-package.mjs';
 import { gitTags, planVersion } from './version.mjs';
 
 /** The workflow this script drives. */
 export const WORKFLOW = 'release.yml';
 
 /**
- * The nine packages a real release publishes, in publish order.
+ * The ten packages a real release publishes, in publish order.
  *
  * The parent is LAST on purpose. Everything publishes under `--tag next`, and
- * `latest` only moves once all nine verify and a real `npm install && prk
+ * `latest` only moves once all ten verify and a real `npm install && prk
  * --version` smoke test passes — parent last, so `latest` never points at a
  * shim whose platform packages are not yet resolvable.
+ *
+ * The MCP server sits between the two groups: nothing depends on it, so its
+ * position is only a matter of keeping the parent's flip the final act.
  *
  * @returns {string[]}
  */
 export function publishedPackages() {
-  return [...PLATFORMS.map((p) => p.name), PARENT_PACKAGE];
+  return [...PLATFORMS.map((p) => p.name), MCP_PACKAGE, PARENT_PACKAGE];
 }
 
 /**
@@ -180,7 +183,7 @@ function cmdPreview({ plan, log }) {
 /** @param {object} ctx */
 function cmdDry({ plan, gh, log }) {
   log(`Dispatching ${WORKFLOW} with dry_run=true (predicted ${plan.tag}).`);
-  log('Builds all 8 platform binaries and stages the 9 npm packages.');
+  log(`Builds all 8 platform binaries and stages the ${publishedPackages().length} npm packages.`);
   log('Publishes nothing, pushes no tag.');
   log('');
   gh(workflowRunArgs(true));

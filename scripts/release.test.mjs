@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import os from 'node:os';
 import test, { describe } from 'node:test';
 
-import { PARENT_PACKAGE, PLATFORMS } from './npm-package.mjs';
+import { MCP_PACKAGE, PARENT_PACKAGE, PLATFORMS } from './npm-package.mjs';
 import {
   WORKFLOW,
   confirmationToken,
@@ -48,16 +48,28 @@ function harness(overrides = {}) {
 }
 
 describe('the published set', () => {
-  test('is nine packages: eight platforms plus the parent', () => {
+  test('is ten packages: eight platforms, the MCP server, and the parent', () => {
     const packages = publishedPackages();
-    assert.equal(packages.length, 9);
-    assert.equal(new Set(packages).size, 9);
-    assert.equal(packages.length, PLATFORMS.length + 1);
+    assert.equal(packages.length, 10);
+    assert.equal(new Set(packages).size, 10);
+    assert.equal(packages.length, PLATFORMS.length + 2);
+    assert.ok(packages.includes(MCP_PACKAGE), 'the MCP server must be published too');
   });
 
   test('puts the parent last, because `latest` moves last', () => {
     assert.equal(publishedPackages().at(-1), PARENT_PACKAGE);
-    assert.equal(publishedPackages().indexOf(PARENT_PACKAGE), 8);
+    assert.equal(publishedPackages().indexOf(PARENT_PACKAGE), 9);
+  });
+
+  test('publishes the MCP server before the parent, and never as a platform', () => {
+    const packages = publishedPackages();
+    assert.ok(packages.indexOf(MCP_PACKAGE) < packages.indexOf(PARENT_PACKAGE));
+    // It is an independent package, not one of the eight binary carriers: a
+    // platform name would put it into the parent's optionalDependencies.
+    assert.equal(
+      PLATFORMS.some((p) => p.name === MCP_PACKAGE),
+      false,
+    );
   });
 });
 
@@ -113,7 +125,7 @@ describe('summaries', () => {
     assert.doesNotMatch(formatPlanSummary(second).join('\n'), /first release today/);
   });
 
-  test('the cut summary names all nine packages before the prompt', () => {
+  test('the cut summary names all ten packages before the prompt', () => {
     const text = formatCutSummary(PLAN).join('\n');
     for (const name of publishedPackages()) assert.ok(text.includes(name), `missing ${name}`);
     assert.match(text, /not undoable/);
@@ -172,7 +184,7 @@ describe('cut', () => {
     }
   });
 
-  test('shows the version and all nine packages before prompting', async () => {
+  test('shows the version and all ten packages before prompting', async () => {
     let shownAtPromptTime = null;
     const h = harness({
       prompt: async () => {

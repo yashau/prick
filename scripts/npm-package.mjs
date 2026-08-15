@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// scripts/npm-package.mjs — render the nine publishable npm packages.
+// scripts/npm-package.mjs — render the ten publishable npm packages.
 //
 //   node scripts/npm-package.mjs --version <v> --bin-dir <dir> --out <dir>
 //
@@ -14,8 +14,15 @@
 //   prick-linux-x64-musl/
 //   prick-win32-arm64-msvc/
 //   prick-win32-x64-msvc/
+//   prick-mcp/                the MCP server, @yashau/prick-mcp
 //
-// Two invariants this script exists to hold:
+// The MCP server is NOT a platform package and deliberately does not appear in
+// the parent's `optionalDependencies`: it is an independent Node program with
+// its own runtime dependencies, and nobody installing the CLI should be made to
+// download an MCP server. It rides the same release only because its version is
+// stamped from the same tag.
+//
+// Three invariants this script exists to hold:
 //
 //   1. The parent has NO `scripts` key. Nothing runs, and nothing downloads, at
 //      install time. `npm install --ignore-scripts` — the flag a careful user of
@@ -23,13 +30,17 @@
 //   2. The parent's optionalDependencies are pinned to the EXACT version, never
 //      a range. A range would let npm pair a shim from one release with a
 //      binary from another.
+//   3. No rendered manifest carries a dependency spec npm cannot resolve. The
+//      workspace manifests use pnpm-only protocols (`workspace:`, `catalog:`)
+//      and we publish with `npm`, which uploads them verbatim rather than
+//      rewriting them the way `pnpm publish` would.
 //
-// The parent is rendered from the checked-in template at packages/npm/prick,
-// so the launcher shim has exactly one source of truth and is never duplicated
-// here.
+// The parent is rendered from the checked-in template at packages/npm/prick and
+// the MCP package from packages/mcp, so neither the launcher shim nor the MCP
+// manifest has a second copy here to drift from.
 //
-// The pure parts (the platform table, both manifest builders, binary lookup)
-// are exported for scripts/npm-package.test.mjs.
+// The pure parts (the platform table, the manifest builders, binary lookup) are
+// exported for scripts/npm-package.test.mjs.
 
 import {
   chmodSync,
@@ -51,8 +62,27 @@ import { assertVersion } from './version.mjs';
 /** The parent package. Its directory name in --out is the unscoped tail. */
 export const PARENT_PACKAGE = '@yashau/prick';
 
+/**
+ * The MCP server package.
+ *
+ * Published by the same pipeline, but structurally unrelated to the CLI: it has
+ * no platform variants, no binary of ours inside it, and no entry in the
+ * parent's optionalDependencies.
+ */
+export const MCP_PACKAGE = '@yashau/prick-mcp';
+
 /** The unscoped binary name. */
 export const BIN_BASENAME = 'prk';
+
+/**
+ * Dependency-spec prefixes pnpm understands and npm does not.
+ *
+ * `pnpm publish` rewrites these into real ranges on the way out; `npm publish`
+ * does not. The release publishes with npm, for the OIDC trusted-publishing
+ * path, so any of these surviving into a rendered manifest would be uploaded
+ * verbatim and be unresolvable for everyone downstream.
+ */
+export const PNPM_ONLY_PROTOCOLS = ['workspace:', 'catalog:', 'catalogs:', 'link:', 'portal:'];
 
 /**
  * Every platform package, in the order they appear in the parent's manifest.
@@ -113,6 +143,12 @@ export const PLATFORMS = [
     cpu: 'x64',
   },
 ];
+
+/**
+ * How many package directories a complete render emits: the eight platform
+ * packages, the MCP server, and the parent.
+ */
+export const PACKAGE_COUNT = PLATFORMS.length + 2;
 
 /**
  * @param {{ os: string }} platform
@@ -211,6 +247,38 @@ export function platformManifest(platform, version, inherit = {}) {
 }
 
 /**
+ * Invariant 3: reject a manifest carrying a spec npm cannot resolve.
+ *
+ * This is a publish-time check rather than a lint, because the workspace
+ * manifests are *supposed* to use `workspace:` and `catalog:` — the mistake
+ * would be letting one reach the registry.
+ *
+ * @param {object} manifest
+ * @param {string} [label] the package name, for the message
+ */
+export function assertPublishableSpecs(manifest, label = manifest?.name ?? '(unnamed)') {
+  const offending = [];
+  for (const field of ['dependencies', 'optionalDependencies', 'peerDependencies']) {
+    for (const [name, spec] of Object.entries(manifest?.[field] ?? {})) {
+      if (typeof spec !== 'string') continue;
+      if (PNPM_ONLY_PROTOCOLS.some((protocol) => spec.startsWith(protocol))) {
+        offending.push(`  ${field}["${name}"]: ${JSON.stringify(spec)}`);
+      }
+    }
+  }
+
+  if (offending.length > 0) {
+    throw new Error(
+      `${label} would be published with dependency specs npm cannot resolve:\n` +
+        `${offending.join('\n')}\n` +
+        'These are pnpm-only protocols. `npm publish` uploads them verbatim. ' +
+        'Move the dependency to devDependencies (which are stripped here) or ' +
+        'give it a real version range.',
+    );
+  }
+}
+
+/**
  * The parent package.json, rendered from the checked-in template.
  *
  * @param {object} template  the parsed packages/npm/prick/package.json
@@ -224,13 +292,45 @@ export function parentManifest(template, version) {
   manifest.version = version;
 
   // Rebuilt from PLATFORMS rather than edited in place, so the published set
-  // can never drift from what this script actually emits.
+  // can never drift from what this script actually emits. The MCP package is
+  // deliberately absent: it is not a platform of the CLI.
   manifest.optionalDependencies = Object.fromEntries(PLATFORMS.map((p) => [p.name, version]));
 
   // Invariant 1. Delete rather than empty: an empty object still shows up in
   // `npm view` as a scripts field and invites someone to add one.
   delete manifest.scripts;
 
+  assertPublishableSpecs(manifest, PARENT_PACKAGE);
+  return manifest;
+}
+
+/**
+ * The MCP server's package.json, rendered from packages/mcp/package.json.
+ *
+ * `devDependencies` are deleted rather than rewritten. They are never installed
+ * downstream, so nothing is lost — and the workspace manifest carries
+ * `@prick/shared: workspace:*` and `typescript: catalog:` there, which npm
+ * would publish verbatim (invariant 3). A published manifest whose specs cannot
+ * resolve is a trap for anybody who reads it, even when nothing installs them.
+ *
+ * `scripts` go for the same reason one level up: every one of them
+ * (`tsc -p tsconfig.build.json`, the test runner) refers to files the package
+ * does not ship, so they can only fail for a consumer who tries one.
+ *
+ * @param {object} template  the parsed packages/mcp/package.json
+ * @param {string} version
+ * @returns {object}
+ */
+export function mcpManifest(template, version) {
+  assertVersion(version);
+
+  const manifest = structuredClone(template);
+  manifest.version = version;
+
+  delete manifest.devDependencies;
+  delete manifest.scripts;
+
+  assertPublishableSpecs(manifest, MCP_PACKAGE);
   return manifest;
 }
 
@@ -271,11 +371,21 @@ function writeJson(file, value) {
  *   outDir: string,
  *   templateDir: string,
  *   root: string,
+ *   mcpDir?: string,
  *   allowMissing: boolean,
  *   log: (s: string) => void,
  * }} options
  */
-export function renderPackages({ version, binDir, outDir, templateDir, root, allowMissing, log }) {
+export function renderPackages({
+  version,
+  binDir,
+  outDir,
+  templateDir,
+  root,
+  mcpDir,
+  allowMissing,
+  log,
+}) {
   assertVersion(version);
 
   const templateManifestPath = path.join(templateDir, 'package.json');
@@ -284,6 +394,18 @@ export function renderPackages({ version, binDir, outDir, templateDir, root, all
   }
   const template = JSON.parse(readFileSync(templateManifestPath, 'utf8'));
   assertTemplateMatchesPlatforms(template);
+
+  const mcpSource = mcpDir ?? path.join(root, 'packages', 'mcp');
+  const mcpManifestPath = path.join(mcpSource, 'package.json');
+  if (!existsSync(mcpManifestPath)) {
+    throw new Error(`MCP package manifest not found at ${mcpManifestPath}`);
+  }
+  const mcpTemplate = JSON.parse(readFileSync(mcpManifestPath, 'utf8'));
+  if (mcpTemplate.name !== MCP_PACKAGE) {
+    throw new Error(
+      `${mcpManifestPath} declares ${JSON.stringify(mcpTemplate.name)}, expected ${MCP_PACKAGE}`,
+    );
+  }
 
   if (!existsSync(binDir)) throw new Error(`--bin-dir does not exist: ${binDir}`);
 
@@ -334,6 +456,49 @@ export function renderPackages({ version, binDir, outDir, templateDir, root, all
     log(`  ${platform.name.padEnd(34)} <- ${path.relative(binDir, source)}`);
   }
 
+  // --- the MCP server ------------------------------------------------------
+  //
+  // Rendered before the parent so that `emitted` is in publish order: the
+  // parent's dist-tag flip is what makes a release live, and it goes last.
+  const mcpDist = path.join(mcpSource, 'dist');
+  if (!existsSync(mcpDist)) {
+    const message =
+      `${MCP_PACKAGE} has not been built: ${mcpDist} does not exist. ` +
+      'Run `mise run build:mcp` first.';
+    if (!allowMissing) throw new Error(message);
+    log(`SKIP  ${MCP_PACKAGE} — not built`);
+  } else {
+    const mcpOut = path.join(outDir, packageDirName(MCP_PACKAGE));
+    mkdirSync(mcpOut, { recursive: true });
+    cpSync(mcpDist, path.join(mcpOut, 'dist'), { recursive: true });
+
+    // tsc writes its output 0644, and the manifest's `bin` points into dist/.
+    // npm does set the mode when it links a bin, but a package whose entry
+    // point is not executable in the tarball is one `node_modules/.bin`
+    // implementation away from failing, and the fix costs one call.
+    const mcpBin = typeof mcpTemplate.bin === 'object' ? Object.values(mcpTemplate.bin) : [];
+    for (const relative of mcpBin) {
+      const target = path.join(mcpOut, relative);
+      if (existsSync(target)) chmodSync(target, 0o755);
+    }
+
+    writeJson(path.join(mcpOut, 'package.json'), mcpManifest(mcpTemplate, version));
+
+    for (const extra of ['README.md', 'LICENSE']) {
+      const fromPackage = path.join(mcpSource, extra);
+      const fromRoot = path.join(root, extra);
+      const source = existsSync(fromPackage)
+        ? fromPackage
+        : existsSync(fromRoot)
+          ? fromRoot
+          : null;
+      if (source) copyFileSync(source, path.join(mcpOut, extra));
+    }
+
+    emitted.push({ name: MCP_PACKAGE, dir: mcpOut, from: mcpSource });
+    log(`  ${MCP_PACKAGE.padEnd(34)} <- ${path.relative(root, mcpSource)}`);
+  }
+
   // --- the parent ----------------------------------------------------------
   const parentDir = path.join(outDir, packageDirName(PARENT_PACKAGE));
   mkdirSync(parentDir, { recursive: true });
@@ -362,13 +527,15 @@ export function renderPackages({ version, binDir, outDir, templateDir, root, all
 
 const USAGE = `usage: node scripts/npm-package.mjs --version <v> --bin-dir <dir> --out <dir>
 
-  --version <v>     the CalVer version to stamp into all nine manifests
+  --version <v>     the CalVer version to stamp into all ten manifests
   --bin-dir <dir>   directory holding the built binaries, one per target triple
-  --out <dir>       directory to render the nine packages into (recreated)
+  --out <dir>       directory to render the ten packages into (recreated)
 
   --template <dir>  parent template (default: packages/npm/prick)
+  --mcp <dir>       MCP server package, already built (default: packages/mcp)
   --root <dir>      repository root (default: the parent of scripts/)
-  --allow-missing   skip platforms with no binary instead of failing.
+  --allow-missing   skip platforms with no binary, and the MCP server if it has
+                    not been built, instead of failing.
                     For local dry runs only — never in a release.
 `;
 
@@ -388,6 +555,7 @@ export function main(argv, io = {}) {
       'bin-dir': { type: 'string' },
       out: { type: 'string' },
       template: { type: 'string' },
+      mcp: { type: 'string' },
       root: { type: 'string' },
       'allow-missing': { type: 'boolean', default: false },
       help: { type: 'boolean', short: 'h', default: false },
@@ -409,7 +577,7 @@ export function main(argv, io = {}) {
   const root = path.resolve(values.root ?? defaultRoot);
   const outDir = path.resolve(values.out);
 
-  log(`rendering ${PLATFORMS.length + 1} packages at ${values.version} into ${outDir}`);
+  log(`rendering ${PACKAGE_COUNT} packages at ${values.version} into ${outDir}`);
 
   const emitted = renderPackages({
     version: values.version,
@@ -417,13 +585,14 @@ export function main(argv, io = {}) {
     outDir,
     templateDir: path.resolve(values.template ?? path.join(root, 'packages', 'npm', 'prick')),
     root,
+    mcpDir: path.resolve(values.mcp ?? path.join(root, 'packages', 'mcp')),
     allowMissing: values['allow-missing'],
     log,
   });
 
   log(`rendered ${emitted.length} package(s)`);
 
-  const expected = PLATFORMS.length + 1;
+  const expected = PACKAGE_COUNT;
   if (emitted.length !== expected) {
     // Only reachable under --allow-missing; without it a missing binary already
     // threw. A release must never publish a short set, so this is still an error

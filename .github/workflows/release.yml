@@ -258,7 +258,7 @@ jobs:
           retention-days: 7
 
   # ---------------------------------------------------------------------------
-  # Archives, checksums, the nine npm package trees, SBOMs and attestations.
+  # Archives, checksums, the ten npm package trees, SBOMs and attestations.
   # ---------------------------------------------------------------------------
   package:
     name: package
@@ -377,12 +377,25 @@ jobs:
           ( cd dist/assets && sha256sum -- * > SHA256SUMS )
           cat dist/assets/SHA256SUMS
 
+      # The MCP server is TypeScript, so unlike the CLI it has nothing in the
+      # build matrix: it is compiled once, here, immediately before the packages
+      # are assembled. The version was stamped into its manifest above, and its
+      # `initialize` response reads the version back out of that file at
+      # startup, so there is no second place for it to drift.
+      - name: Install JS dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build the MCP server
+        run: mise run build:mcp
+
       # -----------------------------------------------------------------------
-      # The nine npm package trees: eight platform packages that declare `bin`
-      # directly plus the parent that depends on them optionally.
+      # The ten npm package trees: eight platform packages that declare `bin`
+      # directly, the parent that depends on them optionally, and the MCP
+      # server, which is independent of both.
       #
       # Contract with scripts/: writes dist/npm/<pkg>/package.json for each,
-      # reading the compiled binaries out of --bin-dir.
+      # reading the compiled binaries out of --bin-dir and the compiled MCP
+      # server out of packages/mcp/dist.
       # -----------------------------------------------------------------------
       - name: Assemble npm packages
         env:
@@ -440,7 +453,7 @@ jobs:
   #
   # npm versions are immutable; dist-tags are not. That asymmetry is the only
   # atomicity primitive available, so everything lands under `next` first and
-  # `latest` moves only once all nine packages are readable from the registry
+  # `latest` moves only once all ten packages are readable from the registry
   # and a real install has produced a working binary. The parent moves LAST:
   # until it does, `npm install @yashau/prick` still resolves to the previous
   # good release.
@@ -488,19 +501,24 @@ jobs:
           # hardcoded here, so renaming a platform package cannot desynchronise
           # the publish list from what was actually assembled.
           parent=""
+          mcp=""
           platforms=()
           for manifest in dist/npm/*/package.json; do
             dir="$(dirname "$manifest")"
             name="$(jq -r '.name' "$manifest")"
-            if [ "$name" = "@yashau/prick" ]; then
-              parent="$dir"
-            else
-              platforms+=("$dir")
-            fi
+            case "$name" in
+              "@yashau/prick")     parent="$dir" ;;
+              "@yashau/prick-mcp") mcp="$dir" ;;
+              *)                   platforms+=("$dir") ;;
+            esac
           done
 
           if [ -z "$parent" ]; then
             echo "::error::No parent package (@yashau/prick) found under dist/npm/."
+            exit 1
+          fi
+          if [ -z "$mcp" ]; then
+            echo "::error::No MCP package (@yashau/prick-mcp) found under dist/npm/; the package job builds it with mise run build:mcp."
             exit 1
           fi
           if [ "${#platforms[@]}" -ne 8 ]; then
@@ -529,6 +547,10 @@ jobs:
           for dir in "${platforms[@]}"; do
             publish_one "$dir"
           done
+          # The MCP server depends on nothing here and nothing here depends on
+          # it, so its only ordering constraint is the one below: the parent is
+          # the last thing this release does.
+          publish_one "$mcp"
           publish_one "$parent"
 
       - name: Verify registry propagation
@@ -606,6 +628,54 @@ jobs:
             exit 1
           fi
 
+      # The equivalent gate for the MCP server. `--version` loads dist/main.js,
+      # which imports the MCP SDK at module scope, so a clean run proves three
+      # things at once: the compiled output is complete, the runtime
+      # dependencies published in the manifest actually resolve, and the version
+      # the server reports over MCP is the one being released.
+      - name: MCP install smoke test # zizmor: ignore[adhoc-packages]
+        env:
+          VERSION: ${{ needs.plan.outputs.version }}
+        run: |
+          set -euo pipefail
+          work="$(mktemp -d)"
+          cd "$work"
+          npm init --yes >/dev/null
+          npm install --ignore-scripts "@yashau/prick-mcp@${VERSION}"
+
+          bin="./node_modules/.bin/prick-mcp"
+          [ -x "$bin" ] || { echo "::error::prick-mcp was not installed as an executable."; exit 1; }
+
+          # --version writes to stderr: stdout belongs to the JSON-RPC transport
+          # even before a client attaches.
+          reported="$("$bin" --version 2>&1 >/dev/null)"
+          echo "prick-mcp --version -> ${reported}"
+          case "$reported" in
+            *"$VERSION"*) ;;
+            *) echo "::error::The published MCP server reports '${reported}', expected it to contain '${VERSION}'."; exit 1 ;;
+          esac
+
+          # Invariant 3, checked against what came back from the registry rather
+          # than against what was rendered upstairs. The workspace manifest uses
+          # `workspace:` and `catalog:`; npm publishes those verbatim, and a
+          # consumer cannot resolve either.
+          published="./node_modules/@yashau/prick-mcp/package.json"
+          if ! node -e '
+            const pkg = require(require("path").resolve(process.argv[1]));
+            const bad = [];
+            for (const field of ["dependencies", "optionalDependencies", "peerDependencies"]) {
+              for (const [name, spec] of Object.entries(pkg[field] || {})) {
+                if (/^(workspace|catalog|catalogs|link|portal):/.test(spec)) {
+                  bad.push(field + " " + name + " = " + spec);
+                }
+              }
+            }
+            if (bad.length > 0) { console.error(bad.join("\n")); process.exit(1); }
+          ' "$published"; then
+            echo "::error::The published MCP manifest carries a dependency spec npm cannot resolve."
+            exit 1
+          fi
+
       - name: Move `latest`
         env:
           # OIDC covers `npm publish`. If the registry requires a credential for
@@ -620,16 +690,22 @@ jobs:
           fi
 
           parent=""
+          mcp=""
           platforms=()
           for manifest in dist/npm/*/package.json; do
             name="$(jq -r '.name' "$manifest")"
-            if [ "$name" = "@yashau/prick" ]; then parent="$name"; else platforms+=("$name"); fi
+            case "$name" in
+              "@yashau/prick")     parent="$name" ;;
+              "@yashau/prick-mcp") mcp="$name" ;;
+              *)                   platforms+=("$name") ;;
+            esac
           done
 
           # This is the flip. Everything above it is reversible by doing nothing.
           for name in "${platforms[@]}"; do
             npm dist-tag add "${name}@${VERSION}" latest
           done
+          npm dist-tag add "${mcp}@${VERSION}" latest
           # Parent last: this single call is what makes the release live.
           npm dist-tag add "${parent}@${VERSION}" latest
 
