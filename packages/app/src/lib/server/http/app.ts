@@ -1,12 +1,12 @@
 import { Hono } from "hono";
 import { secureHeaders } from "hono/secure-headers";
 
-import { toErrorBody, statusFor } from "./errors.js";
-import { requestId } from "./middleware.js";
+import { statusFor, toErrorBody } from "./errors.js";
+import { keyring, requestId, type KeyringVariables } from "./middleware.js";
 
 export interface ApiEnv {
   Bindings: Env;
-  Variables: {
+  Variables: KeyringVariables & {
     requestId: string;
   };
 }
@@ -41,6 +41,27 @@ export function createApi() {
   );
 
   /*
+   * FAIL CLOSED, AHEAD OF EVERY ROUTE MOUNT.
+   *
+   * This line's POSITION is the feature. It runs before `/health`, before the
+   * route set, before anything -- so a Worker whose `MASTER_KEY` is missing,
+   * not base64, or not exactly 32 bytes answers 500 SERVER_MISCONFIGURED to
+   * every request rather than booting half-working.
+   *
+   * Moving it below `app.route("/api/v1", v1)` would leave `/health` answering
+   * 200 on an installation that cannot decrypt a single value -- and `/health`
+   * is precisely what the CLI probes and what a deploy check curls, so the one
+   * endpoint that would still work is the one whose answer everybody trusts.
+   *
+   * It is deliberately NOT wrapped in a try/catch here. The error propagates to
+   * `onError`, which maps `MasterKeyConfigError` onto SERVER_MISCONFIGURED with
+   * its original message -- the message names what is wrong with the key (and
+   * never any part of the key itself), which is the only thing that makes the
+   * failure fixable.
+   */
+  app.use("*", keyring);
+
+  /*
    * Versioned from day one. `/api/v1` is not aspirational: the CLI is a
    * separately released binary that users upgrade on their own schedule, so a
    * deployed Worker will always be serving some older client.
@@ -66,6 +87,9 @@ export function createApi() {
    * unprotected secrets manager is the failure this whole design exists to
    * prevent. So this handler must never grow a field that reveals anything
    * beyond "something is listening here".
+   *
+   * It answers 200 only once the keyring middleware above has succeeded, which
+   * is what makes "ok" mean something.
    */
   v1.get("/health", (c) => c.json({ status: "ok", version: "0.0.0-dev" }));
 
@@ -80,7 +104,10 @@ export function createApi() {
 
   app.onError((error, c) => {
     const body = toErrorBody(error, c.get("requestId"));
-    // TODO(build order step 12): audit with outcome 'error' / 'denied' here.
+    // NOT audited here. An audit row needs an actor and a database, and this
+    // handler catches failures that occur BEFORE either is resolved -- a
+    // misconfigured keyring being the obvious one. Denials and decrypt failures
+    // are audited at the point they happen, in `core`, where the actor is known.
     return c.json(body, statusFor(error) as 400);
   });
 

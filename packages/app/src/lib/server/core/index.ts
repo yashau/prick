@@ -17,6 +17,9 @@
 
 export * from "./context.js";
 export * from "./errors.js";
+export * from "./guards.js";
+export * from "./sql.js";
+export * from "./dotenv.js";
 export * from "./projects.js";
 export * from "./environments.js";
 export * from "./secrets.js";
