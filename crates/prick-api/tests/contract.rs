@@ -23,11 +23,19 @@
 //!
 //! # Normalisation
 //!
-//! Parameter *names* are not part of the contract: the spec writes `{env}`
+//! *Path* parameter names are not part of the contract: the spec writes `{env}`
 //! where the client sends a slug, and the client is not wrong for disagreeing
 //! about the word. Both sides are reduced to `{}` -- the spec by emptying its
 //! braces, the client by replacing whole path segments that equal a sentinel --
 //! before they are compared. A method and a shape of path is the assertion.
+//!
+//! A **query** parameter's name is the opposite case and is never normalised. A
+//! path parameter is positional, so the server reads the third segment whatever
+//! the spec called it; a query parameter is read by name and by no other means.
+//! `?why=run` in place of `?reason=run` reaches the same route, is ignored, and
+//! leaves the audit row recording the default reason rather than the real one
+//! -- a silent downgrade, not an error. So names are compared exactly: not
+//! case-folded, not by prefix, because that is how a server reads them.
 //!
 //! # Sentinels
 //!
@@ -41,6 +49,19 @@
 //! anyway.
 //!
 //! # What is asserted and what is only reported
+//!
+//! A query parameter the client sends that the operation does not declare is a
+//! failure, and so is an omitted one the operation marks `required`. The
+//! reverse -- a parameter the spec declares and the client never sends -- is
+//! not: `?reason=` carries a default, and every query parameter in the spec is
+//! optional precisely so that a caller may leave it off.
+//!
+//! That second direction has nothing in `docs/openapi.json` to bite on today,
+//! because no query parameter anywhere in it is `required: true`. Rather than
+//! leave the branch unexercised until the day it matters, [`check_query`] is
+//! also driven directly, in
+//! [`the_query_check_reports_an_undeclared_parameter_and_a_missing_required_one`],
+//! against the parameter shapes the generator emits.
 //!
 //! A route the spec does not serve is a failure. A route the spec serves and
 //! the CLI does not call is printed: `/audit`, `/admin/*` and `/groups/**` are
@@ -113,6 +134,9 @@ struct Observed {
     /// The path as it went out, for a failure message that names something a
     /// reader can search the source for.
     raw_path: String,
+    /// The query parameters as they went out: decoded, in order, and keeping a
+    /// repeated name twice. Empty when the request carried no query string.
+    query: Vec<(String, String)>,
     /// The request body, when there was one and it parsed as JSON.
     body: Option<Value>,
 }
@@ -165,6 +189,16 @@ async fn observe() -> Vec<Observed> {
                 method: request.method.as_str().to_ascii_uppercase(),
                 path: normalise_observed(&raw_path),
                 raw_path,
+                // Read off the parsed URL rather than off the string the client
+                // built, so what is compared is what a server would decode:
+                // `Config::url_with_query` percent-encodes both halves of every
+                // pair, and a name is only "the name the spec declares" after
+                // that encoding is undone.
+                query: request
+                    .url
+                    .query_pairs()
+                    .map(|(name, value)| (name.into_owned(), value.into_owned()))
+                    .collect(),
                 body: (!request.body.is_empty())
                     .then(|| serde_json::from_slice(&request.body).expect("a JSON request body")),
             }
@@ -430,6 +464,52 @@ async fn every_request_body_uses_the_field_names_the_spec_declares() {
 }
 
 #[tokio::test]
+async fn every_query_parameter_the_client_sends_is_one_the_spec_declares() {
+    let spec = spec();
+    let routes = spec_routes(&spec);
+    let observed = observe().await;
+
+    // Names actually run through `check_query` against a declaration read out
+    // of the spec -- not names sent, which would count a call whose route was
+    // never found and so was never compared with anything.
+    let mut compared = 0usize;
+    let mut complaints = Vec::new();
+    for call in &observed {
+        // A route the spec does not have is the first test's failure, not this
+        // one's; reporting it twice would only make that one harder to read.
+        let Some(route) = routes.get(&(call.method.clone(), call.path.clone())) else { continue };
+        compared += call.query.len();
+
+        for complaint in check_query(route.operation, &call.query) {
+            complaints.push(format!(
+                "  ops::{}: {complaint} on {} {}",
+                call.op, call.method, route.template
+            ));
+        }
+    }
+
+    // A floor, not a contract. Every query parameter in this API is optional,
+    // so "the client sent one" is nothing the spec obliges it to do -- but with
+    // no parameter reaching the comparison, the loop above passes having read
+    // nothing at all, which is the shape of check this file exists to refuse.
+    // `ops::reveal_secret` sends `?reason=`; nothing else sends anything.
+    assert!(
+        compared > 0,
+        "not one query parameter reached the comparison, so this check passed without reading a \
+         single name: either nothing the client sends carries a query string any more, or the \
+         only call that does no longer matches a route in the spec"
+    );
+    assert!(
+        complaints.is_empty(),
+        "{} query parameter problem(s). Every query schema in `@prick/shared` is parsed by name, \
+         so an undeclared parameter is dropped in silence rather than refused -- the request \
+         succeeds having ignored what it asked for:\n{}",
+        complaints.len(),
+        complaints.join("\n")
+    );
+}
+
+#[tokio::test]
 async fn the_routes_the_cli_does_not_call_are_reported_rather_than_asserted() {
     let spec = spec();
     let routes = spec_routes(&spec);
@@ -455,6 +535,129 @@ async fn the_routes_the_cli_does_not_call_are_reported_rather_than_asserted() {
     );
 
     assert!(used.len() <= routes.len(), "the client cannot use more routes than the spec has");
+}
+
+// ---------------------------------------------------------------------------
+// Query parameters
+// ---------------------------------------------------------------------------
+
+/// The query parameters an operation declares, each mapped to whether the spec
+/// marks it required.
+///
+/// `in: path` and `in: header` entries share the same array and are skipped:
+/// path parameters are already covered by the path comparison, and a header is
+/// not a thing this test records.
+fn declared_query(operation: &Value) -> BTreeMap<&str, bool> {
+    let mut declared = BTreeMap::new();
+    for parameter in operation.get("parameters").and_then(Value::as_array).into_iter().flatten() {
+        // A `$ref` carries no `in`, so it would be skipped silently and every
+        // parameter behind it would look undeclared -- a check that reports the
+        // client as wrong for sending exactly what the spec asked for. The
+        // generator inlines parameters today; if that changes, fail loudly here
+        // and teach this function to follow the pointer.
+        assert!(
+            parameter.get("$ref").is_none(),
+            "docs/openapi.json now uses a $ref for a parameter, which this test reads as no \
+             parameter at all"
+        );
+        if parameter.get("in").and_then(Value::as_str) != Some("query") {
+            continue;
+        }
+        let name = parameter
+            .get("name")
+            .and_then(Value::as_str)
+            .expect("an OpenAPI parameter object has a name");
+        declared.insert(name, parameter.get("required") == Some(&Value::Bool(true)));
+    }
+    declared
+}
+
+/// Complaints about the query string one call sent, against the parameters its
+/// operation declares. Empty means it fits.
+///
+/// Names are matched by string equality through a [`BTreeMap`] lookup, so
+/// `Reason` and `reason_code` are both undeclared. That is not pedantry: query
+/// parsing is exact everywhere, and a check that accepted a near-miss would
+/// pass on precisely the requests whose parameter the server drops.
+fn check_query(operation: &Value, query: &[(String, String)]) -> Vec<String> {
+    let declared = declared_query(operation);
+    let mut complaints = Vec::new();
+
+    for (name, _) in query {
+        if !declared.contains_key(name.as_str()) {
+            complaints.push(format!("sends `?{name}=`, which this operation does not declare"));
+        }
+    }
+
+    let sent: BTreeSet<&str> = query.iter().map(|(name, _)| name.as_str()).collect();
+    for name in declared.iter().filter(|(_, required)| **required).map(|(name, _)| name) {
+        if !sent.contains(name) {
+            complaints.push(format!("omits `?{name}=`, which this operation requires"));
+        }
+    }
+
+    complaints
+}
+
+/// Drives [`check_query`] against the parameter shapes the generator emits.
+///
+/// Recorded requests cannot reach the `required` half: nothing in
+/// `docs/openapi.json` is a required query parameter, and this test must not
+/// invent one there -- that file is generated from the router and hand-editing
+/// it would be asserting against fiction. So the *checker* is fed the fragment
+/// a required parameter would produce, which keeps the branch honest for the
+/// day the router grows one. The optional-and-absent case is in here for the
+/// same reason in reverse: it is the case that must **not** complain, and the
+/// only one exercised against the real spec.
+#[test]
+fn the_query_check_reports_an_undeclared_parameter_and_a_missing_required_one() {
+    let operation = serde_json::json!({
+        "parameters": [
+            { "in": "query", "name": "reason", "required": false },
+            { "in": "query", "name": "cursor", "required": true },
+            { "in": "path", "name": "key", "required": true },
+        ]
+    });
+    let sent = |pairs: &[(&str, &str)]| -> Vec<(String, String)> {
+        pairs.iter().map(|(name, value)| ((*name).to_owned(), (*value).to_owned())).collect()
+    };
+
+    assert_eq!(
+        check_query(&operation, &sent(&[("reason", "run"), ("cursor", "1")])),
+        Vec::<String>::new()
+    );
+
+    let undeclared = check_query(&operation, &sent(&[("cursor", "1"), ("verbose", "true")]));
+    assert_eq!(undeclared, vec!["sends `?verbose=`, which this operation does not declare"]);
+
+    let missing = check_query(&operation, &sent(&[("reason", "run")]));
+    assert_eq!(missing, vec!["omits `?cursor=`, which this operation requires"]);
+
+    // A path parameter is not a query parameter, however the client spells it.
+    let as_query = check_query(&operation, &sent(&[("cursor", "1"), ("key", "ZZKEY")]));
+    assert_eq!(as_query, vec!["sends `?key=`, which this operation does not declare"]);
+}
+
+/// A near-miss is a miss.
+///
+/// The server reads `reason` and nothing else; a check that folded case or
+/// matched a prefix would pass the two spellings whose value never arrives.
+#[test]
+fn a_query_parameter_name_matches_exactly_or_not_at_all() {
+    let operation = serde_json::json!({
+        "parameters": [{ "in": "query", "name": "reason", "required": false }]
+    });
+
+    for spelling in ["Reason", "REASON", "reaso", "reasons", "reason_code", " reason"] {
+        let sent = vec![(spelling.to_owned(), "run".to_owned())];
+        assert_eq!(
+            check_query(&operation, &sent),
+            vec![format!("sends `?{spelling}=`, which this operation does not declare")],
+            "`{spelling}` is not `reason`"
+        );
+    }
+
+    assert!(check_query(&operation, &[("reason".to_owned(), "run".to_owned())]).is_empty());
 }
 
 // ---------------------------------------------------------------------------
