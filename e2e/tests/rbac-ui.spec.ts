@@ -91,11 +91,30 @@ async function selectTab(page: Page, name: RegExp): Promise<void> {
   }).toPass({ timeout: 20_000 });
 }
 
-/** Click a control that only does anything once hydrated, and wait for the effect. */
+/**
+ * Click a control that only does anything once hydrated, and wait for the effect.
+ *
+ * The retry exists because a click before hydration is swallowed silently, so
+ * the only way to know it landed is to look for what it should have done.
+ *
+ * The `isVisible` guard exists because retrying is WRONG once the click has
+ * worked, and this flaked in CI for exactly that reason. The control here
+ * removes a group membership, so it disappears along with the row it removed:
+ * the first click succeeded, the re-render took longer than the inner timeout on
+ * a loaded runner, and every subsequent attempt then failed on a button that was
+ * no longer there -- spending the whole 20 s budget failing to repeat something
+ * that had already happened. Retrying is only safe while the control is still
+ * on the page.
+ *
+ * The click itself is allowed to lose the race with that re-render; `settled` is
+ * the judge of whether the effect landed, not the click's own success.
+ */
 async function clickUntil(button: Locator, settled: () => Promise<void>): Promise<void> {
   await expect(button).toBeVisible();
   await expect(async () => {
-    await button.click();
+    if (await button.isVisible().catch(() => false)) {
+      await button.click().catch(() => undefined);
+    }
     await settled();
   }).toPass({ timeout: 20_000 });
 }
