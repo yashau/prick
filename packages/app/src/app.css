@@ -17,10 +17,37 @@
   --secondary: oklch(0.97 0 0);
   --secondary-foreground: oklch(0.205 0 0);
   --muted: oklch(0.97 0 0);
-  --muted-foreground: oklch(0.556 0 0);
+  /*
+   * 0.546, not the registry's 0.556. THE ONE PLACE THIS IS FIXABLE.
+   *
+   * `bg-muted text-muted-foreground` -- the sidebar avatar's fallback initials,
+   * and every placeholder and secondary label on every screen -- computed to
+   * #737373 on #f5f5f5, which is 4.35:1 against AA's required 4.5:1. Dropping
+   * the lightness by 0.010 makes it #707070 and 4.54:1, and improves every
+   * lighter pairing with it (on white, 4.74:1 -> 4.95:1).
+   *
+   * The dark token is a separate declaration and is NOT touched: it is already
+   * 5.86:1 on its own `--muted`, and lightening it further would be a change
+   * with no defect behind it.
+   */
+  --muted-foreground: oklch(0.546 0 0);
   --accent: oklch(0.97 0 0);
   --accent-foreground: oklch(0.205 0 0);
-  --destructive: oklch(0.577 0.245 27.325);
+  /*
+   * 0.531, not the registry's 0.577. Same reasoning, one step less obvious.
+   *
+   * `text-destructive` sits on `bg-destructive/10` -- the destructive badge, the
+   * history tombstones, the "cannot be decrypted" banner -- so the FOREGROUND
+   * and the BACKGROUND are both derived from this one token, and the background
+   * is that token at 10% over the page. Darkening it therefore moves both, but
+   * the composite is nine parts page colour, so the pair separates rather than
+   * tracking: #e7000b on #fde6e7 was 4.01:1, and #d60000 on #fbe6e6 is 4.55:1.
+   *
+   * Lightness only. The chroma and hue are the registry's, and pulling chroma to
+   * buy contrast would desaturate the one colour in the palette whose job is to
+   * be alarming.
+   */
+  --destructive: oklch(0.531 0.245 27.325);
   --border: oklch(0.922 0 0);
   --input: oklch(0.922 0 0);
   --ring: oklch(0.708 0 0);

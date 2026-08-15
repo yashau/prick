@@ -186,22 +186,29 @@ test.describe("the flow, end to end", () => {
     expect(actions).toContain("secret.export");
 
     /*
-     * THE IMPORT IS AUDITED AS `secret.write`, NOT `secret.import`.
+     * THE IMPORT IS AUDITED AS `secret.import`.
      *
-     * `importSecrets` delegates a non-dry-run to `writeSecrets`, which records
-     * its own action, so the two are indistinguishable in the log except by the
-     * `reason` the caller happened to send. `secret.import` is declared in the
-     * `AuditAction` union in `core/audit.ts` and is emitted by nothing.
+     * `importSecrets` still delegates the write to `writeSecrets` -- one batch,
+     * one audit row, the row last -- and tells it which action to record. So the
+     * provenance survives into the log without a second write, and "someone
+     * pasted a `.env` over production" no longer reads exactly like "someone
+     * changed one key" for want of a `reason`.
      *
-     * Asserted as it BEHAVES here, and asserted as it is DOCUMENTED in the
-     * `test.fail()` case below, so the gap is recorded rather than papered over.
+     * Matched on the ACTION and the reason together, because the flow above
+     * also performs a hand-written batch, and the point of the distinction is
+     * that the two rows are now tellable apart.
      */
     const importRow = audit.entries.find(
       (entry) =>
-        entry.action === "secret.write" &&
+        entry.action === "secret.import" &&
         (entry.detail as { reason?: string }).reason === "e2e: import",
     );
-    expect(importRow, "the import should have produced an audited write").toBeDefined();
+    expect(importRow, "the import should have produced an audited import").toBeDefined();
+
+    // And the hand-written batch that created DATABASE_URL is still a
+    // `secret.write`: this changed what an import is called, not what a write
+    // is called.
+    expect(actions).toContain("secret.write");
 
     for (const entry of audit.entries) {
       expect(entry.actorSubject).toBe(SUBJECTS.admin);
@@ -226,26 +233,18 @@ test.describe("the flow, end to end", () => {
   });
 
   /**
-   * A KNOWN GAP, recorded rather than argued around.
+   * The gap this file used to record, now closed.
    *
-   * The plan's verification section says the audit log must contain
-   * `secret.import`; `core/audit.ts` declares that action; nothing emits it,
-   * because `importSecrets` hands a real import to `writeSecrets` and takes
-   * that function's audit row.
+   * `importSecrets` still hands the write to `writeSecrets` -- there is exactly
+   * one batch and exactly one audit row, and the row is still the last statement
+   * in it -- but it passes the action, so the row says `secret.import`.
    *
-   * `test.fail()` rather than a weakened assertion or a skip: the run stays
-   * green today, and the moment someone gives `writeSecrets` an action override
-   * (or audits the import separately) this test goes RED with "expected to fail
-   * but passed" -- which is what makes the annotation get deleted instead of
-   * outliving the bug.
+   * The narrowest possible case on purpose: a fresh project, one import, nothing
+   * else. If the action were ever inferred from the shape of the write rather
+   * than from the caller, a one-key import like this one is exactly what would
+   * fall back to `secret.write` and go unnoticed in the larger flow above.
    */
   test("an import is audited as secret.import", async ({ api, uniqueSlug }) => {
-    test.fail(
-      true,
-      "importSecrets delegates to writeSecrets, which audits `secret.write`. " +
-        "`secret.import` is declared in core/audit.ts and emitted by nothing.",
-    );
-
     const project = uniqueSlug("import-action");
     await api.request("/projects", { method: "POST", body: { slug: project, name: "Import" } });
     await api.request(`/projects/${project}/environments`, {
@@ -260,7 +259,13 @@ test.describe("the flow, end to end", () => {
     });
 
     const audit = await api.request<AuditPage>(`/audit?project=${project}&limit=50`);
-    expect(audit.entries.map((entry) => entry.action)).toContain("secret.import");
+    const actions = audit.entries.map((entry) => entry.action);
+
+    expect(actions).toContain("secret.import");
+    // INSTEAD OF, not as well as. One mutation is one audit row in one batch, so
+    // labelling the import must not have bought a second row alongside it.
+    expect(actions).not.toContain("secret.write");
+    expect(actions.filter((action) => action === "secret.import")).toHaveLength(1);
   });
 
   test("a reveal is one audit row per read, and a copy is distinguishable", async ({

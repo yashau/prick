@@ -52,7 +52,17 @@
     if (editing && input) input.select();
   });
 
+  /**
+   * The three value controls are `aria-disabled` while a request is in flight,
+   * NOT `disabled`, so each of these has to enforce what its markup advertises.
+   *
+   * See the note on the toggle below for why. The guard is cheap and the
+   * controller re-checks `busy` for the two paths that can be entered from
+   * elsewhere, so a doubled activation is a no-op rather than a second audited
+   * read of the value.
+   */
   async function toggleReveal() {
+    if (busy) return;
     if (revealed) {
       controller.hideKey(row.key);
       return;
@@ -65,6 +75,7 @@
   }
 
   async function copy() {
+    if (busy) return;
     try {
       await controller.copyKey(row.key);
       toast.success(`${row.key} copied. The clipboard is cleared in 30 seconds.`);
@@ -74,6 +85,7 @@
   }
 
   async function beginEdit() {
+    if (busy) return;
     try {
       draft = await controller.loadForEdit(row.key);
       editing = true;
@@ -206,10 +218,35 @@
       {#if revealed}
         <span class="text-muted-foreground tabular-nums" aria-hidden="true">{secondsLeft}s</span>
       {/if}
+      <!--
+        `aria-disabled`, NOT `disabled`, and the difference is the whole bug.
+
+        `disabled` removes an element from the tab order, and the browser blurs
+        it the instant that happens. So a keyboard operator who focused this
+        toggle and pressed Enter was thrown to the top of the document the
+        moment the request started -- on every reveal -- and had to Tab all the
+        way back into the table to hide the value again.
+
+        Restoring focus after the fact would work, but it is the weaker fix: it
+        cures the symptom by moving focus twice, it has to run on the failure
+        path too or the operator is stranded on an error they cannot see, and it
+        leaves a control that is genuinely unreachable for the ~100 ms it is in
+        flight. `aria-disabled` never takes the control out of the tab order in
+        the first place, so there is no focus to restore -- the operator's
+        position simply never moves. The handlers above enforce it, which is
+        what stops "advertised as disabled" from drifting away from "actually
+        refuses to act".
+
+        `aria-busy` is the honest name for this state anyway: the control is not
+        unavailable, it is working. The spinner says the same thing to everyone
+        who is looking at it.
+      -->
       <InputGroup.Button
         size="icon-xs"
+        class="aria-disabled:opacity-50"
         aria-pressed={revealed}
-        disabled={busy}
+        aria-disabled={busy}
+        aria-busy={busy}
         onclick={toggleReveal}
       >
         {#if busy}
@@ -221,11 +258,21 @@
         {/if}
         <span class="sr-only">{revealed ? `Hide ${row.key}` : `Reveal ${row.key}`}</span>
       </InputGroup.Button>
-      <InputGroup.Button size="icon-xs" disabled={busy} onclick={copy}>
+      <InputGroup.Button
+        size="icon-xs"
+        class="aria-disabled:opacity-50"
+        aria-disabled={busy}
+        onclick={copy}
+      >
         <CopyIcon aria-hidden="true" />
         <span class="sr-only">Copy the value of {row.key}</span>
       </InputGroup.Button>
-      <InputGroup.Button size="icon-xs" disabled={busy} onclick={beginEdit}>
+      <InputGroup.Button
+        size="icon-xs"
+        class="aria-disabled:opacity-50"
+        aria-disabled={busy}
+        onclick={beginEdit}
+      >
         <PencilIcon aria-hidden="true" />
         <span class="sr-only">Edit {row.key}</span>
       </InputGroup.Button>

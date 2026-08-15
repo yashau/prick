@@ -66,7 +66,13 @@
 
     <Item.Group class="gap-2">
       {#each identities as identity (identity.subject)}
-        <Item.Root variant="outline">
+        <!--
+          `role="listitem"`, because the registry's `Item.Group` is a
+          `div role="list"` and a list whose owned children are the `Grant…` and
+          copy-subject buttons is announced as a list of controls with no items
+          in it. See the same note in `audit/audit-item.svelte`.
+        -->
+        <Item.Root variant="outline" role="listitem">
           <Item.Media variant="icon">
             {#if identity.kind === 'service'}
               <KeyRoundIcon aria-hidden="true" />

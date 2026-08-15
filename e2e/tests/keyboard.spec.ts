@@ -188,27 +188,21 @@ test.describe("keyboard-only", () => {
   });
 
   /**
-   * A REAL DEFECT, recorded rather than skipped.
+   * The defect this file used to record, now fixed.
    *
-   * `secret-value-cell.svelte` sets `disabled={busy}` on the reveal toggle, and
-   * `SecretsController.revealKey` marks the key busy for the duration of the
-   * request. Disabling a focused element blurs it, and nothing focuses it again
-   * when the request resolves -- so a keyboard user who reveals a value is
-   * dropped back to the top of the document, on every reveal, and has to Tab
-   * back into the table to hide it again.
+   * `secret-value-cell.svelte` used to set `disabled={busy}` on the reveal
+   * toggle while `SecretsController.revealKey` held the key busy for the
+   * duration of the request. Disabling a focused element blurs it, and nothing
+   * focused it again -- so a keyboard operator who revealed a value was dropped
+   * to the top of the document on EVERY reveal and had to Tab all the way back
+   * in to hide it.
    *
-   * `test.fail()` rather than a skip or a softened assertion: the run stays
-   * green, and this goes RED the moment the cell restores focus (or stops
-   * disabling the control and uses `aria-busy` instead), which is what gets the
-   * annotation deleted along with the bug.
+   * The control is `aria-disabled` now, with the handler enforcing it, so focus
+   * never moves in the first place. Asserted as "still focused after the state
+   * settled", which is the property that matters and is agnostic about how it
+   * was achieved: restoring focus explicitly would pass this too.
    */
   test("focus stays on the reveal toggle across the request", async ({ page }) => {
-    test.fail(
-      true,
-      "The toggle is `disabled` while the reveal is in flight, which blurs it, " +
-        "and nothing restores focus when the request resolves.",
-    );
-
     await openSecrets(page);
 
     const key = (
@@ -222,7 +216,20 @@ test.describe("keyboard-only", () => {
     await toggle.focus();
     await page.keyboard.press("Enter");
 
-    await expect(page.getByRole("button", { name: `Hide ${key}` })).toBeFocused({ timeout: 5000 });
+    /*
+     * The SAME control, which has renamed itself to its inverse. Waiting on
+     * `Hide` rather than on the reveal is what makes this a test of the settled
+     * state -- asserting focus while the request is still in flight would pass
+     * against the old `disabled` version for the first frame.
+     */
+    const hide = page.getByRole("button", { name: `Hide ${key}` });
+    await expect(hide).toBeFocused({ timeout: 5000 });
+
+    // And it is genuinely operable from where focus was left, rather than merely
+    // holding a highlight: one more Enter puts the value back.
+    await page.keyboard.press("Enter");
+    await expect(page.getByRole("textbox", { name: `${key}, hidden` })).toHaveValue(MASK);
+    await expect(page.getByRole("button", { name: `Reveal ${key}` })).toBeFocused();
   });
 
   test("Shift+Tab walks back out again, so the table is not a trap", async ({ page }) => {

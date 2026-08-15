@@ -390,6 +390,68 @@ describe("import", () => {
     expect(await exportSecrets(ctx(), "acme", "prod")).toEqual({ A: "1", B: "2" });
   });
 
+  /**
+   * An import and a hand-written batch are the same statements in the same
+   * batch, and they must not be the same ROW.
+   *
+   * "Someone pasted a `.env` over production" and "someone changed one key" are
+   * different events to whoever is reading the log after the fact, and until
+   * this held they were distinguishable only by whatever `reason` the caller
+   * happened to send -- which is to say, not at all when nobody sent one.
+   */
+  it("audits an applied import as secret.import, in one row", async () => {
+    await importSecrets(ctx(), "acme", "prod", {
+      format: "env",
+      mode: "merge",
+      dry_run: false,
+      content: 'DATABASE_URL="postgres://user:hunter2@db/app"\n',
+      reason: "pasted the staging .env",
+    });
+
+    const rows = await db.select().from(auditLog);
+    const imports = rows.filter((entry) => entry.action === "secret.import");
+
+    // ONE row, and no `secret.write` beside it: the action was relabelled, not
+    // supplemented. A second insert would be a second row for one mutation.
+    expect(imports).toHaveLength(1);
+    expect(rows.filter((entry) => entry.action === "secret.write")).toHaveLength(0);
+
+    expect(imports[0]?.outcome).toBe("success");
+    expect(imports[0]?.environmentId).toBe(environmentId);
+    expect(JSON.parse(imports[0]?.detail ?? "{}")).toMatchObject({
+      kind: "secret.diff",
+      mode: "merge",
+      added: ["DATABASE_URL"],
+      reason: "pasted the staging .env",
+    });
+
+    // The relabelling did not smuggle a value into the row on the way past.
+    expect(JSON.stringify(imports[0])).not.toContain("hunter2");
+  });
+
+  it("writes no audit row at all for a dry run", async () => {
+    await importSecrets(ctx(), "acme", "prod", {
+      format: "env",
+      mode: "merge",
+      dry_run: true,
+      content: "A=1\n",
+    });
+
+    // A dry run is a read that writes nothing, so there is no mutation for a row
+    // to ride in and nothing to record. `secret.import` must not become the
+    // action that means "somebody looked at what an import would do".
+    const rows = await db.select().from(auditLog);
+    expect(rows.filter((entry) => entry.action === "secret.import")).toHaveLength(0);
+  });
+
+  it("leaves a hand-written batch as secret.write", async () => {
+    await write({ A: "1" });
+
+    const rows = await db.select().from(auditLog);
+    expect(rows.filter((entry) => entry.action === "secret.write")).toHaveLength(1);
+    expect(rows.filter((entry) => entry.action === "secret.import")).toHaveLength(0);
+  });
+
   it("imports JSON, refusing non-string values by NAME", async () => {
     const error = await rejectsWith(
       () =>

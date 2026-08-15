@@ -60,6 +60,23 @@ export interface WriteSecretsResult {
   removed: string[];
 }
 
+/**
+ * WHICH KIND OF BULK WRITE THIS IS, for the audit row and nothing else.
+ *
+ * A two-member subset of `AuditAction` rather than the whole union, because the
+ * only thing a caller is entitled to say here is "this same write arrived
+ * through the import door". Widening it to `AuditAction` would let a transport
+ * label a secret write `admin.rekey`, which is a worse hole than the one this
+ * exists to close.
+ *
+ * It matters because the two are otherwise indistinguishable in the log: an
+ * import and a hand-written batch produce identical rows, so "someone pasted a
+ * `.env` over production" reads exactly like "someone changed one key" unless
+ * the operator happened to send a `reason`. Deriving it from the shape of the
+ * request -- a large `added` list, say -- would be a guess; the caller knows.
+ */
+export type WriteKind = "secret.write" | "secret.import";
+
 // ---------------------------------------------------------------------------
 // Column arithmetic -- derived from the schema, never written down
 // ---------------------------------------------------------------------------
@@ -236,6 +253,7 @@ function buildStatements(
   sealed: Map<string, string>,
   activeKid: string,
   retried: boolean,
+  kind: WriteKind,
 ): Statement[] {
   const statements: Statement[] = [];
 
@@ -377,9 +395,17 @@ function buildStatements(
   // LAST. If this fails, everything above it is rolled back with it, which is
   // what makes an un-audited mutation unrepresentable rather than merely
   // discouraged.
+  //
+  // `kind` only changes the ACTION on this one row. An import is the same
+  // statements in the same batch -- it is a different way of arriving at a bulk
+  // write, not a different write -- so labelling it here rather than auditing it
+  // separately is what keeps "one mutation, one audit row, one transaction"
+  // true. A second insert would be a second row for one event, and a row
+  // outside the batch would be exactly the un-audited-mutation hole the rule
+  // closes.
   statements.push(
     auditStatement(ctx, {
-      action: "secret.write",
+      action: kind,
       outcome: "success",
       projectId: environment.projectId,
       environmentId: environment.id,
@@ -415,12 +441,17 @@ function buildStatements(
  * version -- and we retry ONCE against freshly read state. A second loss is a
  * 409: retrying indefinitely turns a contended key into an unbounded latency
  * spike, and two writers colliding twice in a row means something is looping.
+ *
+ * `kind` is how an import gets its own audit action without getting its own
+ * write. It defaults to `secret.write`, so every transport that does not pass it
+ * -- which is all of them -- is unaffected.
  */
 export async function writeSecrets(
   ctx: CoreContext,
   projectSlug: string,
   envSlug: string,
   input: BatchBody,
+  kind: WriteKind = "secret.write",
 ): Promise<WriteSecretsResult> {
   const environment = await requireEnvironment(ctx, projectSlug, envSlug);
   await assertRole(ctx, environmentScope(environment), "writer");
@@ -455,6 +486,7 @@ export async function writeSecrets(
       sealed,
       keyring.active.kid,
       attempt > 0,
+      kind,
     );
 
     try {
@@ -557,7 +589,22 @@ export async function importSecrets(
       ...(input.reason === undefined ? {} : { reason: input.reason }),
     };
 
-    const result = await writeSecrets(ctx, projectSlug, envSlug, body);
+    /*
+     * THE SAME WRITE, AUDITED AS AN IMPORT.
+     *
+     * Not a second batch and not a second row: `writeSecrets` builds one
+     * `batch()` whose last statement is the audit insert, and all `kind` does is
+     * decide what that statement's `action` says. An import that wrote its own
+     * audit row would either sit outside the batch -- the un-audited-mutation
+     * hole -- or double-count one event.
+     *
+     * It has to be said HERE rather than inferred there, because by the time the
+     * write path sees it this is an ordinary `BatchBody`. That is the point: an
+     * import and a hand-written batch differ in provenance, not in effect, and
+     * provenance is exactly what an auditor is asking about when the question is
+     * "did somebody paste a `.env` over production".
+     */
+    const result = await writeSecrets(ctx, projectSlug, envSlug, body, "secret.import");
 
     return {
       added: result.added,

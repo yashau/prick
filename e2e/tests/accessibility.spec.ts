@@ -3,10 +3,13 @@
  *
  * Both themes, because half of what axe finds on a console like this is colour
  * contrast, and contrast is a property of the palette in effect rather than of
- * the markup. That is not a hypothetical here: the light palette fails WCAG AA
- * on every screen in this application and the dark palette passes on almost all
- * of them. A suite that scanned one theme would report the wrong answer, and
- * which wrong answer it reported would be a coin flip.
+ * the markup. That is not a hypothetical here: the light palette used to fail
+ * WCAG AA on every screen in this application while the dark palette passed on
+ * almost all of them. A suite that scanned one theme would have reported the
+ * wrong answer, and which wrong answer it reported would have been a coin flip.
+ * It is also what makes the fix checkable in both directions -- the light tokens
+ * were darkened, and only a two-theme scan can show that this did not cost the
+ * dark palette anything.
  *
  * The theme is selected through `prefers-color-scheme` rather than by clicking
  * the toggle, because `mode-watcher` defaults to "system" and the emulated
@@ -15,22 +18,20 @@
  * quietly turn this into the same scan run twice.
  *
  * ---------------------------------------------------------------------------
- * THE BASELINE
+ * THE BASELINE, WHICH IS NOW EMPTY
  * ---------------------------------------------------------------------------
- * The application has real violations today (enumerated below). This suite
- * cannot fix them -- they live in `packages/app/src`, and the palette in
- * particular is one decision affecting every screen -- so it records them and
- * gates on anything else.
+ * Each entry is the set of rule ids ALLOWED on that screen, and every one of
+ * them is `[]`. The mechanism is kept rather than deleted, for two reasons: the
+ * failure message it produces names the screen and the rule and says what to do
+ * about it, and an empty list per screen is a stronger statement than no list at
+ * all -- adding a screen to `SCREENS` without an entry gates it at zero too.
  *
- * Each entry is the set of rule ids ALLOWED on that screen. Anything outside
- * the set fails, which is the regression gate. A partial fix does not fail,
- * which is a deliberate trade: `aria-required-children` appears on the history
- * screen only when a version group happens to be expanded, and an exact-match
- * baseline made that a flake rather than a finding.
+ * The allowances that used to be here, and the changes that removed them, are
+ * written out above `BASELINE`. They are kept because "why is this token
+ * 0.546 and not the registry's 0.556" is a question someone will ask.
  *
- * The pressure to actually FIX the list comes from the `test.fail()` at the
- * bottom of this file, which asserts zero violations anywhere and goes red the
- * day that becomes true.
+ * The pressure to keep it empty is the last test in this file, which allows
+ * nothing anywhere. It was a `test.fail()` while the palette was broken.
  *
  * Rule ids only, not node counts or selectors. Ids are stable; the generated
  * class selectors and `bits-*` ids are not, and node counts move with the
@@ -75,50 +76,58 @@ const TAGS = ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"];
 
 /**
  * ---------------------------------------------------------------------------
- * KNOWN VIOLATIONS, as of this suite being written.
+ * EMPTY. Every screen, both themes, no allowances.
  * ---------------------------------------------------------------------------
  *
- * `color-contrast` -- THE LIGHT PALETTE ONLY, and two distinct offenders:
+ * It did not start that way. What was listed here, and what closed it:
+ *
+ * `color-contrast` -- THE LIGHT PALETTE ONLY, and two distinct offenders, both
+ *     of them TOKENS rather than markup, so both were one decision in
+ *     `app.css` rather than nine changes to nine screens:
  *
  *       the sidebar avatar's fallback initials, `--muted-foreground` (#737373)
  *       on `--muted` (#f5f5f5), 4.34:1 against a required 4.5:1. On every
- *       screen, because it is in the app shell.
+ *       screen, because it is in the app shell. `--muted-foreground` is now
+ *       `oklch(0.546 0 0)`: #707070, 4.54:1.
  *
  *       the destructive badge, `text-destructive` (#e7000b) on
  *       `bg-destructive/10` (#fde6e7), 4.0:1. Audit outcomes, history
- *       tombstones, and the "cannot be decrypted" banner.
+ *       tombstones, and the "cannot be decrypted" banner. `--destructive` is
+ *       now `oklch(0.531 0.245 27.325)`: #d60000 on #fbe6e6, 4.55:1.
  *
- *     Both are TOKENS rather than markup, so this is one decision in
- *     `app.css`, not nine changes to nine screens. The dark palette clears AA
- *     on every screen, which is worth stating: the fix is to bring the light
- *     tokens up to the standard the dark ones already meet.
+ *     Lightness only, and the DARK tokens were left alone -- they are separate
+ *     declarations and already cleared AA (5.86:1 and 5.31:1 respectively),
+ *     which is why this file scans both themes and why a fix that traded one
+ *     for the other would have been caught here.
  *
  * `aria-required-children` -- an `item-group` renders `role="list"` while
- *     containing `<button>` children. Registry markup, on the history and
- *     access screens.
+ *     containing `<button>` children, on the history and access screens. The
+ *     two components that are always a direct child of one -- `audit-item` and
+ *     the unknown-identities row -- now say `role="listitem"`.
  *
- * Neither is fixable from `e2e/`.
+ * A new entry here is not a baseline, it is a regression, and the argument for
+ * it has to be written down beside it.
  */
 const BASELINE: Record<Theme, Record<string, string[]>> = {
   light: {
-    "/projects": ["color-contrast"],
-    [`/p/${SEED.project}`]: ["color-contrast"],
-    [`/p/${SEED.project}/${SEED.production}`]: ["color-contrast"],
-    [`/p/${SEED.project}/${SEED.production}/history`]: ["aria-required-children", "color-contrast"],
-    [`/p/${SEED.project}/access`]: ["color-contrast"],
-    [`/p/${SEED.project}/settings`]: ["color-contrast"],
-    "/access": ["aria-required-children", "color-contrast"],
-    "/audit": ["color-contrast"],
-    "/settings": ["color-contrast"],
+    "/projects": [],
+    [`/p/${SEED.project}`]: [],
+    [`/p/${SEED.project}/${SEED.production}`]: [],
+    [`/p/${SEED.project}/${SEED.production}/history`]: [],
+    [`/p/${SEED.project}/access`]: [],
+    [`/p/${SEED.project}/settings`]: [],
+    "/access": [],
+    "/audit": [],
+    "/settings": [],
   },
   dark: {
     "/projects": [],
     [`/p/${SEED.project}`]: [],
     [`/p/${SEED.project}/${SEED.production}`]: [],
-    [`/p/${SEED.project}/${SEED.production}/history`]: ["aria-required-children"],
+    [`/p/${SEED.project}/${SEED.production}/history`]: [],
     [`/p/${SEED.project}/access`]: [],
     [`/p/${SEED.project}/settings`]: [],
-    "/access": ["aria-required-children"],
+    "/access": [],
     "/audit": [],
     "/settings": [],
   },
@@ -279,23 +288,18 @@ for (const theme of ["light", "dark"] as const) {
 }
 
 /**
- * The target, stated as a test so it cannot be forgotten.
+ * The standard, stated as a test rather than as an aspiration.
  *
- * `test.fail()` rather than a comment in a document nobody opens: this goes RED
- * the day the palette is fixed, which is the day the baseline above should be
- * emptied and this annotation deleted.
+ * This was a `test.fail()` for as long as the palette was broken. It is a plain
+ * assertion now, and it is deliberately NOT the same test as the per-screen
+ * baselines above: those allow a listed rule through, so a partial regression
+ * that re-added an allowance would still pass them. This one allows nothing, so
+ * it is the thing that keeps the lists above empty.
  */
 test.describe("the standard this suite is holding to", () => {
   test.use({ colorScheme: "light" });
 
   test("no screen has any WCAG A/AA violation at all", async ({ page }) => {
-    test.fail(
-      true,
-      "The light palette fails AA contrast on every screen (--muted-foreground on --muted at " +
-        "4.34:1, text-destructive on bg-destructive/10 at 4.0:1) and `item-group` renders " +
-        "role=list with button children. Both are in packages/app.",
-    );
-
     const found: string[] = [];
 
     for (const screen of SCREENS) {

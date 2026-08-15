@@ -267,22 +267,31 @@ test.describe.serial("the journey", () => {
     expect(reveal?.detail).toMatchObject({ reason: "reveal", count: 1 });
 
     /*
-     * THE IMPORT IS AUDITED AS `secret.write`.
+     * THE IMPORT IS AUDITED AS `secret.import`, AND THE HAND WRITE IS NOT.
      *
-     * `importSecrets` hands a real import to `writeSecrets` and takes that
-     * function's audit row, so an import and a hand write are indistinguishable
-     * in the log. `secret.import` is declared in `core/audit.ts` and emitted by
-     * nothing. Asserted as it behaves here; asserted as it is documented, and
-     * marked `test.fail()`, in `tests/api-flow.spec.ts`.
+     * `importSecrets` still hands the write to `writeSecrets` -- one batch, one
+     * audit row, the row last -- and passes the action down, so the log can tell
+     * "somebody pasted a `.env` over this environment" from "somebody changed one
+     * key". Both were done through the browser earlier in this file, so both rows
+     * are here and the pair is the assertion.
      */
-    const write = audit.entries.find(
+    const imported = audit.entries.find(
       (entry) =>
-        entry.action === "secret.write" &&
+        entry.action === "secret.import" &&
         Array.isArray((entry.detail as { added?: unknown }).added) &&
         ((entry.detail as { added: string[] }).added.includes("FEATURE_FLAGS") ||
           (entry.detail as { changed?: string[] }).changed?.includes(KEY) === true),
     );
-    expect(write, "the import should have produced an audited write").toBeDefined();
+    expect(imported, "the import should have produced an audited import").toBeDefined();
+
+    // The "add a secret" step earlier in the journey. Still a write, and still
+    // separate from the import.
+    const write = audit.entries.find(
+      (entry) =>
+        entry.action === "secret.write" &&
+        (entry.detail as { added?: string[] }).added?.includes(KEY) === true,
+    );
+    expect(write, "adding a secret by hand should still be an audited write").toBeDefined();
 
     // No row carries plaintext, in its detail or anywhere else.
     expect(JSON.stringify(audit)).not.toContain("postgres://");

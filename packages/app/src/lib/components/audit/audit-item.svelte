@@ -14,7 +14,18 @@
   const summary = $derived(summariseDetail(entry));
 </script>
 
-<Item.Root variant="outline">
+<!--
+  `role="listitem"` because every use of this component is a direct child of an
+  `Item.Group`, and the registry's group is a `div role="list"`.
+
+  Without it the group owns whatever interactive element happens to be nearest --
+  the copy-the-request-id button -- and a `list` whose children are `button`s is
+  a real defect, not a lint: a screen reader announces the feed's length and then
+  cannot step through it. The role belongs here rather than on the group's
+  children generically, because THIS component is the thing that is always in a
+  list; `Item.Root` on its own is not.
+-->
+<Item.Root variant="outline" role="listitem">
   <Item.Media variant="icon">
     {#if entry.actorKind === 'service'}
       <KeyRoundIcon aria-hidden="true" />
