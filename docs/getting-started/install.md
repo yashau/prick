@@ -51,8 +51,6 @@ prk 2026.816.1
 
 ## Build from source
 
-This is the route that works today.
-
 You need [mise](https://mise.jdx.dev), which pins Rust, Node, pnpm and every
 other tool this repository uses. Install **only** mise — a system-wide install
 of any pinned tool shadows the pinned version.

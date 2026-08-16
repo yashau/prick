@@ -75,6 +75,7 @@ the rest of the day.
 | [`prk secrets`](/reference/cli/secrets)         | Read, write, import, export, version and roll back      |
 | [`prk run`](/reference/cli/run)                 | Run a program with the environment's secrets in its env |
 | [`prk access`](/reference/cli/access)           | Manage identities and grants                            |
+| [`prk keyring`](/reference/cli/keyring)         | Inspect the master key ring and advance a rotation      |
 | [`prk completions`](/reference/cli/completions) | Generate a shell completion script                      |
 | [`prk version`](/reference/cli/completions)     | Print the version                                       |
 
@@ -89,15 +90,19 @@ prk secrets upload --help
 The Worker serves a SvelteKit admin UI alongside the API, and part of the model
 is administered there:
 
-| Screen                       | Holds                                                              |
-| ---------------------------- | ------------------------------------------------------------------ |
-| `/groups`                    | [Groups](/guides/access-control#groups), their members and grants  |
-| `/audit`                     | The audit log                                                      |
-| `/settings`                  | The keyring and the [rekey](/guides/key-rotation) that advances it |
-| `/p/<project>/<environment>` | Renaming a secret                                                  |
+| Screen                       | Holds                                                             |
+| ---------------------------- | ----------------------------------------------------------------- |
+| `/groups`                    | [Groups](/guides/access-control#groups), their members and grants |
+| `/audit`                     | The audit log                                                     |
+| `/p/<project>/<environment>` | Renaming a secret                                                 |
 
 `prk access explain` reads a role held through a group, so the CLI names the
 group when a group is what confers someone's access.
+
+The [key ring](/guides/key-rotation) is on `/settings` **and** on the command
+line: the screen is the readout and the button, and
+[`prk keyring`](/reference/cli/keyring) is the same two operations without a
+browser.
 
 ## Global flags
 
@@ -141,8 +146,17 @@ so a piped result stays clean.
 **`--quiet` suppresses progress and diagnostics, and still prints results.** It
 is mutually exclusive with `--verbose`; giving both is a usage error.
 
-**`--color auto`** means "colourise when stderr is a terminal, and respect
-`NO_COLOR`". This build emits no colour, so the setting is inert today.
+**`--color` decides one thing: whether the `error:` and `warning:` prefixes on
+stderr are coloured.** `auto` colourises when stderr is a terminal and
+`NO_COLOR` is unset or empty; `always` skips both questions, for a recorded
+session or a CI log; `never` is never.
+
+Nothing on **stdout** is ever coloured, under any setting including `always`.
+stdout is the answer to the question that was asked, and it is read by `diff`,
+by `$(…)`, and by a JSON parser — `--format json` promises byte-determinism, and
+a colour setting that could change those bytes would make the promise
+conditional on an environment variable. The `--json` error envelope on stderr is
+byte-clean for the same reason.
 
 ## Environment variables
 

@@ -253,10 +253,9 @@ look from a copy.
 
 ## API surface targeted
 
-This package was written against the documented API surface while the Worker's router was still being
-built. At the time of writing the router mounted `/api/v1` and served only `GET /api/v1/health`, so
-the following are **assumed** and centralised in `src/routes.ts` — a file with no logic in it, so that
-reconciling with the router as landed is a one-file diff:
+Every route is centralised in `src/routes.ts`, a file with no logic in it, and each one is served by
+the router as landed — `docs/openapi.json` is generated from that router and `mise run openapi:check`
+fails if it goes stale, so the table below is checkable against the server's own account of itself:
 
 | Tool                | Method and path                                                  |
 | ------------------- | ---------------------------------------------------------------- |

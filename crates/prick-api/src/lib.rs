@@ -64,7 +64,7 @@ pub use credential::Credential;
 pub use error::{ApiError, Transport};
 pub use ops::{
     BatchRequest, DisplayNameChange, GrantScope, IdentityUpdate, ImportFormat, ImportRequest,
-    RevealReason, WriteMode,
+    REKEY_MAX_PAGE, RevealReason, WriteMode,
 };
 pub use response::ResponseFacts;
 

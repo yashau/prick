@@ -184,8 +184,13 @@ _.file = { path = "{{config_root}}/.dev.vars", redact = true }
 Wrangler's own convention is a `.dev.vars` file beside `wrangler.jsonc`, in
 `packages/app/`.
 
-Both paths are covered by `.gitignore`, along with `.dev.vars.*`. No example file
-is committed today, so write your own:
+Both paths are covered by `.gitignore`, along with `.dev.vars.*`. Copy the
+committed example — the one filename the ignore rule lets through — and fill it
+in:
+
+```bash
+cp .dev.vars.example .dev.vars
+```
 
 ```bash title=".dev.vars"
 MASTER_KEY=<openssl rand -base64 32>

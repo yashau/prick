@@ -64,9 +64,10 @@
 //! against the parameter shapes the generator emits.
 //!
 //! A route the spec does not serve is a failure. A route the spec serves and
-//! the CLI does not call is printed: `/audit`, `/admin/*` and `/groups/**` are
-//! deliberately unwired, and asserting on that list would turn "the API grew a
-//! route" into "the CLI is broken". The list is written straight to the process
+//! the CLI does not call is printed: `/audit` and `/groups/**` are deliberately
+//! unwired -- both are administered in the web console -- and asserting on that
+//! list would turn "the API grew a route" into "the CLI is broken". The list is
+//! written straight to the process
 //! stderr handle -- `print_stderr` is denied workspace-wide and a test does not
 //! get an exception, the same reasoning as `prick-exec`'s child fixture. Under
 //! `cargo nextest` a passing test's output is captured; `--success-output
@@ -119,7 +120,7 @@ const PATH_SENTINELS: [&str; 3] = [PROJECT, ENVIRONMENT, KEY];
 /// call would assert falsely, since the set comparison would then fail first
 /// and name the op. Raise it in the same change that adds the call, never
 /// ahead of one.
-const OPS_AT_LAST_REVIEW: usize = 25;
+const OPS_AT_LAST_REVIEW: usize = 27;
 
 /// The module under test, read at compile time so the list of ops comes from
 /// the code rather than from anybody's memory of it.
@@ -288,6 +289,9 @@ async fn call_every_op(client: &Client) -> Vec<&'static str> {
     exercise!(called, list_grants(client));
     exercise!(called, create_grant(client, UUID, "reader", scope, Some(1_760_000_000_000)));
     exercise!(called, revoke_grant(client, UUID));
+
+    exercise!(called, keyring_status(client));
+    exercise!(called, rekey_page(client, prick_api::REKEY_MAX_PAGE));
 
     called
 }
@@ -543,9 +547,8 @@ async fn the_routes_the_cli_does_not_call_are_reported_rather_than_asserted() {
         .map(|((method, _), route)| format!("  {method} {}", route.template))
         .collect();
 
-    // Not an assertion. `/audit`, `/admin/*` and `/groups/**` have no CLI
-    // surface on purpose, and a new server route must not fail the client's
-    // build.
+    // Not an assertion. `/audit` and `/groups/**` have no CLI surface on
+    // purpose, and a new server route must not fail the client's build.
     let mut stderr = std::io::stderr().lock();
     let _ = writeln!(
         stderr,

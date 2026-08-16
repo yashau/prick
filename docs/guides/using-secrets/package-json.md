@@ -91,13 +91,8 @@ parent alive for the child's lifetime during `prk run`. That is inherent to
 npm's `bin` mechanism, not something prick can avoid.
 
 For `prk run` in particular, prefer a direct binary: the platform packages
-declare `bin` themselves, and GitHub Release tarballs will be published
-alongside them.
-
-:::caution[Not published yet]
-No release has been cut, so neither the npm package nor the release tarballs
-exist. Build locally with `mise run build:rust`.
-:::
+declare `bin` themselves, and each release publishes a tarball per platform
+alongside them. See [Install](/getting-started/install).
 
 ## Next steps
 

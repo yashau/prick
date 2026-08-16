@@ -50,9 +50,18 @@ use prick_core::scope::{Scope, WILDCARD};
 use crate::client::Client;
 use crate::error::ApiError;
 use crate::models::{
-    Environment, Grant, Health, Identity, ImportResult, Project, RollbackResult, SecretExport,
-    SecretMeta, SecretValue, SecretVersion, UnknownIdentity, Whoami, WriteResult,
+    Environment, Grant, Health, Identity, ImportResult, KeyringStatus, Project, RekeyProgress,
+    RollbackResult, SecretExport, SecretMeta, SecretValue, SecretVersion, UnknownIdentity, Whoami,
+    WriteResult,
 };
+
+/// The largest page `POST /admin/rekey` will move, whatever `limit` asks for.
+///
+/// Mirrors `REKEY_MAX_PAGE` in `packages/app/src/lib/server/core/keyring.ts`,
+/// and the request schema refuses anything above it rather than clamping -- so
+/// a client that sends more is told, instead of quietly getting less than it
+/// asked for.
+pub const REKEY_MAX_PAGE: u32 = 100;
 
 /// What a bulk write does to keys it does not name.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -877,6 +886,39 @@ fn grant_body(
 /// usable global administrator and `BOOTSTRAP_ADMINS` is empty.
 pub async fn revoke_grant(client: &Client, grant_id: &str) -> Result<(), ApiError> {
     client.delete(&client.url(&["grants", grant_id])).await
+}
+
+/// `GET /admin/keyring`. Which key ids exist and how much still depends on each.
+///
+/// Requires a **global** admin grant: the ring is installation-wide, so an
+/// admin of one project is not enough.
+///
+/// # Errors
+///
+/// Any transport or response failure, including `403` for an admin whose grant
+/// is scoped below global.
+pub async fn keyring_status(client: &Client) -> Result<KeyringStatus, ApiError> {
+    client.get_json(&client.url(&["admin", "keyring"])).await
+}
+
+/// `POST /admin/rekey`. Re-encrypts one page onto the active key.
+///
+/// One call is one page and one database transaction. The caller drives the
+/// rotation: repeat while `remaining` is above zero. A row that will not
+/// decrypt fails the whole page rather than being skipped -- a skipped row
+/// would still count as gone, and the ring would then report itself safe to
+/// prune while an unreadable value remained.
+///
+/// The server clamps `limit` to [`REKEY_MAX_PAGE`], because the page commits in
+/// a single `batch()` and D1 documents a ceiling on how long one may take.
+///
+/// # Errors
+///
+/// Any transport or response failure, including `500 DECRYPT_FAILED` or
+/// `500 UNKNOWN_KID` when a row in the page will not open.
+pub async fn rekey_page(client: &Client, limit: u32) -> Result<RekeyProgress, ApiError> {
+    let body = serde_json::json!({ "limit": limit });
+    client.post_json(&client.url(&["admin", "rekey"]), &body).await
 }
 
 // In `ops/tests.rs`, not in a block here. `lint:loc` caps a source file at 1000

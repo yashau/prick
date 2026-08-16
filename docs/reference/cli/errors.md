@@ -2,7 +2,7 @@
 title: Exit codes and errors
 description: What every prk exit code and error code means, whether it is worth retrying, and what to do about it.
 sidebar:
-  order: 9
+  order: 10
 ---
 
 Every failure carries three things: a message, an exit code a script can branch

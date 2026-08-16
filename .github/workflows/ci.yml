@@ -406,9 +406,10 @@ jobs:
   # ---------------------------------------------------------------------------
   # Repository-wide checks.
   #
-  # Deliberately NOT gated on paths-filter. The upstream-reference grep is a
-  # project rule that must hold for every commit, and gating it on `.github/**`
-  # would mean a pull request touching only crates/ never runs it.
+  # Deliberately NOT gated on paths-filter. The deployment guard and the
+  # server-load grep below are project rules that must hold for every commit,
+  # and gating this job on `.github/**` would mean a pull request touching only
+  # packages/app never runs either of them.
   # ---------------------------------------------------------------------------
   workflows:
     name: workflows

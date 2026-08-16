@@ -499,10 +499,15 @@ key goes.
 
 `POST /admin/rekey` re-encrypts one page onto the active key and returns
 `{ rekeyed, remaining }`. **Callers drive it**: a rotation advances one page per
-call and is finished when `remaining` reaches zero. A row that cannot be
-decrypted fails the whole page instead of being skipped — a skipped row would
-still count as gone, and the ring would then report itself safe to prune while an
-unreadable value remained.
+call and is finished when `remaining` reaches zero.
+[`prk keyring rekey`](/reference/cli/keyring) runs that loop for you. A row that
+cannot be decrypted fails the whole page instead of being skipped — a skipped row
+would still count as gone, and the ring would then report itself safe to prune
+while an unreadable value remained.
+
+`limit` is refused above 100 rather than clamped. Clamping would answer 100 to a
+request for 1000 and report success, so a caller pacing itself off the number it
+asked for would be wrong by a factor of ten with nothing to notice.
 
 Both authorization checks are the first statement of the corresponding function
 in `core`, not of the route, because authorization is written once.
@@ -615,7 +620,7 @@ layer accepts.
 | Slug                    | 64 characters, lowercase with single interior hyphens | —                  |
 | Description             | 1024 characters                                       | —                  |
 | Audit `reason`          | 512 characters                                        | —                  |
-| Rekey page              | 1 to 1000 rows                                        | —                  |
+| Rekey page              | 1 to 100 rows                                         | —                  |
 
 `ENV_MAX_SECRETS` is enforced against the **resulting** environment, not only
 against the request: two merges of 300 keys each are individually under the cap

@@ -17,6 +17,7 @@ pub mod doctor;
 pub mod env;
 pub mod explain;
 pub mod identity;
+pub mod keyring;
 pub mod projects;
 pub mod run;
 pub mod secrets;
@@ -264,6 +265,7 @@ pub fn dispatch(cli: &Cli, out: Output) -> Result<(), CliError> {
         Command::Env(sub) => env::run(sub, &cli.global, out),
         Command::Secrets(sub) => secrets::run(sub, &cli.global, out),
         Command::Access(sub) => access::run(sub, &cli.global, out),
+        Command::Keyring(sub) => keyring::run(sub, &cli.global, out),
     }
 }
 

@@ -163,9 +163,10 @@ export type RenameBody = z.infer<typeof RenameBody>;
  * One page of a rekey.
  *
  * Bounded because a rekey re-encrypts row by row inside a single invocation and
- * `batch()` has a documented 30 s ceiling. The cron trigger and this endpoint
- * drive the same function; the limit is what makes it resumable rather than a
- * request that either finishes or times out having done an unknown amount.
+ * `batch()` has a documented 30 s ceiling. The limit is what makes a rotation
+ * resumable: a caller repeats the request until `remaining` reaches zero,
+ * rather than issuing one that either finishes or times out having done an
+ * unknown amount.
  */
 /*
  * `max` is `REKEY_MAX_PAGE` itself, imported rather than repeated.

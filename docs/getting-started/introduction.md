@@ -80,21 +80,12 @@ that organises your secrets is what controls access to them.
 - **`MASTER_KEY` is the whole ballgame.** Lose it and the data is unrecoverable.
   Read [Backup and recovery](/guides/backup-and-recovery) before you store
   anything.
-
-## What is built
-
-The security-critical layers exist and are tested: the encryption envelope and
-its additional authenticated data, Access JWT verification, grant resolution
-including groups, and the bootstrap path. The domain layer is written —
-projects, environments, secrets, identities, grants, groups and the audit query
-— and the whole HTTP surface is mounted on top of it. The `prk` CLI signs in,
-stores its token, sends service-token headers and runs every subcommand.
-
-**The rekey is operator-driven.** `GET /api/v1/admin/keyring` and
-`POST /api/v1/admin/rekey` answer for real, a rotation advances one page per
-call, and it is finished when `remaining` reaches zero. The settings screen has
-a button, and that is the whole mechanism — there is no cron. See
-[Key rotation](/guides/key-rotation).
+- **You drive the rekey.** A rotation advances one bounded page per call and is
+  finished when `remaining` reaches zero. Three things drive it and they reach
+  the same function: the button on the settings screen,
+  `POST /api/v1/admin/rekey`, and `prk keyring rekey --until-done`. A page is one
+  transaction, which is what makes stopping part-way safe. See
+  [Key rotation](/guides/key-rotation).
 
 ## Next steps
 
