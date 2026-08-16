@@ -99,6 +99,70 @@ describe('walking', () => {
   });
 });
 
+describe('nested checkouts', () => {
+  /**
+   * A scratch repository root, with `build` applied to it.
+   *
+   * @param {(dir: string) => void} build
+   * @returns {string[]}
+   */
+  function collectIn(build) {
+    const dir = mkdtempSync(join(tmpdir(), 'prick-loc-nested-'));
+    try {
+      build(dir);
+      return collectSourceFiles(dir);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+
+  it('does not walk into a git worktree, whose .git is a FILE', () => {
+    // The case that turned the gate red in practice: AGENTS.md recommends
+    // `git worktree` for concurrent agents, and a worktree carries its own copy
+    // of every generated file at a path GENERATED cannot match.
+    const found = collectIn((dir) => {
+      mkdirSync(join(dir, 'src'), { recursive: true });
+      writeFileSync(join(dir, 'src', 'a.ts'), lines(3), 'utf8');
+
+      const worktree = join(dir, '.claude', 'worktrees', 'other');
+      mkdirSync(join(worktree, 'packages', 'app'), { recursive: true });
+      writeFileSync(join(worktree, '.git'), 'gitdir: /elsewhere/.git/worktrees/other\n', 'utf8');
+      writeFileSync(
+        join(worktree, 'packages', 'app', 'worker-configuration.d.ts'),
+        lines(16077),
+        'utf8',
+      );
+    });
+
+    assert.deepEqual(found, ['src/a.ts']);
+  });
+
+  it('does not walk into a nested clone, whose .git is a DIRECTORY', () => {
+    const found = collectIn((dir) => {
+      mkdirSync(join(dir, 'src'), { recursive: true });
+      writeFileSync(join(dir, 'src', 'a.ts'), lines(3), 'utf8');
+
+      const clone = join(dir, 'vendor', 'thing');
+      mkdirSync(join(clone, '.git'), { recursive: true });
+      writeFileSync(join(clone, 'huge.ts'), lines(5000), 'utf8');
+    });
+
+    assert.deepEqual(found, ['src/a.ts']);
+  });
+
+  it('still checks the root when the root itself is a worktree', () => {
+    // Running the gate from inside a worktree must check that worktree, or the
+    // fix would exempt exactly the tree the operator is working in.
+    const found = collectIn((dir) => {
+      writeFileSync(join(dir, '.git'), 'gitdir: /elsewhere/.git/worktrees/mine\n', 'utf8');
+      mkdirSync(join(dir, 'src'), { recursive: true });
+      writeFileSync(join(dir, 'src', 'a.ts'), lines(3), 'utf8');
+    });
+
+    assert.deepEqual(found, ['src/a.ts']);
+  });
+});
+
 describe('violations', () => {
   it('reports nothing when everything is within the limit', () => {
     const dir = mkdtempSync(join(tmpdir(), 'prick-loc-ok-'));

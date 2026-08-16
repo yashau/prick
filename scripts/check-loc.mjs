@@ -13,7 +13,8 @@
 // a config.
 //
 // Generated files ARE excluded, because "split this" is not advice you can act
-// on when a tool writes the file.
+// on when a tool writes the file. So are nested checkouts -- a git worktree or
+// submodule is a different repository, and it runs this gate itself.
 
 import { readdirSync, readFileSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
@@ -89,7 +90,25 @@ export function collectSourceFiles(root) {
 
   /** @param {string} dir */
   function walk(dir) {
-    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const entries = readdirSync(dir, { withFileTypes: true });
+
+    // A nested checkout is a different repository and runs its own gate. `.git`
+    // is what marks one: a DIRECTORY for a clone or submodule, a FILE for a git
+    // worktree. Walking in would report violations against files this checkout
+    // does not own, and "split this" is not advice the person standing on this
+    // branch can act on -- the same reason generated files are excluded.
+    //
+    // Load-bearing, not hypothetical: AGENTS.md tells concurrent agents to use
+    // `git worktree`, and a worktree under the repository carries its own copy
+    // of every generated file. GENERATED matches repo-relative paths, so that
+    // copy sits at a path no entry matches and turned the gate red on a file
+    // nobody had touched.
+    //
+    // `root` itself is exempt from the check, so running the gate from inside a
+    // worktree still checks that worktree.
+    if (dir !== root && entries.some((entry) => entry.name === '.git')) return;
+
+    for (const entry of entries) {
       const full = join(dir, entry.name);
       if (entry.isDirectory()) {
         if (SKIP_DIRECTORIES.has(entry.name)) continue;
