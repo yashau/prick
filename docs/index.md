@@ -103,5 +103,6 @@ intent as fact.
 | `prk` CLI                                                                 | Login, token storage, service tokens and every subcommand are wired                     |
 | Web UI                                                                    | Every screen exists and reads the domain layer                                          |
 
-No release has been cut, so `@yashau/prick` is not on npm yet. Build the binary
-locally with `mise run build:rust` — see [Install](/getting-started/install).
+`prk` installs from npm as `@yashau/prick`, which ships a prebuilt binary for
+each platform, or builds locally with `mise run build:rust` — see
+[Install](/getting-started/install).

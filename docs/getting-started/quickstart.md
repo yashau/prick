@@ -17,12 +17,6 @@ You need:
   a Worker.
 - [mise](https://mise.jdx.dev), which pins every tool this repository uses.
 
-:::caution[One step will not work yet]
-Every step here is real, with one exception: no release has been cut, so
-`npm install -g @yashau/prick` in step 10 has nothing to install. Build the
-binary from this repository instead — step 10 says how.
-:::
-
 ## 1. Clone and install
 
 ```bash

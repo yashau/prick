@@ -488,7 +488,11 @@ Worker + UI, end-to-end, scripts, the GitHub Action and the MCP server — and C
 them on every push. `prick-core` additionally carries a machine-checked purity proof under miri.
 `mise run test` prints the current counts, which is the only place they stay right.
 
-Build from source with `mise run build:rust`.
+```bash
+npm install -g @yashau/prick
+```
+
+Ships a prebuilt binary for each platform. Or build from source with `mise run build:rust`.
 
 ## 🛠️ Development
 

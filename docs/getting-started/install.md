@@ -7,12 +7,6 @@ sidebar:
 
 `prk` is one static binary. Put it on your `PATH` and it works.
 
-:::caution[No release has been cut yet]
-`@yashau/prick` is not on npm today, so the npm and package-manager routes below
-describe how installation will work rather than something you can run right now.
-[Build from source](#build-from-source) is the route that works today.
-:::
-
 ## From npm
 
 ```bash

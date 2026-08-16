@@ -5,12 +5,6 @@ sidebar:
   order: 3
 ---
 
-:::caution[No release has been cut]
-Nothing is published to npm yet, and the one-time trusted-publishing bootstrap
-described below has not been done. Treat this page as the procedure, not as a
-history.
-:::
-
 ## Two release lines, one mechanism
 
 There are two things to release, and they work identically:
