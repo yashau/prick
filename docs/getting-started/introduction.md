@@ -65,9 +65,9 @@ that organises your secrets is what controls access to them.
 
 ## Decisions worth knowing
 
-- **The CLI talks only to your Worker.** It is a pure HTTP client, which is why
-  it ships as a single binary with no Node runtime and needs no Cloudflare
-  credentials of its own.
+- **The CLI talks only to your Worker.** It is a pure HTTP client: it presents
+  your Access credential, and everything else — encryption, authorization,
+  audit — happens server-side.
 - **Deployment is `wrangler deploy`.** Provisioning happens once per install, so
   it belongs to Cloudflare's own tooling rather than to a `prk init` command.
 - **Bulk writes are atomic.** An environment-wide write is one D1 `batch()`,

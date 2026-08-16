@@ -24,7 +24,7 @@ nothing written to disk.
 
 ## What you get
 
-- **`prk`** — a single static Rust binary. No Node and no `wrangler` at runtime.
+- **`prk`** — a single static Rust binary that talks HTTP to your Worker.
 - **A web UI** — a SvelteKit admin app served from the same Worker.
 - **Cloudflare Access** — SSO for people, service tokens for CI.
 - **Versioned secrets** — every write keeps history, and every read is audited.

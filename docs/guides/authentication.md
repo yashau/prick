@@ -16,8 +16,9 @@ There are two kinds of credential:
 | Access SSO session   | People                      | `prk login <url>`, browser round trip                                      |
 | Access service token | CI, cron, anything headless | Created in the Cloudflare dashboard, supplied as two environment variables |
 
-prick issues no credentials of its own. There are no API keys to rotate and no
-password to leak, because identity comes entirely from a verified Access JWT.
+Identity comes entirely from a verified Access JWT: whichever of the two the
+caller presents, the Worker reads the subject off the signed token rather than
+from anything it stores.
 
 :::note[Before you begin]
 The Worker has to exist first. If you have not deployed it and attached an

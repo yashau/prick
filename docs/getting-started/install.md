@@ -5,8 +5,7 @@ sidebar:
   order: 3
 ---
 
-`prk` is one static binary with no runtime dependencies. Put it on your `PATH`
-and it works.
+`prk` is one static binary. Put it on your `PATH` and it works.
 
 :::caution[No release has been cut yet]
 `@yashau/prick` is not on npm today, so the npm and package-manager routes below
