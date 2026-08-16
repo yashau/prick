@@ -413,6 +413,117 @@ export function readCargoVersions(text) {
 }
 
 // ---------------------------------------------------------------------------
+// Manifest rewriting — Cargo.lock
+// ---------------------------------------------------------------------------
+
+/**
+ * Locate every `[[package]]` block in a Cargo.lock. A block runs from its
+ * header to the next line that opens a table; the entries of a
+ * `dependencies = [ … ]` array never do, being quoted strings.
+ *
+ * Walking blocks rather than matching `version =` globally is what keeps the
+ * `version = 4` on the third line — the *lock format* version, which belongs to
+ * no block — from being stamped with a CalVer.
+ *
+ * @param {readonly string[]} lines
+ * @returns {{ name: string, versionLine: number, hasSource: boolean }[]}
+ */
+function cargoLockPackages(lines) {
+  const blocks = [];
+  let current = null;
+
+  const flush = () => {
+    if (current && current.versionLine >= 0) blocks.push(current);
+    current = null;
+  };
+
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i];
+    if (/^\s*\[/.test(line)) {
+      flush();
+      if (/^\s*\[\[package\]\]\s*$/.test(line)) {
+        current = { name: '', versionLine: -1, hasSource: false };
+      }
+      continue;
+    }
+    if (!current) continue;
+
+    const name = /^\s*name\s*=\s*"([^"]*)"/.exec(line);
+    if (name) current.name = name[1];
+    else if (/^\s*source\s*=/.test(line)) current.hasSource = true;
+    else if (current.versionLine < 0 && /^\s*version\s*=\s*"[^"]*"/.test(line)) {
+      current.versionLine = i;
+    }
+  }
+
+  flush();
+  return blocks;
+}
+
+/**
+ * Rewrite the version of every workspace member recorded in a Cargo.lock.
+ *
+ * Cargo.lock carries a `[[package]]` block per crate in the resolved graph,
+ * the workspace's own crates included. `--locked` — which every release build
+ * passes — refuses to build when the lock would have to change, so stamping
+ * Cargo.toml without stamping the lock leaves the manifest saying the new
+ * CalVer, the lock saying the old one, and cargo declining to reconcile them.
+ *
+ * Hand-rolled for the reason {@link setCargoVersion} is, and more so: cargo
+ * owns this file and rewrites it itself, so a reserialised lock — key order,
+ * spacing and all — is a diff the next `cargo build` fights over.
+ *
+ * A block belongs to this workspace **iff it has no `source` line**. Cargo
+ * stamps `source = "registry+…"` (or `git+…`) plus a checksum on everything it
+ * fetched from elsewhere; only crates resolved from a path inside the
+ * workspace are sourceless. Keying on the *name* instead would rewrite a
+ * registry crate that happens to share a name with a local one, and a lock
+ * claiming a third-party crate ships at our CalVer is one cargo rejects
+ * against the real checksum.
+ *
+ * @param {string} text
+ * @param {string} version
+ * @returns {{ text: string, changes: string[] }}
+ */
+export function setCargoLockVersion(text, version) {
+  assertVersion(version);
+
+  const lines = String(text).split('\n');
+  const changes = [];
+
+  for (const pkg of cargoLockPackages(lines)) {
+    if (pkg.hasSource) continue;
+    const m = /^(\s*version\s*=\s*)"[^"]*"(.*)$/.exec(lines[pkg.versionLine]);
+    lines[pkg.versionLine] = `${m[1]}"${version}"${m[2]}`;
+    changes.push(`[[package]] ${pkg.name} version`);
+  }
+
+  return { text: lines.join('\n'), changes };
+}
+
+/**
+ * Every version string a Cargo.lock is expected to carry, for `check`. Same
+ * sourceless-block rule as {@link setCargoLockVersion}: a registry crate's
+ * version is its own, so reporting it here would have `check` compare our
+ * CalVer against every crate on crates.io.
+ *
+ * @param {string} text
+ * @returns {{ label: string, version: string }[]}
+ */
+export function readCargoLockVersions(text) {
+  const lines = String(text).split('\n');
+  const found = [];
+
+  for (const pkg of cargoLockPackages(lines)) {
+    if (pkg.hasSource) continue;
+    const m = /^\s*version\s*=\s*"([^"]*)"/.exec(lines[pkg.versionLine]);
+    found.push({ label: `[[package]] ${pkg.name} version`, version: m[1] });
+  }
+
+  return found;
+}
+
+// ---------------------------------------------------------------------------
 // Manifest rewriting — package.json
 // ---------------------------------------------------------------------------
 
@@ -489,16 +600,31 @@ export function readPackageJsonVersions(text) {
 // Target discovery
 // ---------------------------------------------------------------------------
 
+/** @typedef {'cargo' | 'lock' | 'package'} ManifestKind */
+
+/**
+ * The writer and the reader for each manifest kind, paired so a kind added to
+ * one but not the other is a missing-key crash rather than a manifest `set`
+ * stamps and `check` never looks at.
+ *
+ * @type {Record<ManifestKind, { set: Function, read: Function }>}
+ */
+export const MANIFEST_KINDS = {
+  cargo: { set: setCargoVersion, read: readCargoVersions },
+  lock: { set: setCargoLockVersion, read: readCargoLockVersions },
+  package: { set: setPackageJsonVersion, read: readPackageJsonVersions },
+};
+
 /**
  * Every manifest this script owns, relative to the repo root, in a stable
  * order. Only paths that exist are returned — this repo is built up in stages
  * and `set` must not crash because `e2e/` has not been created yet.
  *
  * @param {string} root
- * @returns {{ path: string, kind: 'cargo' | 'package' }[]}
+ * @returns {{ path: string, kind: ManifestKind }[]}
  */
 export function discoverManifests(root) {
-  /** @type {{ path: string, kind: 'cargo' | 'package' }[]} */
+  /** @type {{ path: string, kind: ManifestKind }[]} */
   const targets = [];
   const add = (rel, kind) => {
     if (existsSync(path.join(root, rel)) && !targets.some((t) => t.path === rel)) {
@@ -507,6 +633,9 @@ export function discoverManifests(root) {
   };
 
   add('Cargo.toml', 'cargo');
+  // The lock is a manifest for this purpose: it records a version per workspace
+  // member, and `cargo build --locked` fails if it disagrees with Cargo.toml.
+  add('Cargo.lock', 'lock');
   add('package.json', 'package');
 
   // packages/*/package.json and packages/*/*/package.json (packages/npm/* lives
@@ -746,10 +875,7 @@ function cmdSet({ root, version, log }) {
   for (const target of targets) {
     const abs = path.join(root, target.path);
     const before = readFileSync(abs, 'utf8');
-    const { text, changes } =
-      target.kind === 'cargo'
-        ? setCargoVersion(before, version)
-        : setPackageJsonVersion(before, version);
+    const { text, changes } = MANIFEST_KINDS[target.kind].set(before, version);
 
     if (text === before) {
       log(`  ${target.path}: already ${version}`);
@@ -778,9 +904,9 @@ function cmdCheck({ root, log, logErr }) {
   const observed = [];
   for (const target of targets) {
     const text = readFileSync(path.join(root, target.path), 'utf8');
-    const versions =
-      target.kind === 'cargo' ? readCargoVersions(text) : readPackageJsonVersions(text);
-    for (const v of versions) observed.push({ file: target.path, ...v });
+    for (const v of MANIFEST_KINDS[target.kind].read(text)) {
+      observed.push({ file: target.path, ...v });
+    }
   }
 
   if (observed.length === 0) {
