@@ -84,6 +84,21 @@ Every command accepts `--help`:
 prk secrets upload --help
 ```
 
+## Administered in the web console
+
+The Worker serves a SvelteKit admin UI alongside the API, and part of the model
+is administered there:
+
+| Screen                       | Holds                                                              |
+| ---------------------------- | ------------------------------------------------------------------ |
+| `/groups`                    | [Groups](/guides/access-control#groups), their members and grants  |
+| `/audit`                     | The audit log                                                      |
+| `/settings`                  | The keyring and the [rekey](/guides/key-rotation) that advances it |
+| `/p/<project>/<environment>` | Renaming a secret                                                  |
+
+`prk access explain` reads a role held through a group, so the CLI names the
+group when a group is what confers someone's access.
+
 ## Global flags
 
 These work on every command, and they work in either position:
