@@ -62,7 +62,10 @@ pub use client::{Body, Client, Received};
 pub use config::Config;
 pub use credential::Credential;
 pub use error::{ApiError, Transport};
-pub use ops::{BatchRequest, GrantScope, ImportFormat, ImportRequest, RevealReason, WriteMode};
+pub use ops::{
+    BatchRequest, DisplayNameChange, GrantScope, IdentityUpdate, ImportFormat, ImportRequest,
+    RevealReason, WriteMode,
+};
 pub use response::ResponseFacts;
 
 /// Builds the runtime the CLI drives every request from.

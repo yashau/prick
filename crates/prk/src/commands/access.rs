@@ -50,12 +50,12 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use clap::Subcommand;
 
-use prick_api::models::{Grant, Identity};
+use prick_api::models::{Grant, Identity, UnknownIdentity};
 use prick_api::{GrantScope, ops};
 use prick_core::scope::Scope;
 
 use crate::cli::GlobalArgs;
-use crate::commands::{Context, explain, projects::confirm, require_slug};
+use crate::commands::{Context, explain, identity, projects::confirm, require_slug};
 use crate::error::CliError;
 use crate::output::Output;
 
@@ -112,6 +112,54 @@ pub enum AccessCommand {
         scope: String,
     },
 
+    /// Disable an identity. The kill switch.
+    ///
+    /// Checked before grants are resolved, so it outranks every grant at every
+    /// scope -- including one held through a group, and including
+    /// `BOOTSTRAP_ADMINS`. One write, rather than a hunt for rows with the risk
+    /// of missing one.
+    ///
+    /// Requires **global** admin: an administrator of one project flipping this
+    /// would be revoking access to projects they have nothing to do with.
+    Disable {
+        /// The identity to disable.
+        #[arg(value_name = "SUBJECT")]
+        subject: String,
+    },
+
+    /// Re-enable a disabled identity.
+    ///
+    /// Restores every grant it still holds. `prk access explain <SUBJECT>` says
+    /// what that is, before you do it.
+    Enable {
+        /// The identity to enable.
+        #[arg(value_name = "SUBJECT")]
+        subject: String,
+    },
+
+    /// Set or clear an identity's display name.
+    ///
+    /// Not cosmetic. A service token's subject is
+    /// `e367826f93b8d71185e03fe518aff3b4.access`, and an access list of those
+    /// is unreadable -- which is how a stale token survives three audits.
+    Rename {
+        /// The identity to rename.
+        #[arg(value_name = "SUBJECT")]
+        subject: String,
+
+        /// The new display name. At most 128 characters.
+        #[arg(value_name = "NAME", required_unless_present = "clear", conflicts_with = "clear")]
+        name: Option<String>,
+
+        /// Remove the display name instead of setting one.
+        ///
+        /// A separate flag rather than an empty NAME: the server refuses `""`,
+        /// and an argument that vanishes when a shell variable is unset is how
+        /// a label gets erased by a script nobody meant to run.
+        #[arg(long)]
+        clear: bool,
+    },
+
     /// Explain what an identity can do, and what conferred it.
     ///
     /// Unlike `list`, this includes roles held through a group, and it names
@@ -132,6 +180,9 @@ impl AccessCommand {
             Self::Identities { .. } => "access identities",
             Self::Grant { .. } => "access grant",
             Self::Revoke { .. } => "access revoke",
+            Self::Disable { .. } => "access disable",
+            Self::Enable { .. } => "access enable",
+            Self::Rename { .. } => "access rename",
             Self::Explain { .. } => "access explain",
         }
     }
@@ -179,51 +230,12 @@ pub fn run(command: &AccessCommand, global: &GlobalArgs, out: Output) -> Result<
 
         AccessCommand::Identities { denied: true } => {
             let denied = context.block_on(ops::list_unknown_identities(client))?;
-
-            if global.json {
-                let rows: Vec<serde_json::Value> = denied
-                    .iter()
-                    .map(|entry| {
-                        serde_json::json!({
-                            "kind": entry.kind,
-                            "subject": entry.subject,
-                            "first_seen_at": entry.first_seen_at,
-                            "last_seen_at": entry.last_seen_at,
-                            "attempts": entry.attempts,
-                        })
-                    })
-                    .collect();
-                out.json(&serde_json::Value::Array(rows));
-            } else if denied.is_empty() {
-                out.note("Nothing has been denied and left ungranted.");
-            } else {
-                for entry in &denied {
-                    out.data(&format!(
-                        "{}\t{}\t{} attempt(s)",
-                        entry.subject, entry.kind, entry.attempts
-                    ));
-                }
-                out.note(
-                    "Grant one of these with `prk access grant <SUBJECT> --role reader --scope \
-                     <PROJECT>:<ENVIRONMENT>`.",
-                );
-            }
+            report_denied(&denied, global, out);
         }
 
         AccessCommand::Identities { denied: false } => {
             let identities = context.block_on(ops::list_identities(client))?;
-
-            if global.json {
-                let rows: Vec<serde_json::Value> = identities.iter().map(identity_json).collect();
-                out.json(&serde_json::Value::Array(rows));
-            } else if identities.is_empty() {
-                out.note("No identities have authenticated yet.");
-            } else {
-                for identity in &identities {
-                    let disabled = if identity.disabled { "\tDISABLED" } else { "" };
-                    out.data(&format!("{}\t{}{disabled}", identity.subject, identity.kind));
-                }
-            }
+            report_identities(&identities, global, out);
         }
 
         AccessCommand::Grant { subject, role, scope, expires_in } => {
@@ -278,6 +290,22 @@ pub fn run(command: &AccessCommand, global: &GlobalArgs, out: Output) -> Result<
             } else {
                 out.data(&format!("Revoked `{subject}` on `{parsed}`."));
             }
+        }
+
+        AccessCommand::Disable { subject } => {
+            identity::set_disabled(&context, subject, true, global, out)?;
+        }
+
+        AccessCommand::Enable { subject } => {
+            identity::set_disabled(&context, subject, false, global, out)?;
+        }
+
+        AccessCommand::Rename { subject, name, clear } => {
+            // `clear` and `name` are mutually exclusive at the parser, and one
+            // of them is required, so this is total: a `--clear` is the `None`
+            // the API sends as an explicit `null`.
+            let name = if *clear { None } else { name.as_deref() };
+            identity::rename(&context, subject, name, global, out)?;
         }
 
         AccessCommand::Explain { subject } => {
@@ -388,6 +416,50 @@ fn find_grant<'a>(
     Ok(grant)
 }
 
+/// Prints the "seen, denied, and never granted" listing.
+fn report_denied(denied: &[UnknownIdentity], global: &GlobalArgs, out: Output) {
+    if global.json {
+        let rows: Vec<serde_json::Value> = denied
+            .iter()
+            .map(|entry| {
+                serde_json::json!({
+                    "kind": entry.kind,
+                    "subject": entry.subject,
+                    "first_seen_at": entry.first_seen_at,
+                    "last_seen_at": entry.last_seen_at,
+                    "attempts": entry.attempts,
+                })
+            })
+            .collect();
+        out.json(&serde_json::Value::Array(rows));
+    } else if denied.is_empty() {
+        out.note("Nothing has been denied and left ungranted.");
+    } else {
+        for entry in denied {
+            out.data(&format!("{}\t{}\t{} attempt(s)", entry.subject, entry.kind, entry.attempts));
+        }
+        out.note(
+            "Grant one of these with `prk access grant <SUBJECT> --role reader --scope \
+             <PROJECT>:<ENVIRONMENT>`.",
+        );
+    }
+}
+
+/// Prints an identity listing.
+fn report_identities(identities: &[Identity], global: &GlobalArgs, out: Output) {
+    if global.json {
+        let rows: Vec<serde_json::Value> = identities.iter().map(identity_json).collect();
+        out.json(&serde_json::Value::Array(rows));
+    } else if identities.is_empty() {
+        out.note("No identities have authenticated yet.");
+    } else {
+        for identity in identities {
+            let disabled = if identity.disabled { "\tDISABLED" } else { "" };
+            out.data(&format!("{}\t{}{disabled}", identity.subject, identity.kind));
+        }
+    }
+}
+
 /// Prints a grant listing.
 fn report_grants(grants: &[Grant], global: &GlobalArgs, out: Output) {
     if global.json {
@@ -429,7 +501,11 @@ fn grant_json(grant: &Grant) -> serde_json::Value {
 }
 
 /// One identity, as a JSON document.
-fn identity_json(identity: &Identity) -> serde_json::Value {
+///
+/// Shared with [`crate::commands::identity`], which emits the same row after a
+/// patch. One spelling of these fields, so a script reading `identities` and a
+/// script reading `disable` do not have to handle two.
+pub(crate) fn identity_json(identity: &Identity) -> serde_json::Value {
     serde_json::json!({
         "id": identity.id,
         "kind": identity.kind,
@@ -560,6 +636,8 @@ mod tests {
 
     #[test]
     fn every_subcommand_reports_a_path() {
+        let mut paths = Vec::new();
+
         for command in [
             AccessCommand::List,
             AccessCommand::Identities { denied: true },
@@ -570,9 +648,86 @@ mod tests {
                 expires_in: None,
             },
             AccessCommand::Revoke { subject: "ci@example.com".to_owned(), scope: "*:*".to_owned() },
+            AccessCommand::Disable { subject: "ci@example.com".to_owned() },
+            AccessCommand::Enable { subject: "ci@example.com".to_owned() },
+            AccessCommand::Rename {
+                subject: "ci@example.com".to_owned(),
+                name: Some("CI".to_owned()),
+                clear: false,
+            },
             AccessCommand::Explain { subject: "ci@example.com".to_owned() },
         ] {
             assert!(command.path().starts_with("access "));
+            paths.push(command.path());
         }
+
+        // A copy-pasted arm reports a sibling's name, and `prk -v` then says it
+        // is dispatching a command the user did not type.
+        let unique: std::collections::BTreeSet<&str> = paths.iter().copied().collect();
+        assert_eq!(unique.len(), paths.len(), "two subcommands share a path: {paths:?}");
+    }
+
+    // -----------------------------------------------------------------------
+    // `disable`, `enable` and `rename`
+    // -----------------------------------------------------------------------
+
+    /// The invocations `docs/reference/cli.md` prints, character for character.
+    #[test]
+    fn the_documented_kill_switch_invocations_parse() {
+        use clap::Parser as _;
+
+        use crate::cli::{Cli, Command};
+
+        let cli = Cli::try_parse_from(["prk", "access", "disable", "bob@example.com"])
+            .expect("the invocation printed in docs/reference/cli.md must parse");
+        let Command::Access(AccessCommand::Disable { subject }) = cli.command else {
+            panic!("`access disable` did not parse as itself");
+        };
+        assert_eq!(subject, "bob@example.com");
+
+        let cli = Cli::try_parse_from(["prk", "access", "enable", "bob@example.com"])
+            .expect("the invocation printed in docs/reference/cli.md must parse");
+        assert!(matches!(cli.command, Command::Access(AccessCommand::Enable { .. })));
+
+        let cli = Cli::try_parse_from([
+            "prk",
+            "access",
+            "rename",
+            "e367826f93b8d71185e03fe518aff3b4.access",
+            "staging deploy job",
+        ])
+        .expect("the invocation printed in docs/reference/cli.md must parse");
+        let Command::Access(AccessCommand::Rename { subject, name, clear }) = cli.command else {
+            panic!("`access rename` did not parse as itself");
+        };
+        assert_eq!(subject, "e367826f93b8d71185e03fe518aff3b4.access");
+        assert_eq!(name.as_deref(), Some("staging deploy job"));
+        assert!(!clear);
+    }
+
+    #[test]
+    fn a_rename_needs_either_a_name_or_an_explicit_clear() {
+        use clap::Parser as _;
+
+        use crate::cli::{Cli, Command};
+
+        // Neither. Silently clearing here is how a label disappears because a
+        // shell variable was unset.
+        assert!(Cli::try_parse_from(["prk", "access", "rename", "abc.access"]).is_err());
+
+        // Both. One of them would have to be ignored, and there is no reading
+        // of the pair that is obviously right.
+        assert!(
+            Cli::try_parse_from(["prk", "access", "rename", "abc.access", "CI", "--clear"])
+                .is_err()
+        );
+
+        let cli = Cli::try_parse_from(["prk", "access", "rename", "abc.access", "--clear"])
+            .expect("`--clear` on its own is the clear");
+        let Command::Access(AccessCommand::Rename { name, clear, .. }) = cli.command else {
+            panic!("`access rename` did not parse as itself");
+        };
+        assert!(clear);
+        assert_eq!(name, None);
     }
 }

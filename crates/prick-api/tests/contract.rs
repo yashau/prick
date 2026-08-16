@@ -82,8 +82,8 @@ use serde_json::Value;
 
 use prick_api::ops;
 use prick_api::{
-    BatchRequest, Client, Config, Credential, GrantScope, ImportFormat, ImportRequest,
-    RevealReason, WriteMode,
+    BatchRequest, Client, Config, Credential, DisplayNameChange, GrantScope, IdentityUpdate,
+    ImportFormat, ImportRequest, RevealReason, WriteMode,
 };
 use wiremock::matchers::any;
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -119,7 +119,7 @@ const PATH_SENTINELS: [&str; 3] = [PROJECT, ENVIRONMENT, KEY];
 /// call would assert falsely, since the set comparison would then fail first
 /// and name the op. Raise it in the same change that adds the call, never
 /// ahead of one.
-const OPS_AT_LAST_REVIEW: usize = 24;
+const OPS_AT_LAST_REVIEW: usize = 25;
 
 /// The module under test, read at compile time so the list of ops comes from
 /// the code rather than from anybody's memory of it.
@@ -249,6 +249,12 @@ async fn call_every_op(client: &Client) -> Vec<&'static str> {
         reason: Some("contract test"),
     };
     let scope = GrantScope::Environment { project: PROJECT, environment: ENVIRONMENT };
+    // Both fields at once, so the body check reads both property names off the
+    // spec rather than only whichever one a one-field call happened to send.
+    let identity = IdentityUpdate {
+        display_name: DisplayNameChange::Set("Contract test"),
+        disabled: Some(true),
+    };
 
     exercise!(called, health(client));
     exercise!(called, whoami(client));
@@ -276,6 +282,7 @@ async fn call_every_op(client: &Client) -> Vec<&'static str> {
     exercise!(called, rollback_secret(client, PROJECT, ENVIRONMENT, KEY, 1, Some("contract test")));
 
     exercise!(called, list_identities(client));
+    exercise!(called, update_identity(client, UUID, &identity));
     exercise!(called, explain_identity_permissions(client, UUID));
     exercise!(called, list_unknown_identities(client));
     exercise!(called, list_grants(client));

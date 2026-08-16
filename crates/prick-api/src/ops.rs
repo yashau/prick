@@ -266,6 +266,45 @@ impl fmt::Debug for ImportRequest<'_> {
     }
 }
 
+/// What a patch does to an identity's nullable display name.
+///
+/// Three states rather than an `Option`, because the field is nullable and the
+/// wire has three answers for it: absent, a string, and `null`. An
+/// `Option<&str>` would have to pick two of the three, and whichever pair it
+/// picked, the missing one would be spelled as one of the others -- which is
+/// how a request meant to clear a label instead leaves it in place, or how a
+/// request meant to leave it alone erases it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum DisplayNameChange<'a> {
+    /// Leave the stored name alone. **Omitted** from the body.
+    #[default]
+    Keep,
+    /// Replace it.
+    Set(
+        /// The new label. The server caps it at 128 characters and refuses an
+        /// empty one.
+        &'a str,
+    ),
+    /// Remove it. Sent as a present JSON `null`, which is what the server reads
+    /// as the clear; an absent key means "leave it alone" and `""` is a 422.
+    Clear,
+}
+
+/// The fields `PATCH /identities/{id}` is being asked to change.
+///
+/// Every field is a "say nothing" by default, and that default is the point.
+/// The body is built from exactly what was set, so a command that only renames
+/// an identity sends no `disabled` at all -- rather than sending
+/// `disabled: false` because a `bool` field defaulted, which would silently
+/// re-enable an identity somebody had killed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct IdentityUpdate<'a> {
+    /// The label an access list is read by. See [`DisplayNameChange`].
+    pub display_name: DisplayNameChange<'a>,
+    /// The kill switch. `None` leaves it exactly as it is.
+    pub disabled: Option<bool>,
+}
+
 // ---------------------------------------------------------------------------
 // Meta
 // ---------------------------------------------------------------------------
@@ -664,6 +703,64 @@ pub async fn list_identities(client: &Client) -> Result<Vec<Identity>, ApiError>
     client.get_json(&client.url(&["identities"])).await
 }
 
+/// `PATCH /identities/{id}`. Rename an identity, or throw the kill switch.
+///
+/// Takes an **identity id**, not a subject, the same as [`create_grant`], and
+/// resolvable the same way through [`list_identities`].
+///
+/// Requires **global** admin, which is stricter than every other access route
+/// here: `disabled` outranks every grant at every scope, `BOOTSTRAP_ADMINS`
+/// included, so a project administrator flipping it would be revoking access to
+/// projects they have nothing to do with.
+///
+/// The body carries only the fields [`IdentityUpdate`] names. That is a
+/// property worth stating rather than assuming: this is a `PATCH`, so a field
+/// the body does not carry keeps its stored value, and a `disabled: false` sent
+/// because a flag defaulted would re-enable an identity that was killed on
+/// purpose.
+///
+/// # Errors
+///
+/// Any transport or response failure, including `403` when the caller is an
+/// administrator of something narrower than everything, and `404` when no
+/// identity has that id.
+pub async fn update_identity(
+    client: &Client,
+    identity_id: &str,
+    update: &IdentityUpdate<'_>,
+) -> Result<Identity, ApiError> {
+    let url = client.url(&["identities", identity_id]);
+    client.patch_json(&url, &identity_body(update)).await
+}
+
+/// Builds the `PATCH /identities/{id}` body.
+///
+/// Split out so its shape is asserted by a unit test rather than only by a
+/// mocked round trip: the difference between an absent `display_name` and a
+/// present `null` one is invisible in a passing request and decides whether a
+/// label survives.
+fn identity_body(update: &IdentityUpdate<'_>) -> serde_json::Value {
+    let mut body = serde_json::Map::new();
+
+    match update.display_name {
+        // Not `Value::Null`, and not an empty string: an absent key is the only
+        // spelling the server reads as "leave the stored name alone".
+        DisplayNameChange::Keep => {}
+        DisplayNameChange::Set(name) => {
+            body.insert("display_name".to_owned(), serde_json::Value::String(name.to_owned()));
+        }
+        DisplayNameChange::Clear => {
+            body.insert("display_name".to_owned(), serde_json::Value::Null);
+        }
+    }
+
+    if let Some(disabled) = update.disabled {
+        body.insert("disabled".to_owned(), serde_json::Value::Bool(disabled));
+    }
+
+    serde_json::Value::Object(body)
+}
+
 /// The URL of one identity's effective permissions.
 fn effective_permissions_url(client: &Client, identity_id: &str) -> String {
     client.url(&["identities", identity_id, "effective-permissions"])
@@ -782,210 +879,9 @@ pub async fn revoke_grant(client: &Client, grant_id: &str) -> Result<(), ApiErro
     client.delete(&client.url(&["grants", grant_id])).await
 }
 
+// In `ops/tests.rs`, not in a block here. `lint:loc` caps a source file at 1000
+// lines, and every `pub async fn` has to stay in *this* file because
+// `tests/contract.rs` discovers routes by reading it with `include_str!`. So
+// the declarations stay and the tests move; see that file's own header.
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::config::Config;
-    use crate::credential::Credential;
-
-    fn client() -> Client {
-        Client::new(Config::new("https://prick.example.com"), Credential::Anonymous)
-            .expect("building a client must succeed")
-    }
-
-    #[test]
-    fn a_custom_method_hangs_off_the_collection_not_off_a_key() {
-        let client = client();
-        assert_eq!(
-            custom_method(&client, "billing", "eu-west", ":rollback"),
-            "https://prick.example.com/api/v1/projects/billing/environments/eu-west/secrets:rollback"
-        );
-        assert_eq!(
-            custom_method(&client, "billing", "eu-west", ":export"),
-            "https://prick.example.com/api/v1/projects/billing/environments/eu-west/secrets:export"
-        );
-    }
-
-    #[test]
-    fn a_uuid_is_the_only_thing_between_identities_and_effective_permissions() {
-        // Not `/access/identities/...`, and not a query parameter: the id is a
-        // path segment, and the route hangs off `/identities`.
-        // `crates/prick-api/tests/contract.rs` checks this shape against
-        // `docs/openapi.json`; this pins the spelling the code emits, so a
-        // failure says which of the two moved.
-        assert_eq!(
-            effective_permissions_url(&client(), "abc"),
-            "https://prick.example.com/api/v1/identities/abc/effective-permissions"
-        );
-    }
-
-    #[test]
-    fn a_batch_body_carries_a_map_of_set_keys_and_an_array_of_deletes() {
-        let value = SecretString::from("postgres://u:p@h/db");
-        let body = batch_body(&BatchRequest {
-            mode: WriteMode::Merge,
-            set: vec![("DATABASE_URL", &value)],
-            descriptions: vec![("DATABASE_URL", Some("Primary, rotates quarterly"))],
-            delete: vec!["OLD_KEY"],
-            expected_rev: Some(4),
-            reason: Some("rotation"),
-        });
-
-        assert_eq!(body["mode"], "merge");
-        assert_eq!(body["set"]["DATABASE_URL"], "postgres://u:p@h/db");
-        assert_eq!(body["descriptions"]["DATABASE_URL"], "Primary, rotates quarterly");
-        assert_eq!(body["delete"], serde_json::json!(["OLD_KEY"]));
-        // `expectedRev` would be accepted by no schema in this API and would
-        // leave the write with no concurrency guard at all.
-        assert_eq!(body["expected_rev"], 4);
-        assert_eq!(body["reason"], "rotation");
-    }
-
-    #[test]
-    fn a_description_is_omitted_when_unset_and_null_when_cleared() {
-        let value = SecretString::from("x");
-
-        // Omitted. The server coalesces, so the stored description survives a
-        // write that says nothing about it -- which is what every `prk secrets
-        // set` without `--description` must do.
-        let silent =
-            batch_body(&BatchRequest { set: vec![("K", &value)], ..BatchRequest::default() });
-        assert!(silent.get("descriptions").is_none(), "an empty list is not an empty object");
-
-        // Present and `null`. The server overwrites, so this clears it.
-        let cleared = batch_body(&BatchRequest {
-            set: vec![("K", &value)],
-            descriptions: vec![("K", None)],
-            ..BatchRequest::default()
-        });
-        assert_eq!(cleared["descriptions"]["K"], serde_json::Value::Null);
-        assert!(
-            cleared["descriptions"].as_object().is_some_and(|map| map.contains_key("K")),
-            "a cleared description is a present null, not an absent key"
-        );
-    }
-
-    #[test]
-    fn an_absent_guard_or_reason_is_omitted_rather_than_sent_as_null() {
-        let value = SecretString::from("x");
-        let body =
-            batch_body(&BatchRequest { set: vec![("K", &value)], ..BatchRequest::default() });
-
-        assert!(body.get("expected_rev").is_none());
-        assert!(body.get("reason").is_none());
-        assert!(body.get("delete").is_none(), "an empty delete list is not the same as none");
-        assert_eq!(body["mode"], "merge", "the default mode is the non-destructive one");
-    }
-
-    #[test]
-    fn a_batch_request_never_prints_a_value_through_debug() {
-        let value = SecretString::from("hunter2");
-        let request = BatchRequest { set: vec![("K", &value)], ..BatchRequest::default() };
-
-        let rendered = format!("{request:?}");
-        assert!(!rendered.contains("hunter2"), "a value leaked through Debug: {rendered}");
-        assert!(rendered.contains('K'), "the key is plaintext and should still be visible");
-    }
-
-    #[test]
-    fn an_import_body_is_a_blob_rather_than_a_parsed_array() {
-        let body = import_body(&ImportRequest {
-            format: ImportFormat::Env,
-            content: "A=1\nB=2\n",
-            mode: WriteMode::Replace,
-            dry_run: true,
-            expected_rev: Some(7),
-            reason: None,
-        });
-
-        assert_eq!(body["format"], "env");
-        assert_eq!(body["content"], "A=1\nB=2\n");
-        assert_eq!(body["mode"], "replace");
-        assert_eq!(body["dry_run"], true);
-        assert_eq!(body["expected_rev"], 7);
-        assert!(body.get("secrets").is_none(), "the server owns the parser");
-    }
-
-    #[test]
-    fn an_import_request_never_prints_the_blob_through_debug() {
-        let request = ImportRequest {
-            format: ImportFormat::Env,
-            content: "DATABASE_URL=hunter2\n",
-            mode: WriteMode::Replace,
-            dry_run: false,
-            expected_rev: None,
-            reason: None,
-        };
-
-        let rendered = format!("{request:?}");
-        assert!(!rendered.contains("hunter2"), "a blob leaked through Debug: {rendered}");
-        assert!(rendered.contains("redacted"), "{rendered}");
-    }
-
-    #[test]
-    fn a_grant_body_is_discriminated_on_scope_type() {
-        let global = grant_body("id-1", "admin", GrantScope::Global, None);
-        assert_eq!(global["scope_type"], "global");
-        assert!(global.get("project").is_none(), "a global grant names no project");
-        assert!(global.get("expires_at").is_none());
-
-        let project =
-            grant_body("id-1", "writer", GrantScope::Project { project: "billing" }, None);
-        assert_eq!(project["scope_type"], "project");
-        assert_eq!(project["project"], "billing");
-        assert!(project.get("environment").is_none());
-
-        let environment = grant_body(
-            "id-1",
-            "reader",
-            GrantScope::Environment { project: "billing", environment: "eu-west" },
-            Some(1_760_000_000_000),
-        );
-        assert_eq!(environment["scope_type"], "environment");
-        assert_eq!(environment["environment"], "eu-west");
-        assert_eq!(environment["expires_at"], 1_760_000_000_000_i64);
-        // Never `subject`, and never a `scope` string: neither exists.
-        assert!(environment.get("subject").is_none());
-        assert!(environment.get("scope").is_none());
-        assert_eq!(environment["identity_id"], "id-1");
-    }
-
-    #[test]
-    fn the_cli_scope_spelling_maps_onto_the_unions_three_arms() {
-        let global: Scope = "*:*".parse().expect("a global scope");
-        assert_eq!(GrantScope::from_scope(&global).expect("global"), GrantScope::Global);
-
-        let project: Scope = "billing:*".parse().expect("a project scope");
-        assert_eq!(
-            GrantScope::from_scope(&project).expect("project"),
-            GrantScope::Project { project: "billing" }
-        );
-
-        let environment: Scope = "billing:eu-west".parse().expect("an environment scope");
-        assert_eq!(
-            GrantScope::from_scope(&environment).expect("environment"),
-            GrantScope::Environment { project: "billing", environment: "eu-west" }
-        );
-    }
-
-    #[test]
-    fn an_environment_without_a_project_is_refused_rather_than_widened() {
-        let scope: Scope = "*:production".parse().expect("parses as a scope");
-        let err = GrantScope::from_scope(&scope).expect_err("there is no such grant scope");
-        assert_eq!(err.kind(), ErrorKind::Validation);
-        assert!(err.to_string().contains("production"), "{err}");
-    }
-
-    #[test]
-    fn the_wire_spellings_are_the_ones_the_schemas_accept() {
-        assert_eq!(WriteMode::default().as_str(), "merge");
-        assert_eq!(WriteMode::Replace.as_str(), "replace");
-        assert_eq!(ImportFormat::default().as_str(), "env");
-        assert_eq!(ImportFormat::Json.as_str(), "json");
-        for reason in
-            [RevealReason::Reveal, RevealReason::Copy, RevealReason::Export, RevealReason::Run]
-        {
-            assert!(reason.as_str().chars().all(|c| c.is_ascii_lowercase()));
-        }
-    }
-}
+mod tests;

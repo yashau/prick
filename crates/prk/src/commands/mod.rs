@@ -16,6 +16,7 @@ pub mod completions;
 pub mod doctor;
 pub mod env;
 pub mod explain;
+pub mod identity;
 pub mod projects;
 pub mod run;
 pub mod secrets;

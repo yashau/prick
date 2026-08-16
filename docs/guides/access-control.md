@@ -43,14 +43,17 @@ kinds, and neither is created by prick:
 | `service` | The service token's `common_name` | An Access service token |
 
 A service token subject looks like `e367826f93b8d71185e03fe518aff3b4.access`.
-Give it a display name as soon as you grant it, because nobody maps that string
-to "the staging deploy job" from memory.
+Give it a display name as soon as you grant it — `prk access rename <SUBJECT>
+<NAME>` — because nobody maps that string to "the staging deploy job" from
+memory.
 
 Every identity has a `disabled` flag. It is a kill switch: it is checked before
 grants are resolved, so disabling an identity is one write rather than a hunt
 for its rows. A disabled identity resolves to **nothing** — including when it is
 named in `BOOTSTRAP_ADMINS`, because a kill switch that a config variable can
-override is worthless exactly when it is being used in anger.
+override is worthless exactly when it is being used in anger. `prk access
+disable <SUBJECT>` throws it; see
+[the kill switch](#revoking-is-per-scope-the-kill-switch-is-not).
 
 ## Roles
 
@@ -130,14 +133,67 @@ prk access list
 is excluded rather than listed as inert. A scoped admin sees the grants that touch
 what they administer, not the rest of the organisation's access graph.
 
+### Revoking is per scope. The kill switch is not
+
+`revoke` removes **one** grant, at one scope. During an incident that is the wrong
+shape of tool: a compromised identity may hold several grants, and the ones it
+holds through a group are not revocable from here at all — you would have to find
+each group and remove the membership, and the failure mode of that hunt is missing
+one and believing you are done.
+
+```bash
+prk access disable bob@example.com
+```
+
+That is one write, and it is checked **before** grants are resolved, so it
+outranks every one of them at every scope — direct, group-held, and
+`BOOTSTRAP_ADMINS` alike. Nothing has to be enumerated, so nothing can be missed.
+It asks for confirmation, the same as `prk access revoke`; `--yes` answers it.
+
+```bash
+prk access enable bob@example.com
+```
+
+Reversible, and the grants come back exactly as they were, because disabling never
+touched them. Run `prk access explain bob@example.com` first: a disabled identity
+still reports its sources, so that is the list of what re-enabling would restore.
+
+Disabling is not a substitute for revoking. It is the thing to do **first**, at
+three in the morning, so that the unpicking of individual grants and group
+memberships happens afterwards with the access already stopped.
+
+Both require **global** admin. A project admin flipping the switch would be
+revoking access to projects they have nothing to do with, which is why the route
+draws the line above every other access operation.
+
+### Naming a service token before you have to revoke it
+
+```bash
+prk access rename e367826f93b8d71185e03fe518aff3b4.access "staging deploy job"
+```
+
+An access list of `common_name` hex strings is unreadable, and that is how a stale
+token survives three audits: nobody could say what it was for, so nobody was
+willing to be the one who removed it. The name is what turns revoking it into a
+decision somebody can take.
+
+The name is nullable, so removing it is spelled out rather than implied:
+
+```bash
+prk access rename e367826f93b8d71185e03fe518aff3b4.access --clear
+```
+
+Renaming sends only the name, and disabling sends only the switch. Neither request
+can carry the other's field, so a rename cannot re-enable an identity somebody
+disabled.
+
 ## Groups
 
 A group is a **named set of identities** and nothing else. There is no role and no
 scope on a group itself: creating one grants nobody anything, and a group with
 members but no grants confers exactly nothing. Membership is never a permission.
 
-Groups have no `prk` subcommand yet. They are managed through the API and the web
-UI:
+Groups are managed through the API and the web UI:
 
 | Operation                       | Route                                  | Requires                                  |
 | ------------------------------- | -------------------------------------- | ----------------------------------------- |
