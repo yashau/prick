@@ -70,15 +70,15 @@ enough to have wedged the `e2e` job outright. Run it only on a bare Linux box.
 
 Never hand-edit a version; see the Conventions below for why the tag is the source of truth.
 
-| Task                         | Does                                                                                  |
-| ---------------------------- | ------------------------------------------------------------------------------------- |
-| `version:plan`               | Compute today's CalVer and the tag that would claim it. Read-only                     |
-| `version:check`              | Assert every manifest carries the same version. Read-only                             |
-| `version:set`                | Stamp a version into every manifest. CI calls this immediately before compiling       |
-| `cli:next` / `docs:next`     | Print the version and tag the next release would take. Read-only, never prompts       |
-| `cli:dry`                    | Dispatch `cli-release.yml` with `dry_run=true` — stages everything, publishes nothing |
-| `cli:cut` / `docs:cut`       | **Releases it.** Tags and pushes; that push is the only trigger                       |
-| `cli:status` / `docs:status` | Follow the most recent run. Read-only                                                 |
+| Task                         | Does                                                                                                            |
+| ---------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| `version:plan`               | Compute today's CalVer and the tag that would claim it. Read-only                                               |
+| `version:check`              | Assert every manifest carries the same version. Read-only                                                       |
+| `version:set`                | Stamp a version into every manifest. CI calls this immediately before compiling                                 |
+| `cli:next` / `docs:next`     | Print the version and tag the next release would take. Read-only, never prompts                                 |
+| `cli:dry`                    | Dispatch `cli-release.yml` with `dry_run=true` on the **current branch** — stages everything, publishes nothing |
+| `cli:cut` / `docs:cut`       | **Releases it.** Tags and pushes; that push is the only trigger                                                 |
+| `cli:status` / `docs:status` | Follow the most recent run. Read-only                                                                           |
 
 `*:cut` demands a typed confirmation of the **tag**, so it cannot be answered from muscle memory.
 `--yes` skips it, for automation only.
