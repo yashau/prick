@@ -495,7 +495,12 @@ description = "Print the version the next CLI release would take. Read-only, nev
 run = "node scripts/cli-release.mjs next"
 
 [tasks."cli:dry"]
-description = "Dispatch cli-release.yml with dry_run=true — builds and stages everything, claims no version, publishes nothing"
+# Dispatches against the branch you are on, so a change to cli-release.yml is
+# rehearsed by the branch that carries it. Override with
+# `mise run cli:dry -- --ref <branch>`. The branch must be pushed: GitHub reads
+# the workflow from the remote ref, so an unpushed branch would rehearse
+# whatever origin already has under that name.
+description = "Dispatch cli-release.yml with dry_run=true on the current branch — builds and stages everything, claims no version, publishes nothing"
 run = "node scripts/cli-release.mjs dry"
 
 [tasks."cli:cut"]

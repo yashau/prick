@@ -2,7 +2,7 @@
 // scripts/cli-release.mjs — cut a release of the `prk` CLI.
 //
 //   node scripts/cli-release.mjs next             what the next release would be
-//   node scripts/cli-release.mjs dry              dispatch with dry_run=true
+//   node scripts/cli-release.mjs dry [--ref B]    dispatch with dry_run=true
 //   node scripts/cli-release.mjs cut [--yes]      tag and push — this releases
 //   node scripts/cli-release.mjs status           follow the most recent run
 //
@@ -87,12 +87,51 @@ export function isConfirmed(input, plan) {
   return String(input ?? '').trim() === confirmationToken(plan);
 }
 
+/** The shape of a tag on this release line, used to keep one out of `--ref`. */
+const TAG_SHAPE = new RegExp(`^${TAG_PREFIX}\\d+\\.\\d+\\.\\d+$`);
+
 /**
  * @param {boolean} dryRun
+ * @param {string} ref branch to read the workflow from
  * @returns {string[]} argv for `gh`
  */
-export function workflowRunArgs(dryRun) {
-  return ['workflow', 'run', WORKFLOW, '-f', `dry_run=${dryRun ? 'true' : 'false'}`];
+export function workflowRunArgs(dryRun, ref) {
+  return ['workflow', 'run', WORKFLOW, '--ref', ref, '-f', `dry_run=${dryRun ? 'true' : 'false'}`];
+}
+
+/**
+ * Why `ref` cannot be dispatched against, or null if it can.
+ *
+ * A dispatch resolves against a ref ON THE REMOTE and reads cli-release.yml as
+ * it exists there. This argument exists because that used to be implicit: the
+ * dispatch carried no ref, so it always rehearsed the default branch. A change
+ * to the release workflow therefore could not be exercised until after it had
+ * landed -- which is the one moment exercising it is worth nothing. Worse, it
+ * failed silently: you got a green dry run of somebody else's workflow and read
+ * it as a green dry run of yours.
+ *
+ * A tag is refused rather than resolved. Dispatching against `v2026.816.0`
+ * would read the workflow from a released ref and look enough like releasing to
+ * be worth refusing outright; cutting is `mise run cli:cut`, and it is the only
+ * thing that claims a version.
+ *
+ * @param {string} ref
+ * @returns {string|null}
+ */
+export function dispatchRefProblem(ref) {
+  const name = String(ref ?? '').trim();
+
+  if (name === '') return 'there is no branch to dispatch against. Pass --ref <branch>.';
+
+  if (name === 'HEAD') {
+    return 'HEAD is detached, so there is no branch name to dispatch against. Pass --ref <branch>.';
+  }
+
+  if (name.startsWith('refs/tags/') || TAG_SHAPE.test(name)) {
+    return `${name} is a tag, and a dry run rehearses a branch. Releasing is "mise run cli:cut".`;
+  }
+
+  return null;
 }
 
 /**
@@ -238,12 +277,36 @@ function cmdNext({ plan, log }) {
 }
 
 /** @param {object} ctx */
-function cmdDry({ plan, gh, log }) {
-  log(`Dispatching ${WORKFLOW} with dry_run=true (today's next version is ${plan.tag}).`);
+function cmdDry({ plan, gh, git, log, logErr, ref }) {
+  // Defaults to the branch you are standing on, so rehearsing a change to the
+  // release path is what the task does by default rather than what it does if
+  // you remember an argument.
+  const target = ref ?? String(git(['rev-parse', '--abbrev-ref', 'HEAD'])).trim();
+
+  const problem = dispatchRefProblem(target);
+  if (problem) {
+    logErr(problem);
+    return 1;
+  }
+
+  // Checked against the REMOTE, because that is what GitHub resolves. An
+  // unpushed branch would otherwise dispatch happily and rehearse whatever
+  // origin already has under that name -- or fail deep inside gh with a message
+  // about a workflow, which is not where the problem is.
+  if (String(git(['ls-remote', '--heads', 'origin', target])).trim() === '') {
+    logErr(`${target} is not on origin, and a dispatch reads the workflow from the remote.`);
+    logErr('Dispatching now would rehearse a different tree than the one you are looking at.');
+    logErr('Push it first:');
+    logErr(`  git push -u origin ${target}`);
+    return 1;
+  }
+
+  log(`Dispatching ${WORKFLOW} on ${target} with dry_run=true.`);
+  log(`Today's next version is ${plan.tag}; this run claims none of it.`);
   log(`Builds all 8 platform binaries and stages the ${publishedPackages().length} npm packages.`);
   log('Publishes nothing, pushes no tag, claims no version.');
   log('');
-  gh(workflowRunArgs(true));
+  gh(workflowRunArgs(true, target));
   log('');
   log('Dispatched. Follow it with: mise run cli:status');
   return 0;
@@ -340,6 +403,7 @@ const USAGE = `usage: node scripts/cli-release.mjs <command>
 
 options:
   --yes            skip the typed confirmation (cut only, for automation)
+  --ref <branch>   branch to dispatch against (dry only, default: current branch)
   --root <dir>     repository root (default: the parent of scripts/)
 
 Cutting the version is what deploys it: ${WORKFLOW} triggers on a
@@ -364,6 +428,7 @@ export async function main(argv, io = {}) {
     allowPositionals: true,
     options: {
       yes: { type: 'boolean', short: 'y', default: false },
+      ref: { type: 'string' },
       root: { type: 'string' },
       help: { type: 'boolean', short: 'h', default: false },
     },
@@ -390,7 +455,14 @@ export async function main(argv, io = {}) {
     case 'next':
       return cmdNext({ plan, log });
     case 'dry':
-      return cmdDry({ plan, gh, log });
+      return cmdDry({
+        plan,
+        gh,
+        git: io.git ?? makeGit(root),
+        log,
+        logErr,
+        ref: values.ref,
+      });
     case 'cut':
       return cmdCut({
         plan,

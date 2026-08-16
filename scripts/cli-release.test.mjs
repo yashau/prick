@@ -15,6 +15,7 @@ import {
   TAG_PREFIX,
   WORKFLOW,
   confirmationToken,
+  dispatchRefProblem,
   formatCutSummary,
   formatPlanSummary,
   isConfirmed,
@@ -45,9 +46,20 @@ function harness(overrides = {}) {
   const localTags = new Set(overrides.tags ?? []);
   const reject = new Set(overrides.rejectPush ?? []);
 
+  // The branch this clone is standing on, and the branches origin knows about.
+  // `dry` reads both: the first to pick a default ref, the second to refuse
+  // dispatching against a branch the remote cannot resolve.
+  const branch = overrides.branch ?? 'main';
+  const remoteBranches = new Set(overrides.remoteBranches ?? ['main']);
+
   const git = (args) => {
     gitCalls.push([...args]);
     const [command, second] = args;
+    if (command === 'rev-parse' && second === '--abbrev-ref') return `${branch}\n`;
+    if (command === 'ls-remote') {
+      const wanted = String(args.at(-1));
+      return remoteBranches.has(wanted) ? `0000000\trefs/heads/${wanted}\n` : '';
+    }
     if (command === 'fetch') {
       for (const tag of remoteTags) localTags.add(tag);
       return '';
@@ -152,19 +164,59 @@ describe('the release line', () => {
 });
 
 describe('the dry-run dispatch arguments', () => {
-  test('dry passes dry_run=true', () => {
-    assert.deepEqual(workflowRunArgs(true), ['workflow', 'run', WORKFLOW, '-f', 'dry_run=true']);
+  test('dry passes dry_run=true against the ref it was given', () => {
+    assert.deepEqual(workflowRunArgs(true, 'main'), [
+      'workflow',
+      'run',
+      WORKFLOW,
+      '--ref',
+      'main',
+      '-f',
+      'dry_run=true',
+    ]);
   });
 
-  test('never contain a tag, push or ref subcommand', () => {
-    const joined = workflowRunArgs(true).join(' ');
-    for (const forbidden of ['tag', 'push', 'ref']) {
+  test('the ref reaches gh, so a dispatch cannot silently read the default branch', () => {
+    assert.deepEqual(workflowRunArgs(true, 'my-branch').slice(3, 5), ['--ref', 'my-branch']);
+  });
+
+  test('never contain a tag or push subcommand', () => {
+    const joined = workflowRunArgs(true, 'main').join(' ');
+    for (const forbidden of ['tag', 'push']) {
       assert.doesNotMatch(
         joined,
         new RegExp(`\\b${forbidden}\\b`),
         `${joined} must not ${forbidden}`,
       );
     }
+  });
+});
+
+describe('the ref a dispatch is allowed to name', () => {
+  test('an ordinary branch is fine', () => {
+    assert.equal(dispatchRefProblem('main'), null);
+    assert.equal(dispatchRefProblem('ci/gate-attestations'), null);
+  });
+
+  test('a branch merely starting with the tag prefix is not a tag', () => {
+    // TAG_PREFIX is `v`, so a shape check rather than a prefix check is the
+    // difference between refusing `v2026.816.0` and refusing `verify-thing`.
+    assert.equal(dispatchRefProblem('verify-thing'), null);
+    assert.equal(dispatchRefProblem('version-bump'), null);
+  });
+
+  test('a release tag is refused, by shape and by full ref', () => {
+    assert.match(String(dispatchRefProblem('v2026.816.0')), /is a tag/);
+    assert.match(String(dispatchRefProblem('refs/tags/v2026.816.0')), /is a tag/);
+  });
+
+  test('a detached HEAD is refused with the flag that fixes it', () => {
+    assert.match(String(dispatchRefProblem('HEAD')), /--ref/);
+  });
+
+  test('an empty ref is refused rather than sent as nothing', () => {
+    assert.match(String(dispatchRefProblem('')), /--ref/);
+    assert.match(String(dispatchRefProblem(undefined)), /--ref/);
   });
 });
 
@@ -246,8 +298,53 @@ describe('dry', () => {
   test('dispatches with dry_run=true, never prompts and never tags', async () => {
     const h = harness({ prompt: async () => assert.fail('dry must not prompt') });
     assert.equal(await main(['dry'], h.io), 0);
-    assert.deepEqual(h.dispatched, [workflowRunArgs(true)]);
-    assert.deepEqual(h.gitCalls, [], 'a dry run claims no version');
+    assert.deepEqual(h.dispatched, [workflowRunArgs(true, 'main')]);
+    for (const call of h.gitCalls) {
+      assert.ok(
+        call[0] === 'rev-parse' || call[0] === 'ls-remote',
+        `a dry run only reads refs, but it ran: git ${call.join(' ')}`,
+      );
+    }
+  });
+
+  test('defaults to the branch you are on, not the default branch', async () => {
+    const h = harness({ branch: 'ci/gate', remoteBranches: ['main', 'ci/gate'] });
+    assert.equal(await main(['dry'], h.io), 0);
+    assert.deepEqual(h.dispatched, [workflowRunArgs(true, 'ci/gate')]);
+  });
+
+  test('--ref overrides the current branch', async () => {
+    const h = harness({ branch: 'main', remoteBranches: ['main', 'other'] });
+    assert.equal(await main(['dry', '--ref', 'other'], h.io), 0);
+    assert.deepEqual(h.dispatched, [workflowRunArgs(true, 'other')]);
+  });
+
+  test('refuses a branch origin does not have, rather than rehearsing another tree', async () => {
+    const h = harness({ branch: 'local-only', remoteBranches: ['main'] });
+    assert.equal(await main(['dry'], h.io), 1);
+    assert.deepEqual(h.dispatched, [], 'nothing may be dispatched');
+    assert.match(h.err.join('\n'), /not on origin/);
+    assert.match(h.err.join('\n'), /git push -u origin local-only/);
+  });
+
+  test('refuses a detached HEAD', async () => {
+    const h = harness({ branch: 'HEAD' });
+    assert.equal(await main(['dry'], h.io), 1);
+    assert.deepEqual(h.dispatched, []);
+    assert.match(h.err.join('\n'), /detached/);
+  });
+
+  test('refuses a tag, because rehearsing is not releasing', async () => {
+    const h = harness();
+    assert.equal(await main(['dry', '--ref', 'v2026.816.0'], h.io), 1);
+    assert.deepEqual(h.dispatched, []);
+    assert.match(h.err.join('\n'), /cli:cut/);
+  });
+
+  test('names the ref in what it prints, so a dispatch is never silent about it', async () => {
+    const h = harness({ branch: 'ci/gate', remoteBranches: ['ci/gate'] });
+    await main(['dry'], h.io);
+    assert.match(h.out.join('\n'), /ci\/gate/);
   });
 });
 

@@ -90,12 +90,12 @@ mise run version:check
 
 ## Cutting a CLI release
 
-| Task                  | Does                                                                                                        |
-| --------------------- | ----------------------------------------------------------------------------------------------------------- |
-| `mise run cli:next`   | Print the version and tag the next release would take. Read-only, never prompts, works at zero tags         |
-| `mise run cli:dry`    | Dispatch with `dry_run=true` — builds all eight binaries and stages the ten npm packages, publishes nothing |
-| `mise run cli:cut`    | Tag and push, which builds, publishes to npm and creates the GitHub Release                                 |
-| `mise run cli:status` | Follow the latest run. Read-only                                                                            |
+| Task                  | Does                                                                                                                              |
+| --------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `mise run cli:next`   | Print the version and tag the next release would take. Read-only, never prompts, works at zero tags                               |
+| `mise run cli:dry`    | Dispatch with `dry_run=true` on the current branch — builds all eight binaries and stages the ten npm packages, publishes nothing |
+| `mise run cli:cut`    | Tag and push, which builds, publishes to npm and creates the GitHub Release                                                       |
+| `mise run cli:status` | Follow the latest run. Read-only                                                                                                  |
 
 ```bash
 mise run cli:next
@@ -107,6 +107,16 @@ mise run cli:dry
 
 ```bash
 mise run cli:cut
+```
+
+**A dry run rehearses the branch you are standing on**, which is what makes it
+useful on a change to the release path itself. GitHub resolves a dispatch
+against a ref on the remote and reads `cli-release.yml` as it exists _there_, so
+the branch has to be pushed first; `cli:dry` checks that and says so rather than
+dispatching a rehearsal of a different tree. Name another branch with `--ref`:
+
+```bash
+mise run cli:dry -- --ref my-branch
 ```
 
 `cli:cut` requires a typed confirmation of the **tag** — not "yes", so it cannot
