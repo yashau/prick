@@ -983,6 +983,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ needs.version.outputs.tag }}
+          # Titled "CLI <version>", matching docs-release.yml's "Docs <version>".
+          # Two release lines share one list, so a bare tag is ambiguous in it --
+          # `v2026.816.2` next to `Docs 2026.815.1` does not say which is which.
+          VERSION: ${{ needs.version.outputs.version }}
           PREVIOUS_TAG: ${{ steps.previous.outputs.tag }}
         run: |
           set -euo pipefail
@@ -996,7 +1000,7 @@ jobs:
             fi
             gh release create "$TAG" \
               --draft \
-              --title "$TAG" \
+              --title "CLI ${VERSION}" \
               --generate-notes \
               "${notes_range[@]}" \
               --verify-tag \
