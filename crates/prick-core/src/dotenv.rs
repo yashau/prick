@@ -11,14 +11,30 @@
 //! | Form | Meaning |
 //! |---|---|
 //! | `# ...` or blank | Ignored |
-//! | `KEY=value` | Unquoted; trailing whitespace trimmed, no escapes, no inline comment |
+//! | `KEY=value` | Unquoted; surrounding whitespace trimmed, no escapes |
 //! | `KEY='value'` | Literal; no escape sequences at all, `\` is a backslash |
 //! | `KEY="value"` | `\\ \" \n \r \t` are escapes, everything else is literal |
 //! | `export KEY=...` | The `export ` prefix is accepted and dropped |
 //!
-//! Unquoted values deliberately do **not** support trailing `# comment`: a
-//! password ending in ` # 1` is far more likely than a comment on a secret
-//! line, and guessing wrong truncates the value.
+//! A quoted value may be followed by `# comment`, because the closing quote has
+//! already said where the value ends.
+//!
+//! On an **unquoted** value, whitespace before a `#` is the one line shape this
+//! format cannot resolve, and it is [rejected](DotenvError::AmbiguousComment).
+//! `PASSWORD=hunter2 # 1` is either a password containing a hash or a password
+//! with a comment after it; both occur in real files, and either reading stores
+//! a value the author did not write without saying so. The two quoted forms
+//! state which was meant, and `PASSWORD=hunter2#1` -- no whitespace -- is
+//! unambiguous already.
+//!
+//! # Where this grammar is spoken
+//!
+//! `prk secrets upload` hands the document to the server, which parses it there
+//! and reports the line it refused; that parser accepts this grammar and the
+//! same rule about `#`. What this one does locally is prove the other
+//! direction: [`crate::format::render`] emits `.env` output, and its tests read
+//! that output back through here, so a downloaded environment is one this
+//! product can be handed again.
 
 use crate::keyname;
 
@@ -59,6 +75,13 @@ pub enum DotenvError {
     /// A quoted value had trailing content after the closing quote.
     #[error("line {line}: unexpected text after the closing quote")]
     TrailingContent {
+        /// One-based line number.
+        line: usize,
+    },
+    /// An unquoted value had whitespace before a `#`, which is a comment or
+    /// part of the value with nothing in the line to say which.
+    #[error("line {line}: unquoted value has a `#` after whitespace; quote the value to keep it")]
+    AmbiguousComment {
         /// One-based line number.
         line: usize,
     },
@@ -104,7 +127,7 @@ pub fn parse(input: &str) -> Result<Vec<(String, String)>, DotenvError> {
         }
         seen.push((key, line));
 
-        let value = parse_value(rest.trim_start(), line)?;
+        let value = parse_value(rest, line)?;
         out.push((key.to_owned(), value));
     }
 
@@ -112,21 +135,52 @@ pub fn parse(input: &str) -> Result<Vec<(String, String)>, DotenvError> {
 }
 
 /// Parses the right-hand side of a `KEY=` assignment.
+///
+/// The opening quote is looked for *past* any whitespace, but [`parse_unquoted`]
+/// is handed that whitespace intact: whether it was there is what separates
+/// `COLOR=#ffffff`, a value, from `COLOR= #ffffff`, which could be that same
+/// value written with insignificant whitespace or an empty one with a comment.
 fn parse_value(rest: &str, line: usize) -> Result<String, DotenvError> {
-    match rest.as_bytes().first() {
-        Some(b'\'') => parse_single_quoted(&rest[1..], line),
-        Some(b'"') => parse_double_quoted(&rest[1..], line),
-        _ => Ok(rest.trim_end().to_owned()),
+    let trimmed = rest.trim_start();
+    match trimmed.as_bytes().first() {
+        Some(b'\'') => parse_single_quoted(&trimmed[1..], line),
+        Some(b'"') => parse_double_quoted(&trimmed[1..], line),
+        _ => parse_unquoted(rest, line),
     }
+}
+
+/// An unquoted value runs to the end of the line, minus surrounding whitespace.
+///
+/// Whitespace before a `#` makes the line unreadable either way round, so it is
+/// refused rather than resolved. A `#` that follows a non-space character is
+/// part of the value: `TOKEN=ab#cd` is `ab#cd`.
+fn parse_unquoted(rest: &str, line: usize) -> Result<String, DotenvError> {
+    if rest.contains(" #") || rest.contains("\t#") {
+        return Err(DotenvError::AmbiguousComment { line });
+    }
+    Ok(rest.trim().to_owned())
 }
 
 /// Single quotes are fully literal: the value ends at the next `'`.
 fn parse_single_quoted(body: &str, line: usize) -> Result<String, DotenvError> {
     let end = body.find('\'').ok_or(DotenvError::UnterminatedQuote { line, quote: '\'' })?;
-    if !body[end + 1..].trim().is_empty() {
-        return Err(DotenvError::TrailingContent { line });
-    }
+    check_after_close(&body[end + 1..], line)?;
     Ok(body[..end].to_owned())
+}
+
+/// After a closing quote only whitespace or a `#` comment may follow.
+///
+/// `KEY="a" b` is refused rather than read as `a`, so a mistyped `KEY="a" "b"`
+/// cannot store half a value without saying so. A comment is fine: the quotes
+/// already delimited the value, which is what makes quoting the answer to
+/// [`DotenvError::AmbiguousComment`].
+fn check_after_close(rest: &str, line: usize) -> Result<(), DotenvError> {
+    let rest = rest.trim_start();
+    if rest.is_empty() || rest.starts_with('#') {
+        Ok(())
+    } else {
+        Err(DotenvError::TrailingContent { line })
+    }
 }
 
 /// Double quotes support exactly five escapes and reject any other.
@@ -137,9 +191,7 @@ fn parse_double_quoted(body: &str, line: usize) -> Result<String, DotenvError> {
     while let Some(ch) = chars.next() {
         match ch {
             '"' => {
-                if !chars.as_str().trim().is_empty() {
-                    return Err(DotenvError::TrailingContent { line });
-                }
+                check_after_close(chars.as_str(), line)?;
                 return Ok(out);
             }
             '\\' => {
@@ -197,16 +249,40 @@ mod tests {
     }
 
     #[test]
-    fn unquoted_values_keep_hashes_rather_than_guessing_at_comments() {
-        // A truncating parser would return "hunter2" here and break the deploy.
-        assert_eq!(parsed("PASSWORD=hunter2 # not a comment\n")[0].1, "hunter2 # not a comment");
+    fn a_hash_after_whitespace_in_an_unquoted_value_is_refused_not_guessed_at() {
+        // Both readings of this line are losses. Truncating it stores "hunter2"
+        // and the deploy authenticates with the wrong password; keeping it whole
+        // stores a value with a stray comment welded onto the end. Neither is
+        // visible to the operator, so the line is refused instead.
+        assert_eq!(parse("PASSWORD=hunter2 # 1\n"), Err(DotenvError::AmbiguousComment { line: 1 }));
+        assert_eq!(parse("A=1\nB=2 \t# x\n"), Err(DotenvError::AmbiguousComment { line: 2 }));
+        // An empty value with a comment reads the same two ways: the value could
+        // be nothing, or `#ffffff` written with insignificant whitespace.
+        assert_eq!(parse("COLOR= # ffffff\n"), Err(DotenvError::AmbiguousComment { line: 1 }));
     }
 
     #[test]
-    fn unquoted_values_are_right_trimmed() {
+    fn a_hash_that_follows_a_non_space_stays_in_the_value() {
+        // The load-bearing case for the rule above: a parser that strips from
+        // the first `#` stores the empty string for a colour and half a token.
+        assert_eq!(parsed("COLOR=#ffffff\n")[0].1, "#ffffff");
+        assert_eq!(parsed("TOKEN=ab#cd\n")[0].1, "ab#cd");
+    }
+
+    #[test]
+    fn quoting_is_how_a_value_keeps_its_hash() {
+        // The way out of `AmbiguousComment`, in both directions.
+        assert_eq!(parsed("PASSWORD=\"hunter2 # 1\"\n")[0].1, "hunter2 # 1");
+        assert_eq!(parsed("PASSWORD='hunter2 # 1'\n")[0].1, "hunter2 # 1");
+        assert_eq!(parsed("PASSWORD=\"hunter2\" # 1\n")[0].1, "hunter2");
+    }
+
+    #[test]
+    fn unquoted_values_are_trimmed() {
         assert_eq!(parsed("A=1   \n")[0].1, "1");
         assert_eq!(parsed("A=   1\n")[0].1, "1");
         assert_eq!(parsed("A=\n")[0].1, "");
+        assert_eq!(parsed("A=   \n")[0].1, "");
     }
 
     #[test]
@@ -235,10 +311,11 @@ mod tests {
     #[test]
     fn unknown_escapes_are_errors_not_silent_passthrough() {
         assert_eq!(parse(r#"A="a\qb""#), Err(DotenvError::UnknownEscape { line: 1, ch: 'q' }));
-        // Unicode escapes are not implemented either: most .env consumers do
-        // not implement them, so emitting one would produce a value that other
-        // tools read back differently. The backslash is interpolated so the
-        // escape never appears literally in this source file.
+        // A unicode escape is an unknown escape too. The `.env` ecosystem
+        // treats `\u` inconsistently, so accepting one here would produce a
+        // value other tools read back differently. The backslash is
+        // interpolated so the escape never appears literally in this source
+        // file.
         let unicode_escape = format!("A=\"a{}u0041b\"", '\\');
         assert_eq!(parse(&unicode_escape), Err(DotenvError::UnknownEscape { line: 1, ch: 'u' }));
     }
@@ -262,6 +339,16 @@ mod tests {
         assert_eq!(parse("A='a' b"), Err(DotenvError::TrailingContent { line: 1 }));
         // Trailing whitespace is fine.
         assert_eq!(parsed(r#"A="a"   "#)[0].1, "a");
+    }
+
+    #[test]
+    fn a_comment_may_follow_a_closing_quote() {
+        // The closing quote already said where the value ended, so there is
+        // nothing left to guess at -- and this is what makes "quote it" a real
+        // answer for someone whose file has comments on its secret lines.
+        assert_eq!(parsed(r#"A="a" # why"#)[0].1, "a");
+        assert_eq!(parsed("A='a'   # why")[0].1, "a");
+        assert_eq!(parsed(r##"A="a"#comment"##)[0].1, "a");
     }
 
     #[test]

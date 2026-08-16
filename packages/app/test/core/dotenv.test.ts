@@ -64,20 +64,51 @@ describe("the basic forms", () => {
 });
 
 describe("the comment rule for unquoted values", () => {
-  it("treats ` #` as the start of a comment", () => {
-    expect(parse("FOO=bar # trailing")).toEqual({ FOO: "bar" });
+  it("refuses ` #` on an unquoted value rather than picking a reading", () => {
+    // THE decision. `PASSWORD=hunter2 # 1` is a password containing a hash to
+    // one reader and a password with a comment to the next. Storing `hunter2`
+    // hands production a truncated credential and reports success; storing the
+    // whole line welds a comment onto the secret. Both are silent, so neither
+    // is taken.
+    const error = throwsWith(() => parse("PASSWORD=hunter2 # 1"), "VALIDATION_FAILED");
+
+    expect(error).toBeInstanceOf(DotenvParseError);
+    expect((error as DotenvParseError).line).toBe(1);
+    expect(error.message).toContain("PASSWORD");
+    expect(error.message).not.toContain("hunter2");
+  });
+
+  it("refuses a tab before the `#` too", () => {
+    throwsWith(() => parse("A=1\nPASSWORD=hunter2\t# 1"), "VALIDATION_FAILED");
+  });
+
+  it("refuses an empty value followed by a comment", () => {
+    // `COLOR= #ffffff` reads equally well as the empty value with a comment or
+    // as `#ffffff` written with insignificant leading whitespace, which is a
+    // spelling this parser accepts everywhere else. Same ambiguity, same answer.
+    throwsWith(() => parse("COLOR= # nothing yet"), "VALIDATION_FAILED");
   });
 
   it("keeps a `#` that is NOT preceded by whitespace", () => {
-    // The load-bearing case. `COLOR=#ffffff` is a colour, and a parser that
-    // strips from the first `#` stores the empty string for it. A token
-    // containing `#` is the same problem with worse consequences.
+    // The load-bearing case for refusing the one above. `COLOR=#ffffff` is a
+    // colour, and a parser that strips from the first `#` stores the empty
+    // string for it. A token containing `#` is the same problem with worse
+    // consequences. Neither line is ambiguous, so neither is refused.
     expect(parse("COLOR=#ffffff")).toEqual({ COLOR: "#ffffff" });
     expect(parse("TOKEN=ab#cd")).toEqual({ TOKEN: "ab#cd" });
+    expect(parse("PASSWORD=hunter2#1")).toEqual({ PASSWORD: "hunter2#1" });
   });
 
   it("does not treat `#` inside quotes as a comment at all", () => {
     expect(parse('TOKEN="ab # cd"')).toEqual({ TOKEN: "ab # cd" });
+  });
+
+  it("takes quoting as the answer to the ambiguity, in both directions", () => {
+    // What the refusal tells the operator to write. One keeps the hash, the
+    // other drops the comment; the file now says which.
+    expect(parse('PASSWORD="hunter2 # 1"')).toEqual({ PASSWORD: "hunter2 # 1" });
+    expect(parse("PASSWORD='hunter2 # 1'")).toEqual({ PASSWORD: "hunter2 # 1" });
+    expect(parse('PASSWORD="hunter2" # 1')).toEqual({ PASSWORD: "hunter2" });
   });
 });
 

@@ -49,10 +49,6 @@ pub enum CliError {
     #[error(transparent)]
     Format(#[from] prick_core::format::FormatError),
 
-    /// A `.env` document could not be parsed.
-    #[error(transparent)]
-    Dotenv(#[from] prick_core::dotenv::DotenvError),
-
     /// A scope string could not be parsed.
     #[error(transparent)]
     Scope(#[from] prick_core::scope::ParseScopeError),
@@ -94,7 +90,7 @@ impl CliError {
             // transparent to a script.
             Self::Launch(err) => u8::try_from(err.exit_code()).unwrap_or(EXIT_FAILURE),
             Self::Format(_) => prick_core::classify::EXIT_UNREPRESENTABLE,
-            Self::Dotenv(_) | Self::Scope(_) | Self::Guard(_) => ErrorKind::Validation.exit_code(),
+            Self::Scope(_) | Self::Guard(_) => ErrorKind::Validation.exit_code(),
             Self::NotImplemented { .. } | Self::Other(_) => EXIT_FAILURE,
         }
     }
@@ -106,7 +102,6 @@ impl CliError {
             Self::Auth(err) => err.code(),
             Self::Launch(_) => "LAUNCH_FAILED",
             Self::Format(_) => "UNREPRESENTABLE_OUTPUT",
-            Self::Dotenv(_) => "INVALID_DOTENV",
             Self::Scope(_) => "INVALID_SCOPE",
             Self::Guard(_) => "UNSAFE_ENVIRONMENT",
             Self::NotImplemented { .. } => "NOT_IMPLEMENTED",
@@ -136,7 +131,7 @@ impl CliError {
             Self::NotImplemented { .. } => {
                 Some("Run `prk --help` to see the commands this build implements.")
             }
-            Self::Dotenv(_) | Self::Scope(_) | Self::Other(_) => None,
+            Self::Scope(_) | Self::Other(_) => None,
         }
     }
 }

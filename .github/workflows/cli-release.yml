@@ -378,9 +378,23 @@ jobs:
             printf '%s\n' "$out"
             echo "::endgroup::"
 
+            # Match the line that ATTESTS the section is present:
+            #
+            #   Found 'cargo auditable' data in dist/bin/…/prk (165 dependencies)
+            #
+            # This used to look for "(N crate dependencies)", which is what
+            # `cargo audit` prints when it scans Cargo.lock -- not what
+            # `cargo audit bin` prints when it reads a binary. No line ever
+            # matched, `count` was always empty, and the step below therefore
+            # failed every single time with "found 'none'". It had never run
+            # before this release, so nobody had seen it.
+            #
+            # Keyed on the sentence rather than on any parenthesised number, so
+            # a future line that happens to carry a count in brackets cannot
+            # satisfy a check about embedded audit data.
             count="$(
               printf '%s\n' "$out" \
-                | sed -n 's/.*(\([0-9][0-9]*\) crate dependencies).*/\1/p' \
+                | sed -n "s/.*'cargo auditable' data in .*(\([0-9][0-9]*\) dependencies).*/\1/p" \
                 | head -n 1
             )"
 

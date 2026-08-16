@@ -236,7 +236,7 @@ function readValue(cursor: Cursor, key: string): string {
   // so the opening quote is looked for PAST it -- but the cursor is only
   // advanced for a quoted value. `readUnquoted` needs to see that whitespace,
   // because whether it was there is exactly what distinguishes
-  // `COLOR=#ffffff` (a value) from `COLOR= # a comment` (an empty one).
+  // `COLOR=#ffffff` (a value) from `COLOR= #ffffff` (the line it refuses).
   let peek = cursor.index;
   while (cursor.text[peek] === " " || cursor.text[peek] === "\t") peek += 1;
 
@@ -259,38 +259,50 @@ function readValue(cursor: Cursor, key: string): string {
     );
   }
 
-  return readUnquoted(cursor);
+  return readUnquoted(cursor, key);
 }
 
 /**
- * An unquoted value: everything to end of line, minus a trailing comment.
+ * An unquoted value: everything to end of line.
  *
  * THE COMMENT RULE, stated exactly because it is the ambiguous case every
- * parser gets differently: a `#` starts a comment ONLY when preceded by
- * whitespace. So `COLOR=#ffffff` is the seven-character value `#ffffff`;
- * `COLOR=#ffffff # the brand one` is that same value with a comment; and
- * `COLOR= # nothing yet` is the EMPTY value with a comment. A `#` immediately
- * following a non-space character is part of the value, which is what keeps
- * `TOKEN=ab#cd` from silently becoming `ab`.
+ * parser gets differently: on an unquoted value, whitespace followed by `#` is
+ * REFUSED. `PASSWORD=hunter2 # 1` is a password containing a hash to one reader
+ * and a password with a comment after it to the next, both files exist, and
+ * either reading stores a value the author did not write while reporting
+ * success. A secrets manager that silently stores `hunter2` for that line has
+ * already lost -- the operator finds out when production cannot authenticate.
+ * So the line is refused, and the two quoted forms say which was meant.
+ *
+ * A `#` that follows a non-space character is unambiguous and stays in the
+ * value: `COLOR=#ffffff` is the seven-character colour and `TOKEN=ab#cd` is the
+ * whole token. A comment after a CLOSING QUOTE is fine as well
+ * (`KEY="a" # why`), because the quote already delimited the value.
  *
  * This is why `readValue` hands the leading whitespace over intact rather than
  * consuming it: the search is for whitespace-then-`#`, and consuming the
- * whitespace first would make the empty-value case indistinguishable from the
- * `#ffffff` one.
- *
- * If you need a value that both starts with whitespace and contains ` #`, quote
- * it. That is what quotes are for.
+ * whitespace first would make `COLOR= #ffffff` -- which reads equally well as
+ * an empty value with a comment, and so is refused too -- indistinguishable
+ * from the unquoted `#ffffff` one.
  */
-function readUnquoted(cursor: Cursor): string {
+function readUnquoted(cursor: Cursor, key: string): string {
+  const startLine = cursor.line;
   const start = cursor.index;
   skipToEndOfLine(cursor);
 
   const raw = cursor.text.slice(start, cursor.index).replace(/\r$/, "");
 
-  const comment = raw.search(/[ \t]#/);
-  const body = comment === -1 ? raw : raw.slice(0, comment);
+  if (/[ \t]#/.test(raw)) {
+    // Names the KEY and no part of the value, like every message here: this
+    // one travels into an HTTP response and a Worker log.
+    throw new DotenvParseError(
+      startLine,
+      `the unquoted value of "${key}" has a \`#\` after whitespace, so this line reads as a value containing a hash or as a value with a comment.`,
+      "Quote the value to keep the `#`, or delete the comment. A `#` with no whitespace in front of it is already part of the value.",
+    );
+  }
 
-  return body.trim();
+  return raw.trim();
 }
 
 function readSingleQuoted(cursor: Cursor, key: string): string {

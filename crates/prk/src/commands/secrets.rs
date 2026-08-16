@@ -229,9 +229,9 @@ impl From<FormatArg> for OutputFormat {
 /// # Errors
 ///
 /// [`CliError::Auth`] if no credential is available, [`CliError::Api`] for
-/// anything the server reported, [`CliError::Format`] for a value that cannot
-/// be represented in the requested format, and [`CliError::Dotenv`] for an
-/// unparsable upload.
+/// anything the server reported -- which includes an unparsable upload, since
+/// the document is parsed there -- and [`CliError::Format`] for a value that
+/// cannot be represented in the requested format.
 pub fn run(command: &SecretsCommand, global: &GlobalArgs, out: Output) -> Result<(), CliError> {
     let (project, environment) = require_scope(global)?;
 
