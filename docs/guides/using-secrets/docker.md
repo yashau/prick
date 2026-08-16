@@ -5,7 +5,7 @@ sidebar:
   order: 2
 ---
 
-:::note[Authenticate first]
+:::note[Before you begin]
 Every command here needs an authenticated machine. Start with
 [Authentication](/guides/authentication).
 :::
@@ -93,7 +93,7 @@ build time. If a build genuinely needs a credential — a private package regist
 token, say — use BuildKit's `--mount=type=secret`, which does not persist into
 the image.
 
-## Next
+## Next steps
 
 - [package.json scripts](/guides/using-secrets/package-json)
 - [Threat model](/architecture/threat-model)

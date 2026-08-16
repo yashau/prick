@@ -416,12 +416,11 @@ export async function verifyAccessRequest(
 /**
  * Defence-in-depth check against Access-on-Workers (`ctx.access`).
  *
- * Cloudflare shipped this on 2026-08-14 and it is not yet in the config
- * reference. It is used as an ASSERTION alongside our own verification, never
- * instead of it, and is gated behind `REQUIRE_CTX_ACCESS` which stays `false`
- * until the feature is documented AND confirmed not to swallow service-token
- * requests. If it did swallow them, making it load-bearing would break every
- * CI client at once with no local signal.
+ * Cloudflare shipped this on 2026-08-14. It is used as an ASSERTION alongside
+ * our own verification, never instead of it, and is gated behind
+ * `REQUIRE_CTX_ACCESS`, which flips to `true` once the feature is documented AND
+ * confirmed to pass service-token requests through. If it swallowed them, making
+ * it load-bearing would break every CI client at once with no local signal.
  */
 export function assertCtxAccess(ctx: unknown, options: { requireCtxAccess: boolean }): void {
   if (!options.requireCtxAccess) return;

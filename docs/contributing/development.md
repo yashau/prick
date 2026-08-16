@@ -232,7 +232,7 @@ is the source of truth and CI stamps it at build time. See
 Do not open a public issue for a vulnerability. Use a private advisory — see
 `.github/SECURITY.md`.
 
-## Next
+## Next steps
 
 - [Testing](/contributing/testing)
 - [Releasing](/contributing/releasing)

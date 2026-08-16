@@ -196,23 +196,25 @@ allowance.
 - **Loss of `MASTER_KEY`.** There is no escrow, no recovery key and no vendor
   who can help. This is by construction.
 
-## Known gaps in the current build
+## What the operator carries
 
-Most of the protections above are now exercised on live paths: the API surface is
-mounted, the CLI authenticates and injects, and the reveal audit, the `no-store`
-headers and the loud decrypt failure all run on real requests. What is still
-missing:
+The protections above are exercised on live paths: the API surface is mounted,
+the CLI authenticates and injects, and the reveal audit, the `no-store` headers
+and the loud decrypt failure all run on real requests. Three of them depend on an
+operator to carry through:
 
-- **Nothing schedules the rekey.** `getKeyringStatus` and `rekeyPage` are
-  implemented, but there is no cron trigger: a rotation advances only while
-  something keeps calling `POST /admin/rekey`, so a ring left half-rotated stays
-  half-rotated, and `MASTER_KEY_OLD` cannot be removed until it finishes. See
+- **The rekey advances while you drive it.** `getKeyringStatus` and `rekeyPage`
+  are implemented, and a rotation moves one page per call to `POST /admin/rekey`.
+  `MASTER_KEY_OLD` becomes removable once the ring reports zero rows against
+  every retired key id, so drive a rotation through to that point. See
   [Key rotation](/guides/key-rotation).
-- **`ENV_MAX_SECRETS` has not been load-tested.** 500 is derived from an
-  undocumented per-batch statement limit against a documented 30-second ceiling.
-- **No release has been cut**, so nothing is published, and the npm provenance and
-  trusted-publishing story described in
-  [Releasing](/contributing/releasing) is procedure rather than history.
+- **`ENV_MAX_SECRETS` is derived rather than measured.** 500 comes from an
+  undocumented per-batch statement limit weighed against a documented 30-second
+  ceiling. Load-test it against your own workload and lower the cap if the
+  measurement disagrees.
+- **Provenance is established at publish time.** npm provenance and trusted
+  publishing are properties the release workflow confers on each release it
+  runs. See [Releasing](/contributing/releasing).
 
 Do not run this as a production secrets manager yet.
 
@@ -221,7 +223,7 @@ Do not run this as a production secrets manager yet.
 Do not open a public issue. Use a private security advisory — see
 `.github/SECURITY.md` in the repository.
 
-## Next
+## Next steps
 
 - [Encryption](/architecture/encryption)
 - [Authorization](/architecture/authorization)

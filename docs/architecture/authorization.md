@@ -221,7 +221,7 @@ Granting to a group you are already in is not an escalation, because the role yo
 can confer is bounded by the role you already hold at that scope. Adding somebody
 _else_ is the operation that widens reach, and that one is global-admin only.
 
-## Next
+## Next steps
 
 - [Access control](/guides/access-control) — the operator-facing guide.
 - [Threat model](/architecture/threat-model)

@@ -671,7 +671,7 @@ mod tests {
     // `disable`, `enable` and `rename`
     // -----------------------------------------------------------------------
 
-    /// The invocations `docs/reference/cli.md` prints, character for character.
+    /// The invocations `docs/reference/cli/access.md` prints, character for character.
     #[test]
     fn the_documented_kill_switch_invocations_parse() {
         use clap::Parser as _;
@@ -679,14 +679,14 @@ mod tests {
         use crate::cli::{Cli, Command};
 
         let cli = Cli::try_parse_from(["prk", "access", "disable", "bob@example.com"])
-            .expect("the invocation printed in docs/reference/cli.md must parse");
+            .expect("the invocation printed in docs/reference/cli/access.md must parse");
         let Command::Access(AccessCommand::Disable { subject }) = cli.command else {
             panic!("`access disable` did not parse as itself");
         };
         assert_eq!(subject, "bob@example.com");
 
         let cli = Cli::try_parse_from(["prk", "access", "enable", "bob@example.com"])
-            .expect("the invocation printed in docs/reference/cli.md must parse");
+            .expect("the invocation printed in docs/reference/cli/access.md must parse");
         assert!(matches!(cli.command, Command::Access(AccessCommand::Enable { .. })));
 
         let cli = Cli::try_parse_from([
@@ -696,7 +696,7 @@ mod tests {
             "e367826f93b8d71185e03fe518aff3b4.access",
             "staging deploy job",
         ])
-        .expect("the invocation printed in docs/reference/cli.md must parse");
+        .expect("the invocation printed in docs/reference/cli/access.md must parse");
         let Command::Access(AccessCommand::Rename { subject, name, clear }) = cli.command else {
             panic!("`access rename` did not parse as itself");
         };

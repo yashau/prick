@@ -69,6 +69,7 @@ export const DOCS_PATTERN = `**/[^_]*.{${DOCS_EXTENSIONS.join(",")}}`;
 const GROUP_ORDER = [
   { directory: "getting-started", label: "Getting Started" },
   { directory: "guides", label: "Guides" },
+  { directory: "examples", label: "Examples" },
   { directory: "reference", label: "Reference" },
   { directory: "architecture", label: "Architecture" },
   { directory: "contributing", label: "Contributing" },
@@ -87,12 +88,25 @@ export const SITE_TITLE = "Prick Documentation";
 /** Expansion of the acronym, used as the tagline and the meta description. */
 export const SITE_TAGLINE = "Portable Runtime Injection of Cloudflare (stored) Keys";
 
-/** Turn `getting-started` into `Getting Started`. */
+/**
+ * Words that are acronyms rather than ordinary nouns, keyed by their lowercase
+ * form.
+ *
+ * Without this, `docs/reference/cli/` renders in the sidebar as "Cli", which
+ * reads as a typo rather than as the name of the thing. Mechanical title-casing
+ * has no way to know the difference, so the exceptions are listed.
+ */
+const ACRONYMS = new Map<string, string>([
+  ["api", "API"],
+  ["cli", "CLI"],
+]);
+
+/** Turn `getting-started` into `Getting Started`, and `cli` into `CLI`. */
 export function titleCase(dirName: string): string {
   return dirName
     .split(/[-_]/)
     .filter(Boolean)
-    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .map((word) => ACRONYMS.get(word.toLowerCase()) ?? word.charAt(0).toUpperCase() + word.slice(1))
     .join(" ");
 }
 

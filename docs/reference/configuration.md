@@ -30,7 +30,7 @@ The pair is resolved in `crates/prick-auth/src/credential.rs` and attached as th
 `--access-client-secret-file` has no environment variable by design: it exists
 precisely so the secret never reaches argv or the process environment. It takes
 precedence over both the flag and `PRK_ACCESS_CLIENT_SECRET`. See
-[the CLI reference](/reference/cli#global-flags).
+[the CLI reference](/reference/cli/#global-flags).
 
 `PRK_API_URL` is only needed when you have not run `prk login`, which records the
 server it signed in to.
@@ -68,7 +68,7 @@ Two further refusals, both meaning the rotation has not actually happened: a
 retired key identical to the active one, and two keys in the ring that derive the
 same key id.
 
-:::danger[There is no way to read a Worker secret back]
+:::danger[A Worker secret is write-only]
 Record `MASTER_KEY` when you generate it. See
 [Backup and recovery](/guides/backup-and-recovery).
 :::
@@ -209,7 +209,7 @@ own the server environment, and the pairing is unsupported.
 
 No Cloudflare account is needed for local development.
 
-## Next
+## Next steps
 
 - [Key rotation](/guides/key-rotation)
 - [Development](/contributing/development)

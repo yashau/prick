@@ -17,7 +17,7 @@ This is the single most common way people lose everything. Back up the key
 **before** you store the first secret.
 :::
 
-:::note[Authenticate first]
+:::note[Before you begin]
 The CLI commands here need an authenticated machine. The `wrangler` commands
 need Cloudflare credentials instead. Start with
 [Authentication](/guides/authentication).
@@ -132,8 +132,23 @@ Encrypt the file at rest.
    pnpm --dir packages/app exec wrangler deploy
    ```
 
-6. Read a secret back and compare it against something you know. A restore you
-   have not read a value out of is not a restore you have tested.
+6. Read a secret back and compare it against something you know:
+
+   ```bash
+   prk secrets list --project api --env production
+   ```
+
+   ```
+   DATABASE_URL	v4	you@example.com
+   STRIPE_SECRET_KEY	v2	deploy@example.com
+   ```
+
+   ```bash
+   prk secrets get DATABASE_URL --project api --env production
+   ```
+
+   A listing proves the rows are there; only a `get` proves they decrypt. A
+   restore you have not read a value out of is not a restore you have tested.
 
 ## Test the restore before you need it
 
@@ -159,7 +174,7 @@ survives the deletion of its subject.
 
 There is no undelete. Restore from a backup.
 
-## Next
+## Next steps
 
 - [Key rotation](/guides/key-rotation)
 - [Encryption](/architecture/encryption)

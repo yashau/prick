@@ -1,24 +1,17 @@
 ---
 title: Authentication
-description: The three ways to authenticate the prk CLI, plus Cloudflare Access service tokens for CI.
+description: Sign a person in with prk login, authenticate a machine with an Access service token, and understand what the Worker verifies.
 sidebar:
   order: 1
 ---
 
-Read this before any other guide. Every prick command talks to a Worker that is
-behind Cloudflare Access, so nothing works until the machine running the command
-can present an Access credential.
+Read this before any other guide. Every prick command talks to a Worker behind
+Cloudflare Access, so nothing works until the machine running the command can
+present an Access credential.
 
-:::note[The Worker has to exist first]
-Authenticating is the second step, not the first. If you have not deployed the
-Worker and attached an Access application to its hostname, start with the
-[Quickstart](/getting-started/quickstart).
-:::
+There are two kinds of credential:
 
-There are two kinds of credential and three ways to supply the configuration
-around them.
-
-| Credential           | Who uses it                 | How it is obtained                                                         |
+| Credential           | Who uses it                 | How you get it                                                             |
 | -------------------- | --------------------------- | -------------------------------------------------------------------------- |
 | Access SSO session   | People                      | `prk login <url>`, browser round trip                                      |
 | Access service token | CI, cron, anything headless | Created in the Cloudflare dashboard, supplied as two environment variables |
@@ -26,64 +19,94 @@ around them.
 prick issues no credentials of its own. There are no API keys to rotate and no
 password to leak, because identity comes entirely from a verified Access JWT.
 
-## 1. `prk login` — interactive sign-in
+:::note[Before you begin]
+The Worker has to exist first. If you have not deployed it and attached an
+Access application to its hostname, start with the
+[Quickstart](/getting-started/quickstart).
+:::
+
+## Sign in as a person
 
 ```bash
 prk login https://prick.example.com
 ```
 
-The handshake, implemented in `crates/prick-auth/`:
+```
+Signing in to https://prick.example.com
+Signed in to https://prick.example.com
+```
+
+Your browser opens, you complete the Access sign-in, and the token lands on
+disk. `prk login` records which server it signed in to, so later commands need
+neither `--api-url` nor `PRK_API_URL`.
+
+Confirm the server agrees about who you are:
+
+```bash
+prk whoami
+```
+
+```
+you@example.com (user)
+role: admin (global)
+```
+
+**This is the command to run when you get a `403`.** The subject it prints is
+what an administrator needs in order to grant you anything. The role line is
+your **global** role, and only that — a project-scoped admin prints no role here
+and is still an admin of that project.
+
+### What the handshake does
 
 1. **Probe `/api/v1/health`.** Three outcomes, all handled:
    - `401` with a `WWW-Authenticate` header pointing at discovery — normal,
      continue.
-   - `401` without it — Managed OAuth is not enabled on the Access application.
-     The error names the dashboard path to enable it.
-   - `200` with a JSON body to an unauthenticated caller — **a loud warning.**
-     That means Access is not in front of this hostname and your secrets manager
-     is open to the internet.
+   - `401` without it — managed OAuth is not enabled on the Access application.
+     The error names the dashboard path that enables it.
+   - `200` with a JSON body to an unauthenticated caller — **a loud warning**,
+     because Access is not in front of this hostname.
 2. Discover the authorization server via RFC 8414 / RFC 9728 metadata.
 3. Register a client dynamically for `http://127.0.0.1:<ephemeral>/callback`.
    The port is whatever the OS assigns, so two concurrent logins do not collide,
-   and the address is the literal `127.0.0.1` rather than `localhost` because the
-   redirect URI must match byte for byte.
+   and the address is the literal `127.0.0.1` because the redirect URI must
+   match byte for byte.
 4. PKCE with S256.
 5. Open the browser, accept exactly one request on the loopback listener, and
    compare `state` in constant time.
 6. Exchange the code and store the tokens.
 
-Refresh is transparent: a token within a minute of expiring is renewed before the
-request goes out and the renewal is written back, so the short Access session is
-invisible and the next invocation does not repeat the work.
+Refresh is transparent: a token within a minute of expiring is renewed before
+the request goes out, and the renewal is written back — so a short Access
+session is invisible and the next invocation does not repeat the work.
 
-On a machine with no browser, add `--no-browser` and `prk` prints the
-authorization URL instead of opening one. The loopback listener still receives
-the redirect, provided the port is reachable — which it is over a forwarding SSH
-session.
+### On a machine with no browser
+
+```bash
+prk login https://prick.example.com --no-browser
+```
+
+`prk` prints the authorization URL instead of opening one. The loopback listener
+still receives the redirect, provided the port is reachable — which it is over a
+forwarding SSH session.
 
 ### Where the token is stored
 
-```bash
-prk login https://prick.example.com --storage file
-```
-
-| Backend   | Default | Notes                                                                                            |
-| --------- | ------- | ------------------------------------------------------------------------------------------------ |
-| `file`    | Yes     | A file with mode `0600` in a directory with mode `0700`. Works over SSH, in containers and in CI |
-| `keyring` | No      | The OS keyring. Opt-in only                                                                      |
-
-The keyring is not the default deliberately. Over SSH there is no session keyring
-to talk to, and on macOS the Keychain ACL binds to the binary's code signature,
-so every update re-prompts — which is unusable from inside `prk run`.
+| Backend   | Default | Notes                                                                                        |
+| --------- | ------- | -------------------------------------------------------------------------------------------- |
+| `file`    | Yes     | A file at mode `0600` in a directory at mode `0700`. Works over SSH, in containers and in CI |
+| `keyring` | No      | The OS keyring. Opt-in only                                                                  |
 
 The file is written **atomically** — to a temporary file, then renamed — and
-created with `create_new` at mode `0600` on Unix, so there is no window in which
-a token file exists world-readable. The directory is created at `0700`. On
-Windows the DACL is replaced with a single entry for the current user. Source:
-`crates/prick-auth/src/store.rs`.
+created at mode `0600` on Unix, so there is never a window in which a token file
+exists world-readable. On Windows the DACL is replaced with a single entry for
+the current user.
 
-`prk login` also records which server it signed in to, so later commands need
-neither `--api-url` nor `PRK_API_URL`.
+The keyring is opt-in because over SSH there is no session keyring to talk to,
+and on macOS the Keychain ACL binds to the binary's code signature, so every
+update re-prompts — which is unusable from inside `prk run`.
+
+Paths, and the `PRK_CONFIG_DIR` override, are in
+[Install](/getting-started/install#where-prk-keeps-its-files).
 
 ### Signing out
 
@@ -91,37 +114,28 @@ neither `--api-url` nor `PRK_API_URL`.
 prk logout
 ```
 
-Discards stored credentials. Idempotent: the state it establishes is "no
-credentials", and running it twice does not make that less true.
-
-### Checking who the server thinks you are
-
-```bash
-prk whoami
+```
+Signed out.
 ```
 
-This is the command to run when you get a `403`: it prints the subject the server
-resolved, which is what an administrator needs in order to grant you anything. It
-also prints your **global** role, or nothing at all — a project-scoped admin has
-no global role and is still an admin of that project.
+## Authenticate a machine
 
-## 2. Environment variables
+CI uses an Access **service token**, not `prk login`.
 
-Variables are the right mechanism for CI, and they work for a shell session too.
+### 1. Create the token
 
-### Service tokens
+In the Cloudflare dashboard, go to **Zero Trust → Access → Service Auth** and
+create a service token. The client secret is shown once; the client id ends in
+`.access`.
 
-Two variables carry an Access service token. prick reads its own names first,
-then falls back to the names `cloudflared` uses, so CI that already has the
-Cloudflare pair set works with no changes.
+### 2. Let it through Access
 
-| Variable                   | Fallback                  | Purpose                     |
-| -------------------------- | ------------------------- | --------------------------- |
-| `PRK_ACCESS_CLIENT_ID`     | `CF_ACCESS_CLIENT_ID`     | Service token client id     |
-| `PRK_ACCESS_CLIENT_SECRET` | `CF_ACCESS_CLIENT_SECRET` | Service token client secret |
+Add the service token to the Access policy for your prick application — an
+**include** rule of type **Service Auth**, with the policy's action set to
+**Service Auth** rather than Allow. A policy listing only human identities
+rejects the token at the edge, before prick ever sees the request.
 
-They are sent as the request headers `CF-Access-Client-Id` and
-`CF-Access-Client-Secret`.
+### 3. Give it to the job
 
 ```bash
 export PRK_ACCESS_CLIENT_ID="<client id>.access"
@@ -131,32 +145,70 @@ export PRK_ACCESS_CLIENT_ID="<client id>.access"
 export PRK_ACCESS_CLIENT_SECRET="<client secret>"
 ```
 
-The names are resolved in `crates/prick-auth/src/credential.rs` and the headers
-are attached by `crates/prick-api/src/client.rs` on every request.
+| Variable                   | Fallback                  | Purpose                     |
+| -------------------------- | ------------------------- | --------------------------- |
+| `PRK_ACCESS_CLIENT_ID`     | `CF_ACCESS_CLIENT_ID`     | Service token client id     |
+| `PRK_ACCESS_CLIENT_SECRET` | `CF_ACCESS_CLIENT_SECRET` | Service token client secret |
 
-**Both halves must come from the same place.** A `PRK_ACCESS_CLIENT_ID` paired
-with a `CF_ACCESS_CLIENT_SECRET` is not a credential — mixing them is how a job
-authenticates as an identity nobody intended.
+They are sent as the `CF-Access-Client-Id` and `CF-Access-Client-Secret` request
+headers. The `CF_*` fallbacks mean a pipeline already configured for
+`cloudflared access` works with no changes.
 
-#### Keeping the secret out of `ps`
+:::caution[Both halves must come from the same place]
+A `PRK_ACCESS_CLIENT_ID` paired with a `CF_ACCESS_CLIENT_SECRET` is not a
+credential. Mixing them is how a job authenticates as an identity nobody
+intended, so it is refused.
+:::
+
+### 4. Run the job, and expect a `403`
+
+Access lets it in; prick refuses it, because authentication is not authorization
+and the token has no grant yet. That denial is **recorded**, which is how the
+token introduces itself:
+
+```bash
+prk access identities --denied
+```
+
+```
+e367826f93b8d71185e03fe518aff3b4.access	service	1 attempt(s)
+```
+
+### 5. Grant it
+
+```bash
+prk access grant e367826f93b8d71185e03fe518aff3b4.access --role reader --scope api:production
+```
+
+A service token's identity is its `common_name`, and nobody maps that string to
+"the staging deploy job" from memory — which is why step 4 exists, and why you
+should name it straight away:
+
+```bash
+prk access rename e367826f93b8d71185e03fe518aff3b4.access "staging deploy job"
+```
+
+The full walkthrough, including the GitHub Actions workflow, is
+[Give CI read-only access](/examples/ci-read-only).
+
+### Keeping the secret out of `ps`
 
 ```bash
 prk secrets list --access-client-id "<id>.access" --access-client-secret-file /run/token
 ```
 
-`--access-client-secret` exists for pipelines that have nothing else, but a value
-passed there appears in `ps` output for every user on the machine and in your
-shell history. That is a property of how arguments are passed, not something the
-program can undo. `--access-client-secret-file` reads the secret from a file — or
-from stdin when the path is `-` — and strips one trailing newline, so a file
+`--access-client-secret` exists for pipelines that have nothing else, but a
+value passed there appears in `ps` output for every user on the machine and in
+your shell history. `--access-client-secret-file` reads the secret from a file —
+or from stdin when the path is `-` — and strips one trailing newline, so a file
 written by `echo` works.
 
 A file is treated as an explicit act: it takes precedence over both the flag and
-`PRK_ACCESS_CLIENT_SECRET`, and it **refuses to fall back** to the `CF_*` pair for
-the client id. Authenticating as somebody other than the identity whose secret was
-just read off disk is the failure mode that rule designs out.
+`PRK_ACCESS_CLIENT_SECRET`, and it **refuses to fall back** to the `CF_*` pair
+for the client id. Authenticating as somebody other than the identity whose
+secret was just read off disk is the failure mode that rule designs out.
 
-### Everything else
+## Pointing at a server
 
 | Variable      | Equivalent flag   | Meaning                   |
 | ------------- | ----------------- | ------------------------- |
@@ -168,53 +220,24 @@ just read off disk is the failure mode that rule designs out.
 export PRK_API_URL=https://prick.example.com
 ```
 
-`PRK_API_URL` is only needed when you have not run `prk login`, which records the
-server it signed in to.
+`PRK_API_URL` is only needed when you have not run `prk login`. An explicit flag
+wins over the environment variable of the same name.
 
-## 3. Flags
+The project and environment shorts are **uppercase**: `-P` and `-E`. See
+[Global flags](/reference/cli/#global-flags).
 
-Anything from the table above can be given on the command line instead. An
-explicit flag wins over the environment variable of the same name.
-
-```bash
-prk secrets list --api-url https://prick.example.com --project api --env production
-```
-
-Note that the project and environment shorts are **uppercase**: `-P` and `-E`.
-They are global arguments, and lowercase `-p`/`-e` would be consumed on every
-subcommand — see [the CLI reference](/reference/cli#global-flags).
-
-For CI, add `--no-input` so a missing credential fails immediately instead of
+For CI, add `--no-input` so a missing credential fails immediately rather than
 waiting on a prompt nobody can answer:
 
 ```bash
 prk secrets download --no-input --format env --output .env
 ```
 
-## Setting up a service token for CI
+## What the verifier checks
 
-1. In the Cloudflare dashboard, go to **Zero Trust → Access → Service Auth** and
-   create a service token. The client secret is shown once.
-2. Add the service token to the Access policy for your prick application, so
-   Access will let it through the edge.
-3. Put the two values in your CI secret store and export them as
-   `PRK_ACCESS_CLIENT_ID` / `PRK_ACCESS_CLIENT_SECRET`.
-4. Run the job. Access lets it in; prick refuses it with `403`, because
-   authentication is not authorization and the token has no grant yet.
-5. Grant it. See [Access control](/guides/access-control) — a denied service
-   token shows up in a "seen but not granted" list precisely so you do not have
-   to copy an opaque identifier between two consoles.
-
-A service token's identity is its `common_name`, which looks like
-`e367826f93b8d71185e03fe518aff3b4.access`. Nobody maps that to "the staging
-deploy job" from memory, which is why step 4 exists.
-
-## What the verifier actually checks
-
-Every request carries an Access JWT, in the `Cf-Access-Jwt-Assertion` header, or
+Every request carries an Access JWT, in the `Cf-Access-Jwt-Assertion` header or
 the `CF_Authorization` cookie as a fallback. The Worker verifies it itself
-rather than trusting that Access ran — see
-`packages/app/src/lib/server/auth/access.ts`:
+rather than trusting that Access ran:
 
 - The signing algorithm comes from the **JWKS entry matched by `kid`**, never
   from the token header. This is what rejects `alg: none` and RS256→HS256
@@ -235,7 +258,13 @@ Claims then resolve to an identity:
 | Both `email` and `common_name`            | Rejected — Access does not issue that shape |
 | Neither                                   | Rejected — nothing to key a grant on        |
 
-## Common failures
+## When something goes wrong
+
+Run this first — it checks the whole chain at once:
+
+```bash
+prk doctor
+```
 
 | Symptom                                                 | Cause                                         | Fix                                                               |
 | ------------------------------------------------------- | --------------------------------------------- | ----------------------------------------------------------------- |
@@ -245,8 +274,11 @@ Claims then resolve to an identity:
 | `SERVICE_UNAVAILABLE` with `NO_ADMINS_CONFIGURED`       | Nobody can administer this install            | Set `BOOTSTRAP_ADMINS` and redeploy                               |
 | Login warns that `/health` returned 200 unauthenticated | Access is not attached to the hostname        | Fix the Access application before storing anything                |
 
-## Next
+Every code, and what to do about it, is in
+[Exit codes and errors](/reference/cli/errors).
+
+## Next steps
 
 - [Access control](/guides/access-control) — grants, roles and scopes.
-- [CLI reference](/reference/cli) — every flag and exit code.
-- [Configuration](/reference/configuration) — the Worker side.
+- [Give CI read-only access](/examples/ci-read-only)
+- [Configuration](/reference/configuration) — the server side.

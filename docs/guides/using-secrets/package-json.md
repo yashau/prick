@@ -5,7 +5,7 @@ sidebar:
   order: 3
 ---
 
-:::note[Authenticate first]
+:::note[Before you begin]
 Every command here needs an authenticated machine. Start with
 [Authentication](/guides/authentication).
 :::
@@ -99,7 +99,7 @@ No release has been cut, so neither the npm package nor the release tarballs
 exist. Build locally with `mise run build:rust`.
 :::
 
-## Next
+## Next steps
 
 - [Cloudflare Workers](/guides/using-secrets/cloudflare-workers)
 - [GitHub Actions](/guides/using-secrets/github-actions)

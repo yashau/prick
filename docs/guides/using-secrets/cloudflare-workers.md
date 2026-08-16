@@ -5,7 +5,7 @@ sidebar:
   order: 4
 ---
 
-:::note[Authenticate first]
+:::note[Before you begin]
 Every command here needs an authenticated machine. Start with
 [Authentication](/guides/authentication).
 :::
@@ -82,7 +82,7 @@ and `MASTER_KEY` is the key that everything else depends on. See
 [Configuration](/reference/configuration) and
 [Backup and recovery](/guides/backup-and-recovery).
 
-## Next
+## Next steps
 
 - [GitHub Actions](/guides/using-secrets/github-actions)
 - [Configuration](/reference/configuration)

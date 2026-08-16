@@ -313,7 +313,7 @@ The **documentation** site is the one exception, and is released from here --
 it is public, holds nothing, and has no reason to live in your account. See
 `docs-release.yml`, triggered by a `docs-v*` tag.
 
-## Next
+## Next steps
 
 - [Development](/contributing/development)
 - [Testing](/contributing/testing)

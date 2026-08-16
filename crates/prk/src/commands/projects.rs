@@ -390,11 +390,11 @@ mod tests {
     // `projects get`
     // -----------------------------------------------------------------------
 
-    /// The invocation `docs/reference/cli.md` prints, character for character.
+    /// The invocation `docs/reference/cli/projects.md` prints, character for character.
     #[test]
     fn the_documented_get_invocation_parses_as_a_read_of_one_project() {
         let cli = Cli::try_parse_from(["prk", "projects", "get", "api"])
-            .expect("the invocation printed in docs/reference/cli.md must parse");
+            .expect("the invocation printed in docs/reference/cli/projects.md must parse");
 
         let Command::Projects(ProjectsCommand::Get { project }) = cli.command else {
             panic!("`projects get` did not parse as itself");

@@ -245,7 +245,7 @@ the version byte, the field order or the prefix width makes every existing row
 undecryptable. A new binding requires a **new envelope format byte**, not an edit
 to the existing encoder.
 
-## Next
+## Next steps
 
 - [Key rotation](/guides/key-rotation)
 - [Threat model](/architecture/threat-model)

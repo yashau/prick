@@ -203,7 +203,7 @@ page does, is fine.
 | SvelteKit UI                                                         | Complete screens, reading the domain layer          |
 | CLI                                                                  | Every command wired                                 |
 
-## Next
+## Next steps
 
 - [Encryption](/architecture/encryption)
 - [Authorization](/architecture/authorization)

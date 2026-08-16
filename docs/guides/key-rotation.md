@@ -5,7 +5,7 @@ sidebar:
   order: 7
 ---
 
-:::note[Authenticate first]
+:::note[Before you begin]
 The CLI and UI steps here need an authenticated machine. The `wrangler` steps
 need Cloudflare credentials instead. Start with
 [Authentication](/guides/authentication).
@@ -15,12 +15,28 @@ Rotation replaces the master key without downtime and without a bulk migration
 window. Two keys are loaded at once: the new one, which everything is written
 under, and the retired one, which old rows are still read under.
 
-:::caution[Nothing runs the rekey on a schedule]
-There is no cron trigger in `packages/app/wrangler.jsonc`, so nothing sweeps
-rows in the background. The rekey runs when you run it — the **Run one page
-now** button on the settings screen, or a `POST /api/v1/admin/rekey` — and each
-invocation moves one bounded page and tells you how many rows are left. Press it
-until that number is zero.
+The whole job, before you start:
+
+1. Generate a new key, and back it up.
+2. Move the current key to `MASTER_KEY_OLD`.
+3. Install the new key as `MASTER_KEY`.
+4. Deploy. New writes now use the new key.
+5. Re-encrypt existing rows, one page at a time, until `remaining` is zero.
+6. Only then, remove the retired key.
+
+Steps 1 to 4 take minutes. Step 5 takes as long as it takes, and you can leave
+it part-way done safely — both keys stay loaded until you remove one.
+
+:::note[This is about `MASTER_KEY`, not an application secret]
+If a stored value such as a Stripe key leaked, you want
+[Respond to a leaked secret](/examples/rotate-a-leaked-key) instead. This page
+is about the key that encrypts everything.
+:::
+
+:::caution[You drive the rekey]
+The rekey runs when you run it — the **Run one page now** button on the settings
+screen, or a `POST /api/v1/admin/rekey`. Each invocation moves one bounded page
+and tells you how many rows are left. Press it until that number is zero.
 :::
 
 ## The rule
@@ -208,7 +224,7 @@ requires it. Rotating on a calendar without following the migration through to
 zero is worse than not rotating — you accumulate retired keys you can never
 remove.
 
-## Next
+## Next steps
 
 - [Backup and recovery](/guides/backup-and-recovery)
 - [Encryption](/architecture/encryption)

@@ -5,16 +5,15 @@ sidebar:
   order: 5
 ---
 
-:::note[Authenticate first]
+:::note[Before you begin]
 CI authenticates with an Access **service token**, not with `prk login`. Read
-[Authentication](/guides/authentication#setting-up-a-service-token-for-ci) first.
+[Authentication](/guides/authentication#authenticate-a-machine) first.
 :::
 
-:::caution[Nothing here can run until a release is cut]
-Both routes below install `@yashau/prick` from npm, and no release has been cut,
-so the package does not exist yet. The action is real — it lives in this
-repository at `action/`, with its own test suite (`mise run test:action`) — but it
-installs the published CLI, so it cannot work before the first release either.
+:::caution[Both routes install a published release]
+Both routes below install `@yashau/prick` from npm, so they run against a cut
+release. The action lives in this repository at `action/` with its own test suite
+(`mise run test:action`), and installs the published CLI at run time.
 :::
 
 ## Two secrets in GitHub, none in the workflow
@@ -157,7 +156,7 @@ prk secrets download --format env --output "$RUNNER_TEMP/.env"
 Anything in the checkout directory risks being picked up by an upload-artifact
 step or a build context. `$RUNNER_TEMP` is discarded with the runner.
 
-## Next
+## Next steps
 
 - [Access control](/guides/access-control)
 - [Threat model](/architecture/threat-model)

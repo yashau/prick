@@ -235,7 +235,7 @@ repository: with a paths filter, a skipped job reports "skipped", and a
 _required_ check that is skipped blocks the pull request forever. `ci-ok` runs
 with `if: always()` and treats skipped as pass.
 
-## Next
+## Next steps
 
 - [Releasing](/contributing/releasing)
 - [Development](/contributing/development)

@@ -5,30 +5,27 @@ sidebar:
   order: 4
 ---
 
-:::note[Authenticate first]
-Every command here needs an authenticated machine. Start with
-[Authentication](/guides/authentication).
-:::
-
-There are two ways to get a secret into a program.
+There are two ways to get a secret into a program. Prefer the first.
 
 ```bash
 prk run --project api --env production -- ./deploy.sh
 ```
 
-fetches the environment's secrets, puts them in the child process's environment,
-and runs the command. Nothing touches disk.
+fetches the environment's secrets, puts them in the child process's environment
+block, and runs the command. Nothing touches disk.
 
 ```bash
 prk secrets download --format env --output .env --project api --env production
 ```
 
-writes a file, mode `0600`. Use this only when the consumer genuinely needs a
+writes a file at mode `0600`. Use this only when the consumer genuinely needs a
 file — Docker's `--env-file`, for instance — and delete it afterwards.
 
-`prk run` fetches the environment through `GET …/secrets:export`, runs every name
-past the guard in `crates/prick-core/src/keyname.rs`, and hands the captured argv
-to `crates/prick-exec`. It is implemented end to end.
+:::note[Before you begin]
+Every command here needs an authenticated machine. Start with
+[Authentication](/guides/authentication). Full flags are in
+[`prk run`](/reference/cli/run).
+:::
 
 ## How `prk run` runs things
 
@@ -92,9 +89,29 @@ This is a deliberate, documented trade — the alternative mechanisms are worse 
 the same threat — but it is worth knowing before you decide what to store. See
 [Threat model](/architecture/threat-model).
 
+## Checking what was injected
+
+```bash
+prk run -vv --project api --env production -- node -e 'console.log("up")'
+```
+
+```
+injecting 12 secrets into the child environment
+variables: DATABASE_URL, REDIS_URL, STRIPE_SECRET_KEY, …
+up
+```
+
+Names only — never values. Diagnostics go to stderr, so the child's own output
+stays clean.
+
 ## Recipes
 
 - [Docker](/guides/using-secrets/docker)
 - [package.json scripts](/guides/using-secrets/package-json)
 - [Cloudflare Workers](/guides/using-secrets/cloudflare-workers)
 - [GitHub Actions](/guides/using-secrets/github-actions)
+
+## Next steps
+
+- [`prk run`](/reference/cli/run) — every flag, and the exit codes it preserves.
+- [Onboard a new service](/examples/onboard-a-service)

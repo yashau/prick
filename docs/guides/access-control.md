@@ -5,13 +5,15 @@ sidebar:
   order: 5
 ---
 
-:::note[Authenticate first]
-Every command here needs an authenticated machine. Start with
-[Authentication](/guides/authentication).
-:::
-
 Cloudflare Access decides **who** may reach the Worker. prick decides **what**
 they may do, from its own `grants` table.
+
+:::note[Before you begin]
+Every command here needs an authenticated machine, and granting needs admin at
+the scope you are granting. Start with
+[Authentication](/guides/authentication), and see
+[`prk access`](/reference/cli/access) for every flag.
+:::
 
 ## Nothing is granted implicitly
 
@@ -94,8 +96,16 @@ like that is the bug this design exists to prevent.
 prk access grant alice@example.com --role admin
 ```
 
+```
+Granted admin to `alice@example.com` on `*:*`.
+```
+
 ```bash
 prk access grant bob@example.com --role writer --scope api:production
+```
+
+```
+Granted writer to `bob@example.com` on `api:production`.
 ```
 
 ```bash
@@ -125,8 +135,21 @@ would leave the others in place.
 prk access revoke bob@example.com --scope api:production
 ```
 
+```
+Revoke `bob@example.com` on `api:production`? [y/N]
+```
+
+```
+Revoked `bob@example.com` on `api:production`.
+```
+
 ```bash
 prk access list
+```
+
+```
+alice@example.com	admin	*:*
+e367826f93b8d71185e03fe518aff3b4.access	reader	api:production
 ```
 
 `prk access list` shows live grants only — an expired grant is not a grant, so it
@@ -161,6 +184,37 @@ still reports its sources, so that is the list of what re-enabling would restore
 Disabling is not a substitute for revoking. It is the thing to do **first**, at
 three in the morning, so that the unpicking of individual grants and group
 memberships happens afterwards with the access already stopped.
+
+### A kill-switch refusal is distinguishable in the log
+
+To the caller, a disabled identity and an identity with no grant get the same
+`403` — that is deliberate, and it stays that way.
+
+To an operator they are different rows. A denial that came from the kill switch
+carries `disabled: true` in its audit detail; one that came from a missing grant
+does not:
+
+```json
+{ "kind": "denial", "scope": "environment", "required": "writer", "resource": "environment" }
+```
+
+```json
+{
+  "kind": "denial",
+  "scope": "global",
+  "required": "reader",
+  "resource": "global",
+  "disabled": true
+}
+```
+
+The distinction is the whole difference between the two operator actions: a
+disabled identity is **re-enabled**, an ungranted one is **granted**. A log that
+conflated them would send somebody to grant an identity where granting changes
+nothing.
+
+Both are written under the action `access.denied`, which is what the audit
+screen filters on — so a refusal is findable rather than merely recorded.
 
 Both require **global** admin. A project admin flipping the switch would be
 revoking access to projects they have nothing to do with, which is why the route
@@ -248,7 +302,8 @@ answer is "nothing, and here is what re-enabling would restore".
 
 `prk access explain` renders that: one line per scope naming the role and the
 source that conferred it, then every source underneath with `->` against the
-decisive one. See [`prk access`](/reference/cli/#prk-access).
+decisive one. See
+[`prk access explain`](/reference/cli/access#prk-access-explain).
 
 ## The service token flow
 
@@ -345,6 +400,23 @@ to do with. Only the unauthorized case records a denial; there is nothing to be
 denied about a project that does not exist, and auditing one would fill "seen but not
 granted" with the noise of mistyped slugs.
 
+### Finding refusals
+
+Every refusal — the `403` from a missing role and the `404` from something you
+cannot see — is written under the action `access.denied`, so one filter finds
+them all. The `detail` field says which kind it was:
+
+| Field      | Meaning                                                         |
+| ---------- | --------------------------------------------------------------- |
+| `scope`    | `global`, `project` or `environment`                            |
+| `required` | The role the operation needed                                   |
+| `resource` | What was being reached for. Never its slug                      |
+| `disabled` | Present and `true` only when the kill switch caused the refusal |
+
+A row with `disabled: true` means re-enabling the identity, not granting it
+something. See
+[the kill switch](#a-kill-switch-refusal-is-distinguishable-in-the-log).
+
 ## Why you get a 404 and not a 403
 
 Asking for a project you cannot see returns exactly what asking for a project
@@ -352,7 +424,9 @@ that does not exist returns. Splitting those into `403` and `404` would turn the
 API into an oracle for which project names are in use, which is information the
 caller was denied by design.
 
-## Next
+## Next steps
 
+- [`prk access`](/reference/cli/access) — every subcommand, with examples.
+- [Give CI read-only access](/examples/ci-read-only) — the service-token flow, worked through.
+- [Respond to a leaked secret](/examples/rotate-a-leaked-key) — the kill switch in anger.
 - [Authorization](/architecture/authorization) — the resolution algorithm in detail.
-- [Authentication](/guides/authentication)

@@ -123,17 +123,24 @@ Breaking these fails the build, not review.
    failure must be loud, because a silently skipped row becomes a `.env` that deploys production
    without `DATABASE_URL`" carries the whole argument and needs no absent other. Nothing checks
    this; it is yours to hold.
-3. **Never return a secret value from a SvelteKit `+*.server.ts` load or form action.** SvelteKit
+3. **Describe what the code does, not what it does not do.** No roadmap notes, no "not yet", no
+   "currently prints JSON because table rendering is missing", no gap inventories. A reader wants
+   the behaviour they can rely on today; an absence dates the moment it is filled and quietly
+   becomes a lie. Where the absence is load-bearing, state it as the positive property it really
+   is — "a slug is permanent", not "there is no way to change a slug"; "you drive the rekey", not
+   "there is no cron trigger". Naming a rejected alternative to justify a design stays fine; that
+   is an argument, not an inventory.
+4. **Never return a secret value from a SvelteKit `+*.server.ts` load or form action.** SvelteKit
    serialises those into the page payload. Secret values reach the browser only via a client-side
    `fetch` to `/api/*`, from the `ssr = false` subtree.
-4. **Never widen an AAD.** Ciphertexts are bound to `(purpose, environment_id, key, version)`. If a
+5. **Never widen an AAD.** Ciphertexts are bound to `(purpose, environment_id, key, version)`. If a
    mutation changes any of those, you must decrypt and re-encrypt — never copy a ciphertext blob
    between rows. There is no cheap rename.
-5. **Never write a mutation without an audit row in the same `batch()`.** The audit insert is the
+6. **Never write a mutation without an audit row in the same `batch()`.** The audit insert is the
    last statement in the transaction so that an un-audited mutation is impossible.
-6. **Never split a bulk write across multiple `batch()` calls.** That destroys atomicity. If it does
+7. **Never split a bulk write across multiple `batch()` calls.** That destroys atomicity. If it does
    not fit, reject it with 413.
-7. **Never swallow a decrypt failure.** A tamper attempt must be the loudest thing in the system.
+8. **Never swallow a decrypt failure.** A tamper attempt must be the loudest thing in the system.
 
 ## Conventions
 

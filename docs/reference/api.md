@@ -92,7 +92,7 @@ Cloudflare Access assertion.
 | `CF-Access-Client-Id` + `CF-Access-Client-Secret` | Service tokens. Exchanged at the edge; the Worker never sees these two headers    |
 
 The Worker verifies the token itself rather than trusting that Access ran. See
-[Authentication](/guides/authentication#what-the-verifier-actually-checks) for
+[Authentication](/guides/authentication#what-the-verifier-checks) for
 the exact assertions.
 
 Three things happen on every authenticated request, in this order:
@@ -498,12 +498,11 @@ version stranded under a retired kid is a rollback that stops working when the
 key goes.
 
 `POST /admin/rekey` re-encrypts one page onto the active key and returns
-`{ rekeyed, remaining }`. **Nothing calls it on a schedule**: there is no cron
-trigger, so a rotation advances only while something keeps calling it, and it is
-finished when `remaining` reaches zero. A row that cannot be decrypted fails the
-whole page instead of being skipped — a skipped row would still count as gone,
-and the ring would then report itself safe to prune while an unreadable value
-remained.
+`{ rekeyed, remaining }`. **Callers drive it**: a rotation advances one page per
+call and is finished when `remaining` reaches zero. A row that cannot be
+decrypted fails the whole page instead of being skipped — a skipped row would
+still count as gone, and the ring would then report itself safe to prune while an
+unreadable value remained.
 
 Both authorization checks are the first statement of the corresponding function
 in `core`, not of the route, because authorization is written once.
@@ -674,7 +673,7 @@ Three of them carry design decisions worth stating:
   `{scope_type: "global", project: "prod"}` and have to guess — which is how an
   over-broad grant gets created and nobody notices.
 
-## Next
+## Next steps
 
-- [CLI reference](/reference/cli)
+- [CLI reference](/reference/cli/)
 - [Authorization](/architecture/authorization)
