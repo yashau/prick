@@ -212,7 +212,16 @@ function startProxy(target: string, token: string): void {
   const server = createServer((request, response) => {
     void (async () => {
       try {
-        const url = new URL(request.url ?? "/", target);
+        // The destination is pinned to `target`, never taken from the request.
+        //
+        // HTTP allows an absolute-form request target -- `GET http://elsewhere/
+        // HTTP/1.1` -- which Node surfaces verbatim as `request.url`, and which
+        // `new URL(url, base)` would honour OVER the base. This process attaches
+        // a valid Access assertion to everything it forwards, so that would hand
+        // the token to a host the caller chose. Take the path and query only.
+        const requested = new URL(request.url ?? "/", "http://request.invalid");
+        const url = new URL(`${requested.pathname}${requested.search}`, target);
+
         const headers = { ...request.headers } as Record<string, string>;
         delete headers["host"];
         // fetch decodes the response, so re-advertising an encoding would lie.
