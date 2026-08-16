@@ -1,0 +1,33 @@
+# Local development configuration. Copy to `.dev.vars` and fill in.
+#
+#   cp .dev.vars.example .dev.vars
+#
+# `mise.toml` loads `.dev.vars` from the repository root into every task's
+# environment with redaction on, so a value here never lands in a task log.
+# Wrangler's own convention is a second copy beside `wrangler.jsonc`, in
+# `packages/app/`. Both paths are gitignored; this example is the one exception.
+#
+# See docs/reference/configuration.md for what each of these does.
+
+# Base64 of exactly 32 bytes. Generate one with:
+#
+#   openssl rand -base64 32
+#
+# USE A DIFFERENT KEY LOCALLY. A development machine holding the production key
+# has made every laptop a production credential.
+MASTER_KEY=
+
+# The <team> in https://<team>.cloudflareaccess.com.
+ACCESS_TEAM=your-team
+
+# The Access application's Audience (AUD) tag, from its Overview tab. An empty
+# value is refused: a verifier that accepts tokens minted for a different Access
+# application is not a verifier.
+ACCESS_AUD=
+
+# Comma-separated emails that hold global admin implicitly, evaluated live. This
+# is how the first administrator comes to exist.
+BOOTSTRAP_ADMINS=you@example.com
+
+# Retired keys, comma-separated, during a rotation only. Leave unset otherwise.
+# MASTER_KEY_OLD=

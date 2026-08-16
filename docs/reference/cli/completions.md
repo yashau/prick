@@ -2,7 +2,7 @@
 title: prk completions and prk version
 description: Shell completion scripts, and reporting the version.
 sidebar:
-  order: 8
+  order: 9
   label: completions and version
 ---
 

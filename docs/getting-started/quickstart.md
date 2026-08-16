@@ -177,17 +177,9 @@ value at build time.
 npm install -g @yashau/prick
 ```
 
-:::caution[Not published yet]
-No release has been cut, so this package does not exist on npm today. Build the
-binary locally instead:
-
-```bash
-mise run build:rust
-```
-
-It lands at `target/release/prk`. See [Install](/getting-started/install) for
-the full set of routes.
-:::
+The package ships a prebuilt binary for each platform and picks the right one.
+[Install](/getting-started/install) covers the other routes — a release tarball,
+or a local build with `mise run build:rust`.
 
 ## 11. Sign in
 

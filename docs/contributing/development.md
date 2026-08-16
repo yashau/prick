@@ -72,6 +72,7 @@ for a Windows contributor. Node is guaranteed present because mise installed it.
 | Task                     | Does                                                                          |
 | ------------------------ | ----------------------------------------------------------------------------- |
 | `mise run dev`           | Worker + UI dev server                                                        |
+| `mise run demo`          | A signed-in, seeded copy of the app, for browsing                             |
 | `mise run fmt`           | Format everything in place                                                    |
 | `mise run lint`          | clippy, `vp lint`, svelte-check, actionlint, zizmor, pinact, typos, file size |
 | `mise run typecheck`     | TypeScript across the workspace                                               |
@@ -80,13 +81,26 @@ for a Windows contributor. Node is guaranteed present because mise installed it.
 | `mise run openapi:check` | Fail if `docs/openapi.json` is stale                                          |
 | `mise run miri`          | The purity proof for `prick-core`                                             |
 | `mise run e2e`           | Playwright                                                                    |
-| `mise run build`         | CLI and Worker bundle                                                         |
+| `mise run build`         | CLI, Worker bundle and MCP server                                             |
 | `mise run docs:dev`      | The documentation site, with hot reload                                       |
 | `mise run deny`          | Licences, bans, advisories, the git-source ban                                |
-| `mise run ci`            | **Exact mirror of CI.** Run before opening a pull request                     |
+| `mise run ci`            | **A superset of CI.** Run before opening a pull request                       |
 
 `depends` fans out in parallel, and `sources`/`outputs` give content-hash
 skipping, so a repeat run is cheap.
+
+`mise run ci` is a superset rather than a mirror, and the difference is two
+tasks. It also runs `audit` and the full `build`; CI runs neither. `audit` is
+left out of CI on purpose — advisories land without anyone pushing a commit, so
+a CI job would turn unrelated pull requests red on a day nobody changed
+anything. `build` is left out because `lint:rust` compiles every target already,
+and the only thing `build:rust` adds is `--release`, which the release workflow
+does on a tag. A green `mise run ci` is therefore a green CI run.
+
+`dev`, `demo`, `docs:dev` and `docs:preview` are servers: they do not exit.
+**Stop `demo` before running `ci` or `e2e`** — it holds the Playwright work
+directory and keeps the built Worker open, and on Windows neither failure names
+the demo server as the cause.
 
 ## Who owns what
 
@@ -115,10 +129,6 @@ from something a reviewer might catch into something the compiler rejects.
 
 If you need to print, add a helper to `output`. Do not widen the allow.
 
-### No references to prior art
-
-This project stands on its own. CI greps the tree and fails on any hit.
-
 ### `prick-core` is pure
 
 No I/O, no async, no `unsafe`, no FFI. `cargo miri test -p prick-core` is a
@@ -144,16 +154,20 @@ These are not mechanically checked.
 
 1. **Never log, print or embed a secret value.** Error messages name the _key_,
    never the value.
-2. **Never return a secret value from a SvelteKit `+*.server.ts` load or form
+2. **Describe this project on its own terms.** State the property and the
+   hazard rather than reaching for what some other tool does — a reader has no
+   referent for an absent comparison. Naming a rejected alternative to justify a
+   design is fine; that is an argument, not a comparison.
+3. **Never return a secret value from a SvelteKit `+*.server.ts` load or form
    action.** SvelteKit serialises those into the page payload. Values reach the
    browser only via a client-side fetch from the `ssr = false` subtree.
-3. **Never widen an AAD.** Ciphertexts are bound to
+4. **Never widen an AAD.** Ciphertexts are bound to
    `(purpose, environment_id, key, version)`. If a mutation changes any of those,
    decrypt and re-encrypt. Never copy a ciphertext blob between rows.
-4. **Never write a mutation without an audit row in the same `batch()`.**
-5. **Never split a bulk write across multiple `batch()` calls.** That destroys
+5. **Never write a mutation without an audit row in the same `batch()`.**
+6. **Never split a bulk write across multiple `batch()` calls.** That destroys
    atomicity. If it does not fit, reject it with `413`.
-6. **Never swallow a decrypt failure.**
+7. **Never swallow a decrypt failure.**
 
 ## Where things live
 

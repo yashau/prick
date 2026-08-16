@@ -230,10 +230,15 @@ launch and names the packages.
 mise run ci
 ```
 
-It mirrors CI exactly. `ci-ok` is the only required status check in the
-repository: with a paths filter, a skipped job reports "skipped", and a
-_required_ check that is skipped blocks the pull request forever. `ci-ok` runs
-with `if: always()` and treats skipped as pass.
+It is a superset of CI — it also runs `audit` and the full `build`, which CI
+deliberately leaves out — so a green run here is a green run there. See
+[Development](/contributing/development#everyday-tasks) for why those two are
+local-only.
+
+`ci-ok` is the only required status check in the repository: with a paths
+filter, a skipped job reports "skipped", and a _required_ check that is skipped
+blocks the pull request forever. `ci-ok` runs with `if: always()` and treats
+skipped as pass.
 
 ## Next steps
 

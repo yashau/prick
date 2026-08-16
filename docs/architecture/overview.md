@@ -191,18 +191,6 @@ describe this very check name those functions — so naming one in prose, as thi
 page does, is fine.
 :::
 
-## Status
-
-| Layer                                                                | State                                               |
-| -------------------------------------------------------------------- | --------------------------------------------------- |
-| Crypto (`crypto/`)                                                   | Implemented                                         |
-| Access verification and authorization, incl. groups (`auth/`)        | Implemented                                         |
-| Projects, environments, secrets, identities, groups, audit (`core/`) | Implemented                                         |
-| Key ring status and rekey (`core/keyring.ts`)                        | Implemented; no cron, a rotation is driven by calls |
-| Hono routes                                                          | Fully mounted                                       |
-| SvelteKit UI                                                         | Complete screens, reading the domain layer          |
-| CLI                                                                  | Every command wired                                 |
-
 ## Next steps
 
 - [Encryption](/architecture/encryption)

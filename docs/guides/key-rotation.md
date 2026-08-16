@@ -34,9 +34,11 @@ is about the key that encrypts everything.
 :::
 
 :::caution[You drive the rekey]
-The rekey runs when you run it — the **Run one page now** button on the settings
-screen, or a `POST /api/v1/admin/rekey`. Each invocation moves one bounded page
-and tells you how many rows are left. Press it until that number is zero.
+The rekey runs when you run it. Three things drive it and they reach the same
+function: `prk keyring rekey`, the **Run one page now** button on the settings
+screen, and `POST /api/v1/admin/rekey`. Each invocation moves one bounded page
+and tells you how many rows are left. Repeat until that number is zero —
+`prk keyring rekey --until-done` runs the loop for you.
 :::
 
 ## The rule
@@ -111,27 +113,38 @@ the active key, so normal traffic migrates rows on its own:
 prk secrets set DATABASE_URL --project api --env production
 ```
 
-**The rekey**, for everything nobody is touching. Open the settings screen and
-press **Run one page now**, or drive it directly:
+**The rekey**, for everything nobody is touching:
 
 ```bash
-curl -X POST https://prick.example.com/api/v1/admin/rekey \
-  -H 'Content-Type: application/json' \
-  --data '{"limit":100}'
+prk keyring rekey --until-done
 ```
 
-Each call answers with what it did:
-
-```json
-{ "rekeyed": 100, "remaining": 2417 }
+```
+Re-encrypted 2417 row(s) over 25 page(s); 0 remaining.
 ```
 
-One call is one page and one database transaction. A page is capped at 100 rows
-however large a `limit` you send, because the whole page commits in a single
-`batch()` — splitting it across two would mean a failure in the second left the
-first committed, and D1 documents a 30-second ceiling on a transaction. Call it
-again while `remaining` is above zero; the endpoint is resumable and repeating a
-call that already succeeded is a no-op rather than a second pass.
+Or one page at a time — from the command line, from the settings screen's **Run
+one page now** button, or from `POST /api/v1/admin/rekey` directly:
+
+```bash
+prk keyring rekey
+```
+
+```
+Re-encrypted 100 row(s) over 1 page(s); 2317 remaining.
+```
+
+One page is one database transaction, capped at 100 rows: the whole page commits
+in a single `batch()`, splitting it across two would mean a failure in the second
+left the first committed, and D1 documents a 30-second ceiling on a transaction.
+A `limit` above 100 is refused rather than clamped, so a caller pacing itself off
+the number it asked for cannot be wrong about what moved.
+
+Repeat while `remaining` is above zero. The operation is resumable, and repeating
+a call that already succeeded is a no-op rather than a second pass — so
+interrupting `--until-done` costs you nothing but the pages you had left.
+
+Every flag is on the [`prk keyring`](/reference/cli/keyring) reference page.
 
 What a page does to each row: decrypt under the key the envelope names,
 re-encrypt under the active key with the **identical** authenticated data, and
@@ -161,12 +174,25 @@ otherwise.
 
 ### 6. Wait for zero, then remove the retired key
 
-The settings screen is the readout. `keyring_state` holds one row per key id
-ever observed, and its `rows_remaining` is **recomputed** by the rekey from the
-real rows rather than decremented as a running counter — a counter that drifted
-by one in the direction of zero is a green light on an installation that is not
-safe. The screen itself does not read that column at all: it counts live on
-every load.
+```bash
+prk keyring status
+```
+
+```
+9d1c8f2a4b6e0d31	active	0 row(s)
+4f2a9c1e7b3d5a08	retiring	0 row(s)
+```
+
+```
+Nothing references a retired key. `MASTER_KEY_OLD` can be removed; redeploy after you delete it.
+```
+
+The settings screen is the same readout. `keyring_state` holds one row per key
+id ever observed, and its `rows_remaining` is **recomputed** by the rekey from
+the real rows rather than decremented as a running counter — a counter that
+drifted by one in the direction of zero is a green light on an installation that
+is not safe. Neither readout reads that column at all: both count live, every
+time they are asked.
 
 `safeToRemoveOldKey` goes true only when every non-active key id reports zero.
 It is also held false by a stored value the server cannot attribute to any key
@@ -226,6 +252,7 @@ remove.
 
 ## Next steps
 
+- [`prk keyring`](/reference/cli/keyring) — every flag on the two commands above.
 - [Backup and recovery](/guides/backup-and-recovery)
 - [Encryption](/architecture/encryption)
 - [Configuration](/reference/configuration)

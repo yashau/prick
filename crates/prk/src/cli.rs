@@ -202,6 +202,10 @@ pub enum Command {
     #[command(subcommand)]
     Access(commands::access::AccessCommand),
 
+    /// Inspect the master key ring and advance a rotation.
+    #[command(subcommand)]
+    Keyring(commands::keyring::KeyringCommand),
+
     /// Generate a shell completion script.
     Completions(commands::completions::CompletionsArgs),
 
@@ -222,6 +226,7 @@ impl Command {
             Self::Secrets(sub) => sub.path(),
             Self::Run(_) => "run",
             Self::Access(sub) => sub.path(),
+            Self::Keyring(sub) => sub.path(),
             Self::Completions(_) => "completions",
             Self::Version => "version",
         }
@@ -390,6 +395,8 @@ mod tests {
             &["prk", "run", "--", "echo", "hi"],
             &["prk", "access", "list"],
             &["prk", "access", "explain", "bob@example.com"],
+            &["prk", "keyring", "status"],
+            &["prk", "keyring", "rekey", "--until-done"],
             &["prk", "completions", "bash"],
             &["prk", "version"],
         ];

@@ -28,6 +28,8 @@ nothing written to disk.
 - **A web UI** — a SvelteKit admin app served from the same Worker.
 - **Cloudflare Access** — SSO for people, service tokens for CI.
 - **Versioned secrets** — every write keeps history, and every read is audited.
+- **An [MCP server](/guides/mcp-server)** — so a coding assistant can manage
+  secrets without reading their values.
 
 Secret **values** are encrypted with AES-256-GCM, and each ciphertext is bound
 to its row, so a value lifted out of one row and pasted into another fails to
@@ -57,6 +59,7 @@ The name: **P**ortable **R**untime **I**njection of **C**loudflare (stored)
 - [Access control](/guides/access-control) — identities, grants, service tokens.
 - [Backup and recovery](/guides/backup-and-recovery)
 - [Key rotation](/guides/key-rotation)
+- [MCP server](/guides/mcp-server) — let a coding assistant manage secrets without reading them.
 
 ## Examples
 
@@ -85,23 +88,7 @@ The name: **P**ortable **R**untime **I**njection of **C**loudflare (stored)
 - [Testing](/contributing/testing)
 - [Releasing](/contributing/releasing)
 
-## Project status
-
-The architecture is settled, the security-critical layers are written, and the
-API surface is mounted. Two things are worth knowing before you adopt it, and
-this documentation says so at the point where it matters rather than describing
-intent as fact.
-
-| Area                                                                      | State                                                                                   |
-| ------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
-| Crypto: envelope, AAD, key ring                                           | Implemented                                                                             |
-| Access JWT verification, claims, authorization, bootstrap                 | Implemented                                                                             |
-| Domain layer: projects, environments, secrets, identities, grants, groups | Implemented                                                                             |
-| Domain layer: audit query, including per-scope narrowing                  | Implemented                                                                             |
-| Domain layer: key ring status and the rekey job                           | Implemented. **No cron** — a rotation advances one page per call to `POST /admin/rekey` |
-| HTTP API                                                                  | Fully mounted, and `docs/openapi.json` is generated from the router                     |
-| `prk` CLI                                                                 | Login, token storage, service tokens and every subcommand are wired                     |
-| Web UI                                                                    | Every screen exists and reads the domain layer                                          |
+## Install it
 
 `prk` installs from npm as `@yashau/prick`, which ships a prebuilt binary for
 each platform, or builds locally with `mise run build:rust` — see

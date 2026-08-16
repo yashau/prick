@@ -57,9 +57,11 @@ type KeyringStatusEntry = KeyringStatus["entries"][number];
  * write path is shaped to prevent. So when a page does not fit, the page gets
  * smaller; it never gets split.
  *
- * 100 is the ceiling rather than the 1000 the HTTP body allows, and the caller
- * is not lied to about it: the result reports `rekeyed` and `remaining`, so an
- * operator asking for 1000 sees 100 moved and 900 left, and calls again. The
+ * 100 is also what `RekeyBody` accepts as its maximum -- it imports this
+ * constant rather than repeating the number, so the edge refuses an oversized
+ * limit instead of clamping it. A clamp would answer 200 to a request for 1000,
+ * and a caller pacing itself off the number it asked for would be wrong by a
+ * factor of ten with nothing to notice. The
  * bulk write path already runs ~90 statements in one batch at its 500-secret
  * cap, which is the largest batch this codebase is known to commit; matching
  * that magnitude rather than exceeding it by an order of magnitude is the

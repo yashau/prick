@@ -31,12 +31,13 @@ process at runtime — portably, and without ever touching disk.
 
 ## 🧩 What it is
 
-|             |                                                                                                      |
-| :---------- | :--------------------------------------------------------------------------------------------------- |
-| **`prk`**   | The command-line client: one static Rust binary, talking HTTP to your Worker.                        |
-| **Web UI**  | A SvelteKit admin console served from the same Worker.                                               |
-| **Auth**    | Cloudflare Access — SSO for people, service tokens for CI. Identity comes from the signed JWT.       |
-| **Storage** | D1. Values are AES-256-GCM, and each ciphertext is cryptographically bound to the row that holds it. |
+|             |                                                                                                            |
+| :---------- | :--------------------------------------------------------------------------------------------------------- |
+| **`prk`**   | The command-line client: one static Rust binary, talking HTTP to your Worker.                              |
+| **Web UI**  | A SvelteKit admin console served from the same Worker.                                                     |
+| **Auth**    | Cloudflare Access — SSO for people, service tokens for CI. Identity comes from the signed JWT.             |
+| **Storage** | D1. Values are AES-256-GCM, and each ciphertext is cryptographically bound to the row that holds it.       |
+| **MCP**     | An [MCP server](docs/guides/mcp-server.md), so a coding assistant can manage secrets without reading them. |
 
 ## ⚙️ How it works
 
@@ -477,8 +478,14 @@ pnpm --filter @prick/app exec wrangler deploy
 > which is a feature rather than a bug, and also the most common way people lose everything. **Back
 > up the key before you store the first secret.**
 
-Rotation is supported and incremental, and the settings screen tells you when it is safe to drop the
-retired key. See **[Backup and recovery](docs/guides/backup-and-recovery.md)** and
+Rotation is incremental, and both the settings screen and `prk keyring status` tell you when it is
+safe to drop the retired key — counted live, every time you ask.
+
+```bash
+prk keyring rekey --until-done
+```
+
+See **[Backup and recovery](docs/guides/backup-and-recovery.md)** and
 **[Key rotation](docs/guides/key-rotation.md)**.
 
 ## 📊 Status
@@ -501,7 +508,7 @@ The only thing you install is [mise](https://mise.jdx.dev). It pins everything e
 ```bash
 mise run dev      # Worker + UI
 mise run test     # every suite
-mise run ci       # exact mirror of CI — run before opening a PR
+mise run ci       # a superset of CI — run before opening a PR
 ```
 
 See **[CONTRIBUTING.md](CONTRIBUTING.md)** and **[AGENTS.md](AGENTS.md)**.

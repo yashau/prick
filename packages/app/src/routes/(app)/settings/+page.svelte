@@ -220,16 +220,22 @@
       </p>
       <Separator />
       <!--
-        NO SCHEDULE, AND THE SCREEN SAYS SO.
+        THE OPERATOR DRIVES THIS, AND THE SCREEN SAYS SO.
 
-        Nothing in wrangler.jsonc triggers this. An operator told that a
+        Nothing in wrangler.jsonc triggers it. An operator told that a
         background job is working through it would wait for a count that never
         moves, and the thing they are waiting to do safely is delete a key.
+
+        The CLI is named here because pressing a button several hundred times is
+        the reason somebody stops half way, and stopping half way is how a
+        retired key gets deleted with rows still under it.
       -->
       <p class="text-muted-foreground text-xs">
-        Nothing runs this on a schedule. Each press re-encrypts up to 100 rows in one transaction
-        and reports how many are left; press it until nothing is outstanding. Ordinary writes also
-        move rows onto the active key, so the count falls on its own as secrets are updated.
+        You drive this. Each press re-encrypts up to 100 rows in one transaction and reports how
+        many are left; press it until nothing is outstanding, or run
+        <code>prk keyring rekey --until-done</code> to work through the rest in one go. Ordinary
+        writes also move rows onto the active key, so the count falls on its own as secrets are
+        updated.
       </p>
     </Card.Content>
 

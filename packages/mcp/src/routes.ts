@@ -2,18 +2,21 @@
  * Every API path this server knows, in one file.
  *
  * ------------------------------------------------------------------------
- * ASSUMED SURFACE -- READ THIS BEFORE DEBUGGING A 404
+ * CHECKED AGAINST THE ROUTER, NOT AGAINST ANYBODY'S MEMORY OF IT
  * ------------------------------------------------------------------------
- * At the time this package was written the Worker's Hono router mounted
- * `/api/v1` and served exactly one route on it: `GET /api/v1/health`. The route
- * set below is therefore built against the DOCUMENTED surface (projects,
- * environments, secrets with `:batch`, the slug aliases `/p/:slug/e/:slug/...`
- * for client ergonomics, exact match only) rather than against code that
- * exists.
+ * `test/routes.test.ts` calls every function below and looks each result up in
+ * `docs/openapi.json`, which is generated from the Hono router and which
+ * `mise run openapi:check` keeps fresh. So a route that stops existing fails
+ * this package's own suite rather than a user's first tool call.
  *
- * They are centralised here, as pure functions with no logic in them, so that
- * reconciling this package with the router that eventually lands is a diff to
- * ONE file with no behaviour in it -- not a search across five handlers.
+ * That check is why they are centralised here as pure functions with no logic
+ * in them: the thing being verified is a set of strings, and a set of strings is
+ * something a test can enumerate. Interpolating a path inside a handler would
+ * put it beyond reach.
+ *
+ * The environment-scoped routes use the slug alias `/p/:slug/e/:slug/...`. Both
+ * mounts serve the same handlers, and only the canonical spelling appears in the
+ * generated document -- which the test accounts for rather than working around.
  *
  * Percent-encoding is applied to every interpolated segment without exception.
  * A slug is constrained to `[a-z0-9-]` and a secret key to a POSIX name, so

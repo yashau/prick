@@ -421,6 +421,64 @@ impl Grant {
     }
 }
 
+/// The state of the master key ring.
+///
+/// The counts are taken live over `secret_versions` every time this is asked,
+/// and they cover **history** as well as current versions -- an earlier version
+/// stranded under a retired key id is a rollback that stops working the moment
+/// the key goes.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[non_exhaustive]
+pub struct KeyringStatus {
+    /// The key id everything is written under today.
+    pub active_kid: String,
+    /// One entry per key id ever observed, active and retired alike.
+    #[serde(default)]
+    pub entries: Vec<KeyringEntry>,
+    /// Whether `MASTER_KEY_OLD` can be removed.
+    ///
+    /// True only when every non-active key id reports zero rows. Removing a
+    /// retired key while a row still references it is the one irreversible
+    /// mistake available in this design, so this is the field to wait on rather
+    /// than a judgement about how long a rekey has been running.
+    pub safe_to_remove_old_key: bool,
+}
+
+/// One key id in the ring, and how much still depends on it.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[non_exhaustive]
+pub struct KeyringEntry {
+    /// The key id carried in every envelope this key sealed.
+    pub kid: String,
+    /// `active`, `retiring` or `retired`.
+    ///
+    /// `retired` means the ring no longer holds the key at all. An entry that is
+    /// both `retired` and non-zero is the state to investigate before anything
+    /// else: those rows cannot be decrypted until the key is restored in
+    /// `MASTER_KEY_OLD`.
+    pub status: String,
+    /// Rows still sealed under this key id, current versions and history alike.
+    #[serde(default)]
+    pub rows_remaining: u64,
+    /// When a rekey last moved rows off this key, in epoch milliseconds.
+    #[serde(default)]
+    pub last_rekey_at: Option<i64>,
+}
+
+/// What one page of a rekey moved, and what is left.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[non_exhaustive]
+pub struct RekeyProgress {
+    /// Rows re-encrypted onto the active key by this call.
+    pub rekeyed: u64,
+    /// Rows still sealed under some other key id. Zero means the rotation is
+    /// finished and the retired key can go.
+    pub remaining: u64,
+}
+
 /// The server's error body.
 ///
 /// **Flat.** There is no wrapping `error` object: the fields are at the top
@@ -720,6 +778,27 @@ mod tests {
         )
         .expect("the shape matches");
         assert_eq!(denied.attempts, 9);
+    }
+
+    #[test]
+    fn the_key_ring_and_a_page_of_progress_deserialise() {
+        let status: KeyringStatus = serde_json::from_str(
+            r#"{"activeKid":"9d1c","safeToRemoveOldKey":false,
+                "entries":[{"kid":"9d1c","status":"active","rowsRemaining":0,"lastRekeyAt":null},
+                           {"kid":"4f2a","status":"retiring","rowsRemaining":2417,
+                            "lastRekeyAt":1760000000000}]}"#,
+        )
+        .expect("the shape matches");
+
+        assert_eq!(status.active_kid, "9d1c");
+        assert!(!status.safe_to_remove_old_key);
+        assert_eq!(status.entries[1].rows_remaining, 2417);
+        assert_eq!(status.entries[1].last_rekey_at, Some(1_760_000_000_000));
+
+        let progress: RekeyProgress =
+            serde_json::from_str(r#"{"rekeyed":100,"remaining":2317}"#).expect("the shape matches");
+        assert_eq!(progress.rekeyed, 100);
+        assert_eq!(progress.remaining, 2317);
     }
 
     #[test]
