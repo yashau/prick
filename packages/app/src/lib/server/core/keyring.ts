@@ -494,16 +494,26 @@ export async function rekeyPage(
       action: "admin.rekey",
       outcome: "success",
       /*
-       * `secret.read` because that is what a rekey unavoidably is from the log's
-       * point of view: N values were decrypted into the Worker's memory. The
-       * count is the progress number an operator wants and the decryption is the
-       * fact an auditor wants, and one detail member carries both.
+       * `from` is sorted so two pages that moved the same kids produce the same
+       * detail, which is what lets a reader diff one audit row against another
+       * instead of re-reading both.
+       *
+       * This used to be `{ kind: "secret.read", reason: "rekey", count }`, which
+       * was truthful -- N values really were decrypted into memory -- but could
+       * not name the kids. "100 keys were read" and "100 rows left kid abc for
+       * kid def" answer different questions, and only the second tells an
+       * auditor whether the retired key is finished with.
        *
        * A dedicated `admin.rekey` member -- naming the source kids and the
        * destination -- would be better, and `AuditDetail` in `core/audit.ts` is
        * where it would go.
        */
-      detail: { kind: "secret.read", reason: "rekey", count: sealed.length },
+      detail: {
+        kind: "admin.rekey",
+        from: [...sourceKids].sort(),
+        to: activeKid,
+        count: sealed.length,
+      },
     }),
   );
 

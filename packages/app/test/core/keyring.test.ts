@@ -533,7 +533,24 @@ describe("the page", () => {
 
     // One event, one audit row. A second pass that re-recorded the same work
     // would make the log say a rotation happened twice.
-    expect(await rekeyAudit()).toHaveLength(1);
+    const audited = await rekeyAudit();
+    expect(audited).toHaveLength(1);
+
+    /*
+     * The row names the kids, not just a count.
+     *
+     * `100 rows were read` and `100 rows left kid X for kid Y` answer different
+     * questions, and only the second one lets an auditor reconstructing a
+     * rotation decide whether the retired key is finished with. `from` is the
+     * key the rows were ACTUALLY on, read off the envelopes, so a detail that
+     * echoed the ring's configuration back instead would disagree with it here.
+     */
+    expect(JSON.parse(audited[0]?.detail ?? "{}")).toEqual({
+      kind: "admin.rekey",
+      from: [before.active.kid],
+      to: after.active.kid,
+      count: 3,
+    });
 
     await expect(exportSecrets(admin(after), "acme", "prod")).resolves.toEqual({
       A: "1",

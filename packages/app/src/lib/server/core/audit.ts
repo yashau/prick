@@ -93,6 +93,24 @@ export type AuditDetail =
       count: number;
     }
   | {
+      kind: "admin.rekey";
+      /**
+       * The key ids the rows were encrypted under BEFORE this page ran, and the
+       * one they are under now.
+       *
+       * A rekey row used to reuse `secret.read`, which was truthful -- N values
+       * really were decrypted into memory -- but it could not say the thing an
+       * auditor reconstructing a rotation needs: which key these rows moved
+       * OFF. "100 keys were read" and "100 rows left kid abc for kid def" answer
+       * different questions, and only the second one tells you whether the
+       * retired key is finished with.
+       */
+      from: readonly string[];
+      to: string;
+      /** Rows re-encrypted in this page. */
+      count: number;
+    }
+  | {
       kind: "secret.unreadable";
       /** The keys whose stored envelope failed to open. Names only. */
       keys: readonly string[];

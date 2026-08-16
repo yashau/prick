@@ -129,6 +129,14 @@ export function summariseDetail(entry: AuditEntryView): string | null {
       const count = typeof detail["count"] === "number" ? detail["count"] : 1;
       return `${reason} · ${count} key${count === 1 ? "" : "s"}`;
     }
+    case "admin.rekey": {
+      const from = names(detail["from"]);
+      const to = typeof detail["to"] === "string" ? detail["to"] : "?";
+      const count = typeof detail["count"] === "number" ? detail["count"] : 0;
+      // Naming the source kids is the point of this row: "100 rows" says a page
+      // ran, "abc → def" says which key is closer to being safe to remove.
+      return `${count} row${count === 1 ? "" : "s"} · ${from.length > 0 ? from.join(", ") : "no key"} → ${to}`;
+    }
     case "secret.unreadable": {
       const keys = names(detail["keys"]);
       const kid = typeof detail["kid"] === "string" ? detail["kid"] : null;
