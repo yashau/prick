@@ -31,10 +31,8 @@ export interface Actor {
 }
 
 /**
- * A resolved authorization scope.
- *
- * RECONCILED (was: `auth/authorize.ts` declared a widened `AuthorizationScope`
- * locally because this type could not express an environment's project).
+ * A resolved authorization scope. THE ONLY ONE -- `auth/authorize.ts` takes
+ * this type directly and declares no widened scope of its own.
  *
  * A project-scoped grant covers every environment in that project, so resolving
  * an environment scope needs the environment's `project_id`. A caller that has
@@ -43,10 +41,9 @@ export interface Actor {
  * query per request. `projectId` is therefore OPTIONAL on the environment
  * variant: present when the caller knows it, looked up and memoised when not.
  *
- * With this field in place `AuthorizationScope` in `auth/authorize.ts` is
- * structurally identical to `Scope` and can be deleted; its `AuthorizationScope
- * | Scope` unions collapse to `Scope`. That edit belongs to the auth owner --
- * nothing here needs it to happen, because the two types already unify.
+ * That optional field is what collapsed the two types into one. Before it,
+ * `authorize.ts` had to widen `Scope` locally to say what a grant covers, and
+ * every signature between here and there read `AuthorizationScope | Scope`.
  */
 export type Scope =
   | { type: Extract<ScopeType, "global"> }
@@ -134,29 +131,21 @@ export interface RuntimeConfig {
   accessTeam: string;
   accessAud: string;
   /**
-   * Overrides the team-derived JWKS URL. RECONCILED (was: absent, and
-   * `auth/access.ts` read `ACCESS_CERTS_URL` straight off `env` instead).
+   * Overrides the team-derived JWKS URL, or `undefined` to derive it.
    *
-   * OPTIONAL rather than required, for one mechanical reason: making it
-   * required would be a compile error in the auth suite's fixtures module,
-   * which builds a `RuntimeConfig` literal and is owned elsewhere.
+   * REQUIRED, and `undefined` is a value rather than an absence, so that every
+   * `RuntimeConfig` literal has to say which it means. `accessOptionsFromConfig`
+   * is the only reader; it is also the only place outside this function that
+   * used to parse a `var` at all, which is what made the certs URL worth
+   * routing through here in the first place.
    *
-   * (Deliberately not naming that file's path. A sentinel test greps every
-   * shipped source for references into the test tree, because a Worker that
-   * mentions one is a Worker that might import one -- and the one seam that
-   * makes the real JWT verifier testable, `ACCESS_CERTS_URL`, has to stay
-   * configuration rather than a code path.)
-   *
-   * FOR THE AUTH OWNER, to finish the reconciliation:
-   *   1. `accessOptionsFromEnv(env, now)` becomes `accessOptionsFromConfig(config, now)`,
-   *      reading `config.accessTeam` / `.accessAud` / `.accessCertsUrl`. It
-   *      then stops being the only place in the codebase that parses a `var`,
-   *      and `AccessEnvLike` can go.
-   *   2. This field becomes required and the `?` disappears.
-   * Until then `loadRuntimeConfig()` populates it and nothing reads it, which
-   * costs nothing and leaves the seam visible.
+   * (Deliberately not naming the fixtures module that also builds one of these.
+   * A sentinel test greps every shipped source for references into the test
+   * tree, because a Worker that mentions one is a Worker that might import one
+   * -- and the one seam that makes the real JWT verifier testable,
+   * `ACCESS_CERTS_URL`, has to stay configuration rather than a code path.)
    */
-  accessCertsUrl?: string | undefined;
+  accessCertsUrl: string | undefined;
   /** Parsed from the comma-separated var, lower-cased and de-duplicated. */
   bootstrapAdmins: readonly string[];
   requireCtxAccess: boolean;
@@ -254,24 +243,26 @@ function parseAdmins(raw: string | undefined): readonly string[] {
  * Build the runtime config from Worker `vars`.
  *
  * Deliberately does NOT validate `ACCESS_TEAM` / `ACCESS_AUD` for emptiness:
- * `accessOptionsFromEnv` already fails closed on those at the point of use, and
- * duplicating the check here would mean `/health` -- which is unauthenticated by
- * design -- started failing on an Access misconfiguration that does not affect
- * it. The master key is the opposite case, and is handled by the middleware.
+ * `accessOptionsFromConfig` already fails closed on those at the point of use,
+ * and duplicating the check here would mean `/health` -- which is
+ * unauthenticated by design -- started failing on an Access misconfiguration
+ * that does not affect it. The master key is the opposite case, and is handled
+ * by the middleware.
  */
 export function loadRuntimeConfig(env: RuntimeConfigEnv): RuntimeConfig {
-  const config: RuntimeConfig = {
+  // An unset var and one set to whitespace both mean "derive the URL from the
+  // team". Normalising both to `undefined` here is what lets the reader test
+  // for exactly one thing.
+  const certsUrl = env.ACCESS_CERTS_URL?.trim();
+
+  return {
     accessTeam: (env.ACCESS_TEAM ?? "").trim(),
     accessAud: (env.ACCESS_AUD ?? "").trim(),
+    accessCertsUrl: certsUrl === undefined || certsUrl === "" ? undefined : certsUrl,
     bootstrapAdmins: parseAdmins(env.BOOTSTRAP_ADMINS),
     requireCtxAccess: booleanVar(env.REQUIRE_CTX_ACCESS, "REQUIRE_CTX_ACCESS", false),
     secretMaxBytes: numericVar(env.SECRET_MAX_BYTES, "SECRET_MAX_BYTES", SECRET_VALUE_MAX_BYTES),
     envMaxSecrets: numericVar(env.ENV_MAX_SECRETS, "ENV_MAX_SECRETS", ENV_MAX_SECRETS),
     bodyMaxBytes: numericVar(env.BODY_MAX_BYTES, "BODY_MAX_BYTES", BODY_MAX_BYTES),
   };
-
-  const certsUrl = env.ACCESS_CERTS_URL?.trim();
-  if (certsUrl !== undefined && certsUrl !== "") config.accessCertsUrl = certsUrl;
-
-  return config;
 }

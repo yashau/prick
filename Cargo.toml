@@ -86,7 +86,6 @@ open = "5"
 # never contend for the same stream.
 rpassword = "7"
 url = "2.5"
-miette = { version = "7", features = ["fancy"] }
 
 libc = "0.2"
 which = "8"

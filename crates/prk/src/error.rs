@@ -3,9 +3,24 @@
 //! Libraries in this workspace use `thiserror`; the binary is where those are
 //! collected and given an exit code, a machine-readable code and a hint.
 //!
-//! TODO: render through `miette` once the API client lands. Its structured
-//! `help()` channel is exactly the shape the hints already have, and it gives
-//! source-span diagnostics for `.env` import failures for free.
+//! # Why these are not rendered through `miette`
+//!
+//! It was planned, once the API client landed, for two things: a structured
+//! `help()` channel shaped like the hints below, and source-span diagnostics
+//! for `.env` import failures. The second is why it is not going to happen.
+//!
+//! A span diagnostic renders the offending source line under a caret, and the
+//! offending line of a `.env` file is `API_KEY=<the value>`. A parse failure is
+//! exactly the moment this process is holding a file of plaintext values it has
+//! not yet stored, so the diagnostic that reads best is also the one that
+//! prints a secret to a terminal, to a scrollback buffer, and into whatever CI
+//! captured the run. [`prick_core::dotenv::DotenvError`] is built the other way
+//! round on purpose -- every variant carries a line NUMBER and at most a key
+//! name, never the text of the line -- and there is nothing to give a
+//! `#[source_code]` field that does not undo that.
+//!
+//! That leaves the `help()` channel on its own, which does not pay for a
+//! dependency: [`CliError::hint`] already is one.
 
 use prick_core::classify::{EXIT_FAILURE, ErrorKind};
 
@@ -14,6 +29,12 @@ use prick_core::classify::{EXIT_FAILURE, ErrorKind};
 #[non_exhaustive]
 pub enum CliError {
     /// The command exists in the interface but has no implementation yet.
+    ///
+    /// Nothing constructs this today -- every arm of the dispatch in
+    /// [`crate::commands::run`] reaches a real implementation. It stays because
+    /// the interface is generated from `clap`, so a subcommand can be declared
+    /// ahead of its body again, and because `NOT_IMPLEMENTED` is a code the
+    /// server can answer with too.
     #[error("`prk {command}` is not implemented yet")]
     NotImplemented {
         /// The command path, as the user would type it.
@@ -113,7 +134,7 @@ impl CliError {
                  meant to be configured this way.",
             ),
             Self::NotImplemented { .. } => {
-                Some("This build is a skeleton. Run `prk --help` to see what is wired up.")
+                Some("Run `prk --help` to see the commands this build implements.")
             }
             Self::Dotenv(_) | Self::Scope(_) | Self::Other(_) => None,
         }
