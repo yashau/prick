@@ -865,18 +865,27 @@ jobs:
             exit 1
           fi
 
-      - name: Move `latest`
+      - name: Move `latest`, or hand the promotion over
         env:
-          # OIDC covers `npm publish`. If the registry requires a credential for
-          # dist-tag mutation, an optional granular token is used for this step
-          # alone; absent the secret, the OIDC session is attempted.
+          # npm's trusted publishing grants `npm publish` and NOTHING else --
+          # its Allowed-actions list has no dist-tag entry, and a dist-tag PUT
+          # over the OIDC session returns a bare 401. Confirmed on v2026.816.2,
+          # not assumed.
+          #
+          # npm will only issue the needed credential as a scope-wide
+          # read/write token, which is exactly the standing secret OIDC
+          # publishing exists to avoid. So the flip is OPTIONAL: with the secret
+          # set, CI promotes; without it, CI stops at a fully published,
+          # fully smoke-tested release and prints what to run.
+          #
+          # Published-but-unpromoted is a COMPLETE state, not a failure. Every
+          # version is on the registry and immutable, and `latest` still points
+          # where it did, so nobody is served a release nobody promoted. Failing
+          # the job here would only cost the GitHub release below.
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
           VERSION: ${{ needs.version.outputs.version }}
         run: |
           set -euo pipefail
-          if [ -n "${NPM_TOKEN:-}" ]; then
-            printf '//registry.npmjs.org/:_authToken=%s\n' "$NPM_TOKEN" >> "${HOME}/.npmrc"
-          fi
 
           parent=""
           mcp=""
@@ -890,13 +899,41 @@ jobs:
             esac
           done
 
+          # Parent last, on both paths. Until `@yashau/prick` moves, an install
+          # resolves the previous parent, whose optionalDependencies pin exact
+          # platform versions that are all still on the registry -- so there is
+          # no half-promoted state a user can land in.
+          ordered=("${platforms[@]}" "$mcp" "$parent")
+
+          if [ -z "${NPM_TOKEN:-}" ]; then
+            {
+              echo "### \`${VERSION}\` is published, and not yet promoted"
+              echo
+              echo "All ten packages are on npm under \`next\` and passed both smoke tests."
+              echo "\`latest\` is unchanged, so no installer resolves this release yet."
+              echo
+              echo "Promote it, parent last:"
+              echo
+              echo '```bash'
+              for name in "${ordered[@]}"; do
+                echo "npm dist-tag add \"${name}@${VERSION}\" latest"
+              done
+              echo '```'
+              echo
+              echo "Set the \`NPM_TOKEN\` secret to have CI do this instead."
+            } >> "$GITHUB_STEP_SUMMARY"
+
+            echo "No NPM_TOKEN set — leaving the promotion to a human."
+            echo "The commands are in this run's job summary."
+            exit 0
+          fi
+
+          printf '//registry.npmjs.org/:_authToken=%s\n' "$NPM_TOKEN" >> "${HOME}/.npmrc"
+
           # This is the flip. Everything above it is reversible by doing nothing.
-          for name in "${platforms[@]}"; do
+          for name in "${ordered[@]}"; do
             npm dist-tag add "${name}@${VERSION}" latest
           done
-          npm dist-tag add "${mcp}@${VERSION}" latest
-          # Parent last: this single call is what makes the release live.
-          npm dist-tag add "${parent}@${VERSION}" latest
 
           echo "### Published \`${VERSION}\` to npm as \`latest\`" >> "$GITHUB_STEP_SUMMARY"
 
