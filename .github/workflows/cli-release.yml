@@ -621,23 +621,41 @@ jobs:
         run: |
           set -euo pipefail
           failed=0
-          found=0
-          while IFS= read -r bin; do
-            found=$((found + 1))
-            if [ ! -x "$bin" ]; then
-              echo "::error::${bin} is not executable; publishing it would ship a package that cannot run."
-              failed=1
-            fi
-          done < <(find dist/npm -type f -name prk)
+          total=0
+          native=0
 
-          # A silent zero would pass this check while shipping nothing runnable.
-          if [ "$found" -ne 8 ]; then
-            echo "::error::Expected 8 native binaries under dist/npm, found ${found}."
+          # Eight platform packages, but only SIX carry a mode bit that means
+          # anything: the two Windows binaries are `prk.exe`, and executability
+          # on Windows comes from the extension rather than from a permission.
+          # Counting `-name prk` alone finds six and reports a false failure --
+          # which is what it did on v2026.816.1, costing a CalVer N.
+          while IFS= read -r bin; do
+            total=$((total + 1))
+            case "$bin" in
+              *.exe) ;;
+              *)
+                native=$((native + 1))
+                if [ ! -x "$bin" ]; then
+                  echo "::error::${bin} is not executable; publishing it would ship a package that cannot run."
+                  failed=1
+                fi
+                ;;
+            esac
+          done < <(find dist/npm -type f \( -name prk -o -name prk.exe \))
+
+          # A silent zero would otherwise sail through while shipping nothing
+          # runnable, so the count is asserted rather than assumed.
+          if [ "$total" -ne 8 ]; then
+            echo "::error::Expected 8 platform binaries under dist/npm, found ${total}."
+            failed=1
+          fi
+          if [ "$native" -ne 6 ]; then
+            echo "::error::Expected 6 non-Windows binaries needing an exec bit, found ${native}."
             failed=1
           fi
 
           [ "$failed" -eq 0 ]
-          echo "${found} native binaries, all executable."
+          echo "${total} platform binaries; ${native} needed an exec bit and have one."
 
       - name: Use a publish-capable npm # zizmor: ignore[adhoc-packages]
         run: |
