@@ -356,6 +356,23 @@ run = "cargo miri nextest run --package prick-core"
 description = "Run the Worker + SvelteKit dev server"
 run = "pnpm --dir packages/app run dev"
 
+# `dev` serves the application, and every request to it answers 401: there is no
+# Cloudflare Access in front of a local server, and the Worker has no bypass --
+# a "skip verification locally" flag would be a code path in the shipped Worker
+# whose purpose is accepting an unverified identity.
+#
+# `demo` supplies the real thing instead of disabling the check. It reuses the
+# e2e harness: a genuine keypair, a real JWKS over a real HTTPS origin, genuine
+# Access JWTs, and a proxy standing where Access would. The verifier runs
+# unmodified. Then it seeds projects, environments, secrets with history, and a
+# few audited reads, and serves the result on loopback.
+#
+# For looking at the UI. Not a deployment path, and not a substitute for `dev`.
+[tasks.demo]
+description = "Run a signed-in, seeded copy of the app for browsing (PRICK_DEMO_ROLE, PRICK_DEMO_PORT)"
+run = "pnpm --dir e2e run serve"
+wait_for = ["bootstrap:js"]
+
 [tasks."e2e:install"]
 description = "Download the Playwright browsers (CI runs this only on a cache miss)"
 # Browser binaries ONLY. This used to be `playwright install --with-deps`, and
