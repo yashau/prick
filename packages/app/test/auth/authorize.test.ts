@@ -322,6 +322,61 @@ describe("denials", () => {
 
     expect(await db.select().from(auditLog)).toHaveLength(0);
   });
+
+  /**
+   * ASSERTS THE `action` STRING ITSELF, which the tests above deliberately do
+   * not, and that omission is the whole reason this one exists.
+   *
+   * A denial row is only worth writing if the screen that reads denials can
+   * find it, and that screen filters on `action = 'access.denied'`. This path
+   * once interpolated `authz.<scope>.<role>` instead -- a value outside the
+   * `AuditAction` union, matched by no filter and labelled by no entry in the
+   * client's map. Every assertion above still passed, because they check the
+   * outcome, the subject and the request id, and every one of those was right.
+   * The row was written, correctly attributed, and invisible.
+   */
+  it("records the denial under the action the UI actually filters on", async () => {
+    const ctx = requestContext(db, serviceActor(SERVICE));
+
+    await rejectsWith(
+      async () => assertCan(ctx, { type: "environment", environmentId }, "writer"),
+      "FORBIDDEN",
+    );
+
+    const rows = await db.select().from(auditLog).where(eq(auditLog.outcome, "denied"));
+
+    expect(rows[0]?.action).toBe("access.denied");
+    expect(JSON.parse(rows[0]?.detail ?? "null")).toEqual({
+      kind: "denial",
+      scope: "environment",
+      required: "writer",
+      resource: "environment",
+    });
+  });
+
+  /**
+   * The kill switch and a missing grant are the same 403 to the caller and must
+   * stay that way. They are NOT the same row to an operator: one is re-enabled,
+   * the other is granted, and a log that conflated them would send someone to
+   * grant an identity where granting changes nothing.
+   */
+  it("marks a denial that came from the kill switch rather than a missing grant", async () => {
+    const identityId = await seedIdentity(db, {
+      kind: "user",
+      subject: SUBJECT,
+      disabled: true,
+    });
+    await seedGrant(db, { identityId, role: "admin", scopeType: "global" });
+
+    const ctx = requestContext(db, userActor(SUBJECT));
+
+    await rejectsWith(async () => assertCan(ctx, { type: "global" }, "reader"), "FORBIDDEN");
+
+    const rows = await db.select().from(auditLog).where(eq(auditLog.outcome, "denied"));
+
+    expect(rows[0]?.action).toBe("access.denied");
+    expect(JSON.parse(rows[0]?.detail ?? "null")).toMatchObject({ disabled: true });
+  });
 });
 
 // ---------------------------------------------------------------------------

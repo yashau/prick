@@ -2,17 +2,10 @@ import { and, eq } from "drizzle-orm";
 import { unionAll } from "drizzle-orm/sqlite-core";
 import type { Role } from "@prick/shared";
 
+import { recordDenial } from "../core/audit.js";
 import { ROLE_RANK, type Actor, type CoreContext, type Scope } from "../core/context.js";
 import { PrickError } from "../core/errors.js";
-import { uuidv7 } from "../db/ids.js";
-import {
-  auditLog,
-  environments,
-  grants,
-  groupGrants,
-  groupMembers,
-  identities,
-} from "../db/schema.js";
+import { environments, grants, groupGrants, groupMembers, identities } from "../db/schema.js";
 import { isBootstrapAdmin } from "./bootstrap.js";
 
 /**
@@ -341,6 +334,16 @@ export async function can(ctx: CoreContext, scope: Scope, required: Role): Promi
  * operator ever learns that a service token exists. `common_name` is an opaque
  * hex string; nobody maps `e367826f93b8d71185e03fe518aff3b4.access` to "staging
  * deploy" by looking at it. The denial row is the introduction.
+ *
+ * The row is written by `core/audit.ts`, through the same `recordDenial` the
+ * visibility check in `core/guards.ts` uses. This function used to insert its
+ * own, with `action` interpolated as `authz.<scope>.<role>` -- a string outside
+ * the `AuditAction` union, which no filter in the UI matches and which the
+ * client's label map has no entry for. So the 403 path wrote rows that the
+ * screen this comment names could not display, while the 404 path next door
+ * wrote ones it could. Going through the shared helper is what makes the union
+ * the thing that decides, and a typo here a compile error rather than a row
+ * nobody finds.
  */
 export async function assertCan(ctx: CoreContext, scope: Scope, required: Role): Promise<void> {
   if (await can(ctx, scope, required)) return;
@@ -348,8 +351,9 @@ export async function assertCan(ctx: CoreContext, scope: Scope, required: Role):
   const snapshot = await resolveAuthorization(ctx);
 
   await recordDenial(ctx, {
-    action: `authz.${scope.type}.${required}`,
     scope,
+    required,
+    resource: scope.type,
     disabled: snapshot.disabled,
   });
 
@@ -359,48 +363,6 @@ export async function assertCan(ctx: CoreContext, scope: Scope, required: Role):
       : 'An administrator can grant access from the Access screen; your subject now appears under "Seen but not granted".',
     detail: { required, scope: scope.type },
   });
-}
-
-/**
- * A standalone denial audit row.
- *
- * TODO(build order step 12): move to `core/audit.ts` as `recordAudit`. It lives
- * here for now because `assertCan` cannot be correct without it -- a denial
- * that is not recorded is a service token that never appears in the UI -- and
- * the audit module is written after this one.
- *
- * Deliberately best-effort: an audit failure must not convert a 403 into a 500,
- * because that would let a caller distinguish "denied" from "denied and the log
- * broke". Mutations, by contrast, carry their audit row inside the same
- * `batch()` and DO fail with it.
- */
-async function recordDenial(
-  ctx: CoreContext,
-  input: { action: string; scope: Scope; disabled: boolean },
-): Promise<void> {
-  const snapshot = await resolveAuthorization(ctx);
-
-  const projectId = input.scope.type === "project" ? input.scope.projectId : null;
-  const environmentId = input.scope.type === "environment" ? input.scope.environmentId : null;
-
-  try {
-    await ctx.db.insert(auditLog).values({
-      id: uuidv7(ctx.now),
-      ts: ctx.now,
-      requestId: ctx.requestId,
-      actorKind: ctx.actor.kind,
-      actorSubject: ctx.actor.subject,
-      identityId: snapshot.identityId,
-      action: input.action,
-      outcome: "denied",
-      projectId,
-      environmentId,
-      targetKey: null,
-      detail: JSON.stringify({ disabled: input.disabled }),
-    });
-  } catch {
-    // Swallowed on purpose -- see the note above.
-  }
 }
 
 /** The `Actor` with the facts only the database knows filled in. */

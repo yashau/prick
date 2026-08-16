@@ -181,6 +181,17 @@ export type AuditDetail =
       required: string;
       /** What was being reached for, e.g. "project". Never its slug. */
       resource: string;
+      /**
+       * Set when the refusal came from the kill switch rather than from a
+       * missing grant.
+       *
+       * The distinction is the whole difference between the two operator
+       * actions: a disabled identity is re-enabled, an ungranted one is
+       * granted. Without it both refusals read identically in the log, and the
+       * screen that exists to turn a denial into a grant would offer that for
+       * an identity where granting changes nothing.
+       */
+      disabled?: boolean;
     };
 
 export interface AuditInput {
@@ -260,10 +271,21 @@ export async function recordAudit(ctx: CoreContext, input: AuditInput): Promise<
  */
 export async function recordDenial(
   ctx: CoreContext,
-  input: { scope: Scope; required: string; resource: string },
+  input: { scope: Scope; required: string; resource: string; disabled?: boolean },
 ): Promise<void> {
   const projectId = input.scope.type === "project" ? input.scope.projectId : null;
   const environmentId = input.scope.type === "environment" ? input.scope.environmentId : null;
+
+  // Narrowed to the denial member rather than the union, so the optional field
+  // below is assignable. Set only when true, so the rows every other denial
+  // writes keep exactly the shape they had.
+  const detail: Extract<AuditDetail, { kind: "denial" }> = {
+    kind: "denial",
+    scope: input.scope.type,
+    required: input.required,
+    resource: input.resource,
+  };
+  if (input.disabled === true) detail.disabled = true;
 
   try {
     await recordAudit(ctx, {
@@ -271,12 +293,7 @@ export async function recordDenial(
       outcome: "denied",
       projectId,
       environmentId,
-      detail: {
-        kind: "denial",
-        scope: input.scope.type,
-        required: input.required,
-        resource: input.resource,
-      },
+      detail,
     });
   } catch {
     // See above. Intentionally silent.
