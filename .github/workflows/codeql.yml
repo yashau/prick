@@ -56,6 +56,21 @@ jobs:
           # running arbitrary build scripts purely to satisfy the extractor.
           build-mode: none
           queries: security-and-quality
+          # `e2e/` is a test harness, not shipped code. It exists to hold
+          # credentials and fire them at a server, so it trips the rules that
+          # describe exactly that -- `js/file-access-to-http` on a token read
+          # from the harness's own handoff file, over and over.
+          #
+          # Scanning it produced findings nobody could act on and made the check
+          # permanently red, which is the failure mode this workflow's header
+          # warns about: a gate that is always red is a gate nobody reads.
+          #
+          # This narrows coverage, and the narrowing is the point of the
+          # boundary: `crates/`, `packages/` and `scripts/` -- everything that
+          # ships or runs a release -- are still analysed in full.
+          config: |
+            paths-ignore:
+              - e2e/**
 
       - name: Analyze
         uses: github/codeql-action/analyze@ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd # v4.37.7

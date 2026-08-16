@@ -95,13 +95,27 @@ and the RustSec check that reads a built binary's embedded dependency list. You 
 | Task                          | Does                                                |
 | ----------------------------- | --------------------------------------------------- |
 | `dev`                         | Worker + SvelteKit dev server                       |
+| `demo`                        | A signed-in, seeded copy of the app, for browsing   |
 | `docs:dev`                    | Documentation site with hot reload                  |
 | `docs:build` / `docs:preview` | Build the docs site / serve the built output        |
 | `openapi`                     | Regenerate `docs/openapi.json` from the Hono router |
 | `fmt`                         | Format everything in place                          |
 | `clean`                       | Remove build outputs and installed dependencies     |
 
-`dev`, `docs:dev` and `docs:preview` are servers: they do not exit. Do not block a turn on one.
+`dev`, `demo`, `docs:dev` and `docs:preview` are servers: they do not exit. Do not block a turn on one.
+
+**`dev` answers 401 to everything, and that is correct.** There is no Cloudflare Access in front of a
+local server, and the Worker has no bypass — a "skip verification locally" flag would be a code path
+in the shipped Worker whose purpose is accepting an unverified identity. Use `demo` to browse the UI:
+it reuses the e2e harness to supply a _real_ signed assertion the verifier accepts unmodified, seeds
+projects, environments, secrets with history and a few audited reads, and serves the result on
+loopback. `PRICK_DEMO_ROLE` (`admin`, `writer`, `reader`) changes who you are signed in as;
+`PRICK_DEMO_PORT` moves it off 7788.
+
+**Stop `demo` before running `ci` or `e2e`.** It holds `e2e/.playwright` and keeps the built Worker
+open, so on Windows `build:js` fails with a bare "task failed" and `e2e` refuses to clear its work
+directory. Neither failure names the demo server as the cause. Ctrl-C is enough; a killed parent
+leaves `workerd` behind, and then only stopping that process frees the directory.
 
 ## Rules that are enforced by tooling
 
