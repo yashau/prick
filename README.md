@@ -501,6 +501,17 @@ npm install -g @yashau/prick
 
 Ships a prebuilt binary for each platform. Or build from source with `mise run build:rust`.
 
+If you already use mise, let it own the install instead:
+
+```bash
+mise use -g npm:@yashau/prick
+```
+
+npm's global prefix sits inside the active Node's install directory, so a plain `npm install -g`
+lands somewhere that is only on `PATH` while mise is activated — and moves the day mise bumps Node.
+mise's own npm backend puts a `prk` shim in the shims directory that is already on your `PATH`, and
+keeps it there across Node upgrades.
+
 ## 🛠️ Development
 
 The only thing you install is [mise](https://mise.jdx.dev). It pins everything else.

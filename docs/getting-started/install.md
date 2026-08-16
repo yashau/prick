@@ -27,6 +27,37 @@ warn installation   running through the npm shim, which adds a Node process to e
 It works fine. If you use `prk run` heavily, a direct install avoids it.
 :::
 
+## With mise
+
+If you already use [mise](https://mise.jdx.dev) — which this repository does for
+every tool it pins — let it own the install:
+
+```bash
+mise use -g npm:@yashau/prick
+```
+
+This is the same package through the same registry; what changes is who puts it
+on your `PATH`.
+
+npm's global prefix lives **inside the active Node's install directory**. Under
+mise that is a version-stamped path, so a plain `npm install -g` puts `prk`
+somewhere that is on your `PATH` only while mise is activated — and that stops
+being the same directory the day mise bumps Node. The install does not break; it
+becomes invisible, and `npm ls -g` comes back empty because it is reading a
+different prefix.
+
+mise's npm backend writes a `prk` shim into the shims directory that is already
+on your `PATH`, and keeps it there across Node upgrades.
+
+Pin a version the same way:
+
+```bash
+mise use -g npm:@yashau/prick@2026.816.3
+```
+
+The npm shim note above still applies: this is the npm package, so `prk doctor`
+reports the Node hop. For `prk run` in a hot loop, use a release tarball.
+
 ## From a release tarball
 
 Download the archive for your platform from the
