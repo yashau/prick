@@ -595,6 +595,50 @@ jobs:
           name: npm-packages
           path: dist/npm
 
+      # -----------------------------------------------------------------------
+      # The artefact round trip does not preserve mode bits -- the same reason
+      # the package job restores them on dist/bin. npm packs whatever mode it
+      # finds on disk, so without this every platform package ships a 0644
+      # binary, and the parent's Node shim dies with EACCES the first time
+      # anybody runs `prk`.
+      #
+      # v2026.816.0 shipped exactly that. The bug was unreachable until then:
+      # this job is gated on the tag push, so no dry run had ever executed a
+      # single step of it. The smoke test below did catch it -- after ten
+      # immutable versions were already on the registry, which is why the
+      # assertion that follows exists.
+      # -----------------------------------------------------------------------
+      - name: Restore executable bits
+        run: |
+          set -euo pipefail
+          find dist/npm -type f -name prk -exec chmod +x {} +
+          find dist/npm -type f \( -name prk -o -name prk.exe \) -exec ls -l {} +
+
+      # Assert BEFORE publishing. npm versions are immutable, so a mode
+      # regression caught after `npm publish` cannot be fixed -- only rolled
+      # forward. This is the last moment the failure is free.
+      - name: Every packaged binary is executable
+        run: |
+          set -euo pipefail
+          failed=0
+          found=0
+          while IFS= read -r bin; do
+            found=$((found + 1))
+            if [ ! -x "$bin" ]; then
+              echo "::error::${bin} is not executable; publishing it would ship a package that cannot run."
+              failed=1
+            fi
+          done < <(find dist/npm -type f -name prk)
+
+          # A silent zero would pass this check while shipping nothing runnable.
+          if [ "$found" -ne 8 ]; then
+            echo "::error::Expected 8 native binaries under dist/npm, found ${found}."
+            failed=1
+          fi
+
+          [ "$failed" -eq 0 ]
+          echo "${found} native binaries, all executable."
+
       - name: Use a publish-capable npm # zizmor: ignore[adhoc-packages]
         run: |
           set -euo pipefail
@@ -731,9 +775,23 @@ jobs:
           out="$(mise run audit:bin "$real" 2>&1)" || status=$?
           printf '%s\n' "$out"
           echo "::endgroup::"
-          count="$(printf '%s\n' "$out" | sed -n 's/.*(\([0-9][0-9]*\) crate dependencies).*/\1/p' | head -n 1)"
+          # Keyed on the sentence `cargo audit bin` actually prints:
+          #
+          #   Found 'cargo auditable' data in …/prk (165 dependencies)
+          #
+          # This is the SECOND copy of the bug 5e363bf fixed in the package job.
+          # That one matched "(N crate dependencies)" -- `cargo audit`'s
+          # lockfile wording, which `cargo audit bin` never emits -- so it could
+          # never match and always failed. The fix landed in one place because
+          # only one place had ever run; this job is gated on the tag push, so
+          # its copy sat unexecuted until v2026.816.0.
+          count="$(
+            printf '%s\n' "$out" \
+              | sed -n "s/.*'cargo auditable' data in .*(\([0-9][0-9]*\) dependencies).*/\1/p" \
+              | head -n 1
+          )"
           if [ -z "$count" ] || [ "$count" -lt 20 ]; then
-            echo "::error::The published binary carries no readable embedded dependency list."
+            echo "::error::The published binary carries no readable embedded dependency list (found '${count:-none}')."
             exit 1
           fi
           if [ "$status" -ne 0 ]; then
