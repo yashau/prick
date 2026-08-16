@@ -496,13 +496,30 @@ jobs:
           upload-artifact: false
           upload-release-assets: false
 
+      # -----------------------------------------------------------------------
+      # Gated on the TRIGGER, exactly like publish-npm and github-release. An
+      # attestation is a signed, publicly discoverable claim that a named
+      # artefact came out of this repository -- and a dispatched run produces
+      # archives nobody can download, under a version it never claimed. Signing
+      # those puts entries in the repository's attestation store that no
+      # consumer can ever match against a release asset, so the store stops
+      # being a one-to-one record of what was shipped.
+      #
+      # The cost is real and worth stating: these two steps now first execute on
+      # a release. What a dry run would have proven about them is thin, though --
+      # both take the SHA256SUMS the archive step above already writes and cats,
+      # so a rehearsal exercises the inputs without exercising the signing that
+      # only a push can do anyway.
+      # -----------------------------------------------------------------------
       - name: Attest release artefacts
+        if: github.event_name == 'push'
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           # One call covers all eight archives plus SHA256SUMS itself.
           subject-checksums: dist/assets/SHA256SUMS
 
       - name: Attest SBOM
+        if: github.event_name == 'push'
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-checksums: dist/assets/SHA256SUMS
