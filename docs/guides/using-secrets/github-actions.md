@@ -10,10 +10,9 @@ CI authenticates with an Access **service token**, not with `prk login`. Read
 [Authentication](/guides/authentication#authenticate-a-machine) first.
 :::
 
-:::caution[Both routes install a published release]
-Both routes below install `@yashau/prick` from npm, so they run against a cut
-release. The action lives in this repository at `action/` with its own test suite
-(`mise run test:action`), and installs the published CLI at run time.
+:::note[Both routes install from npm]
+Both routes below install `@yashau/prick` at run time. The action lives in this
+repository at `action/` with its own test suite (`mise run test:action`).
 :::
 
 ## Two secrets in GitHub, none in the workflow
