@@ -16,9 +16,17 @@ use prick_core::classify::ErrorKind;
 
 /// The dashboard path an operator has to visit to turn managed OAuth on.
 ///
-/// Named exactly, because "enable it in the dashboard" is not an instruction.
-pub const MANAGED_OAUTH_SETTING: &str = "Zero Trust > Access > Applications > (your application) > Authentication > OIDC/OAuth \
-     Provider > Enable managed OAuth";
+/// Named exactly, because "enable it in the dashboard" is not an instruction --
+/// and named as the dashboard CURRENTLY reads. The setting used to sit under
+/// "Authentication > OIDC/OAuth Provider"; it is now a tab of its own on the
+/// application's "Additional settings" page, and an operator following the old
+/// path finds no such section and reasonably concludes the feature is missing.
+///
+/// The toggle also does not take effect until the page is SAVED, which is worth
+/// saying out loud: every other control on that screen is a switch, so a switch
+/// that needs a separate Save reads as already applied.
+pub const MANAGED_OAUTH_SETTING: &str = "Zero Trust > Access > Applications > (your application) > Additional settings > \
+     OAuth > Managed OAuth, then Save";
 
 /// A failure during authentication.
 #[derive(Debug, thiserror::Error)]
@@ -179,7 +187,7 @@ impl AuthError {
         match self {
             Self::ManagedOAuthDisabled => Some(
                 "Enable it at: Zero Trust > Access > Applications > (your application) > \
-                 Authentication > OIDC/OAuth Provider > Enable managed OAuth",
+                 Additional settings > OAuth > Managed OAuth, then Save",
             ),
             Self::AuthExpired => Some("Run `prk login <url>` again to start a new session."),
             Self::NoCredential { .. } => Some(
@@ -237,7 +245,11 @@ mod tests {
         assert!(hint.contains("Zero Trust"), "{hint}");
         assert!(hint.contains("Access"), "{hint}");
         assert!(hint.contains("Applications"), "{hint}");
-        assert!(hint.contains("managed OAuth"), "{hint}");
+        // Case-insensitive: the hint spells the toggle the way the dashboard
+        // labels it ("Managed OAuth"), and matching that label is the whole
+        // point of naming a path. The assertion is about the feature being
+        // named, not about its capitalisation.
+        assert!(hint.to_lowercase().contains("managed oauth"), "{hint}");
         // The hint is a literal so that it can be `&'static str`. This keeps
         // that literal honest against the documented path rather than trusting
         // two copies of the same sentence to stay in step.

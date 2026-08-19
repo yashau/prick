@@ -386,14 +386,27 @@ where
     };
 
     // 2. Discover.
-    let issuer = match metadata_url {
-        Some(url) => {
-            let resource = discovery::fetch_protected_resource(client, &url).await?;
-            resource.authorization_servers.first().cloned().ok_or_else(|| AuthError::Discovery {
-                reason: format!("{url} names no authorization server"),
-            })?
-        }
-        None => api_url.to_owned(),
+    //
+    // The challenge's `resource_metadata` is tried first and is not required to
+    // work: Access on the managed-OAuth beta advertises a URL it answers 404
+    // for, while serving the same document at the standard RFC 9728 spelling.
+    // `resolve_protected_resource` falls back to paths derived from the
+    // resource THIS client is talking to, so a login no longer dies one request
+    // short of everything it needed.
+    //
+    // An unprotected server has no challenge and no metadata to find, so it
+    // keeps treating the API URL as the issuer rather than probing for
+    // documents that are not there.
+    let issuer = if matches!(probe, Probe::Unprotected) {
+        api_url.to_owned()
+    } else {
+        let health = client.config().url(&["health"]);
+        let resource =
+            discovery::resolve_protected_resource(client, metadata_url.as_deref(), &health).await?;
+
+        resource.authorization_servers.first().cloned().ok_or_else(|| AuthError::Discovery {
+            reason: "the protected resource metadata names no authorization server".to_owned(),
+        })?
     };
     let server = discovery::fetch_authorization_server(client, &issuer).await?;
 

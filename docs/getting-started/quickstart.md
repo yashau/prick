@@ -96,6 +96,35 @@ people who should reach it.
 From the application's **Overview** tab, copy the **Application Audience (AUD)
 tag** — you need it in the next step.
 
+### Turn on managed OAuth
+
+Still on the application: open **Additional settings → OAuth**, enable **Managed
+OAuth**, leave **Allow loopback clients** on, and **Save**.
+
+This is what gives `prk login` an authorization server to talk to. Access
+authenticates a browser by redirecting it to a login page, which a CLI cannot
+follow; managed OAuth is what makes it answer a credential-less API request with
+a `401` and a pointer to discovery instead.
+
+:::caution[Two things catch people here]
+The toggle does nothing until the page is **saved**. Every other control on that
+screen is a switch, so a switch with a separate Save button reads as already
+applied — and until you press it, `prk login` still fails with "managed OAuth is
+not enabled".
+
+**Allow loopback clients** must stay on. `prk login` registers a client for
+`http://127.0.0.1:<port>/callback` and the registration is refused without it.
+:::
+
+You can check it from a shell before installing anything:
+
+```bash
+curl -si https://prick.example.com/api/v1/health | head -1
+```
+
+A `401` means managed OAuth is on. A `302` to your Access login means it is not
+— the browser flow works, but the CLI has nothing to use.
+
 ## 6. Fill in the vars
 
 Edit the `vars` block in `packages/app/wrangler.jsonc`:
@@ -155,7 +184,9 @@ design exists to prevent.
 curl -i https://prick.example.com/api/v1/health
 ```
 
-You want Access to intercept this — a redirect to your Access login, or a `403`.
+You want Access to intercept this. With managed OAuth on from step 5 that is a
+`401` carrying a `WWW-Authenticate` header — which is also exactly what `prk
+login` looks for. Without it, a redirect to your Access login or a `403`.
 
 :::danger[A `200` here means your secrets manager is open to the internet]
 If that command returns `200` with a JSON body, Access is **not** protecting
