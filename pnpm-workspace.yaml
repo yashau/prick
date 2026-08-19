@@ -145,3 +145,42 @@ catalog:
 # -----------------------------------------------------------------------------
 patchedDependencies:
   wrangler@4.121.0: patches/wrangler@4.121.0.patch
+
+# -----------------------------------------------------------------------------
+# Two advisories that upstream cannot hand us a release for.
+#
+# Both reach us transitively, and in both cases the direct dependent's own
+# latest release still resolves the vulnerable version -- so there is nothing to
+# bump. A range selector applies the correction only to a resolution that is
+# actually in the advisory's range: when the graph stops producing one, the
+# entry stops matching and can be deleted.
+#
+# Each target version is one ALREADY IN THE LOCKFILE for another consumer, so
+# both entries deduplicate onto an existing copy rather than adding one, and
+# neither is subject to the `minimumReleaseAge` cooldown above.
+#
+#   cookie <0.7.0 -- GHSA-pxg6-pf52-xh8x
+#     `serialize()` does not reject out-of-bounds characters in the cookie name,
+#     path or domain, so a caller that passes unvalidated input can close the
+#     field with `;` and append attributes of its choosing to the Set-Cookie
+#     header -- `Domain`, or an `Expires` in the past that deletes a different
+#     cookie. It arrives through `@sveltejs/kit`, which still declares
+#     `cookie: ^0.6.0` as of 2.70.3. This is the one of the two that SHIPS: the
+#     Worker bundle contains Kit's runtime, and Kit's runtime contains cookie.
+#     0.7.2 only tightens validation; the parse/serialize signatures are
+#     unchanged.
+#
+#   esbuild <=0.24.2 -- GHSA-67mh-4wv8-2f99
+#     The development server answers every origin with
+#     `Access-Control-Allow-Origin: *`, so any page the developer happens to
+#     have open can read what it serves. Dev-only, and we never start that
+#     server -- it arrives four levels down, through
+#     `drizzle-kit -> @esbuild-kit/esm-loader -> @esbuild-kit/core-utils`, which
+#     pins `~0.18.20`. The `@esbuild-kit/*` packages are deprecated in favour of
+#     `tsx` and will not be released again, so the pin is permanent and only an
+#     override moves it. drizzle-kit's own direct dependency is already 0.25.12;
+#     this collapses the stale second copy onto it.
+# -----------------------------------------------------------------------------
+overrides:
+  "cookie@<0.7.0": "0.7.2"
+  "esbuild@<0.25.0": "0.25.12"
