@@ -54,6 +54,10 @@ pub enum CliError {
     Scope(#[from] prick_core::scope::ParseScopeError),
 
     /// A child process would have received a variable the loader interprets.
+    ///
+    /// Peeled out of [`prick_exec::LaunchError`] by the `From` impl below, so
+    /// a guard refusal keeps its own code rather than arriving as a launch
+    /// failure. See that impl for why.
     #[error(transparent)]
     Guard(#[from] prick_exec::GuardError),
 
@@ -63,8 +67,11 @@ pub enum CliError {
     /// not runnable -- rather than mapping onto the API taxonomy. A caller of
     /// `prk run` is already branching on those, and a command that could not be
     /// started must be indistinguishable from one a shell could not start.
+    ///
+    /// No `#[from]`: the conversion is hand-written below, because one variant
+    /// of [`prick_exec::LaunchError`] must not land here.
     #[error(transparent)]
-    Launch(#[from] prick_exec::LaunchError),
+    Launch(prick_exec::LaunchError),
 
     /// Authentication failed.
     #[error(transparent)]
@@ -73,6 +80,28 @@ pub enum CliError {
     /// A failure with no more specific type.
     #[error("{0}")]
     Other(String),
+}
+
+/// Collects a launch failure, routing the guard refusal to its own variant.
+///
+/// `prick-exec` carries the guard refusal inside [`prick_exec::LaunchError`],
+/// because that is the one type its launch API can fail with. Here it has to
+/// come back out: the guard is a *rejection of the request*, decided before
+/// anything is spawned, where every other variant describes a command that was
+/// attempted and could not start. They are documented as different codes --
+/// `UNSAFE_ENVIRONMENT` at exit 11 against `LAUNCH_FAILED` at the shell's 126
+/// and 127 -- and a script branching on the refusal of a security control must
+/// not have it arrive in the generic bucket.
+///
+/// So this cannot be `#[from]`: the derived conversion would put a `Guard`
+/// into [`CliError::Launch`], and the correct mapping below would never run.
+impl From<prick_exec::LaunchError> for CliError {
+    fn from(err: prick_exec::LaunchError) -> Self {
+        match err {
+            prick_exec::LaunchError::Guard(guard) => Self::Guard(guard),
+            other => Self::Launch(other),
+        }
+    }
 }
 
 impl CliError {
@@ -185,6 +214,26 @@ mod tests {
         });
         assert_eq!(err.code(), "UNSAFE_ENVIRONMENT");
         assert!(err.hint().is_some_and(|h| h.contains("--allow-unsafe-env")));
+    }
+
+    #[test]
+    fn a_guard_refusal_does_not_arrive_as_a_launch_failure() {
+        // `prick-exec` can only fail its launch API one way, so it carries the
+        // guard refusal inside `LaunchError`. Converting has to take it back
+        // out, or a refused unsafe environment is indistinguishable from a
+        // command that could not be spawned.
+        let err = CliError::from(prick_exec::LaunchError::from(
+            prick_exec::GuardError::LoaderControlled { name: "NODE_OPTIONS".to_owned() },
+        ));
+        assert!(matches!(err, CliError::Guard(_)), "a guard refusal was filed as {err:?}");
+        assert_eq!(err.code(), "UNSAFE_ENVIRONMENT");
+        assert_eq!(err.exit_code(), 11);
+
+        // Everything else still converts to `Launch`, keeping the shell's codes.
+        let err = CliError::from(prick_exec::LaunchError::NotFound { program: "npm".to_owned() });
+        assert!(matches!(err, CliError::Launch(_)));
+        assert_eq!(err.code(), "LAUNCH_FAILED");
+        assert_eq!(err.exit_code(), 127);
     }
 
     #[test]

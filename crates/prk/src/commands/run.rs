@@ -59,9 +59,11 @@ pub struct RunArgs {
 ///
 /// # Errors
 ///
-/// [`CliError::Auth`] or [`CliError::Api`] while fetching the secrets, and
-/// [`CliError::Launch`] if the command cannot be started -- 127 when it is not
-/// found, 126 when it is found but cannot be executed.
+/// [`CliError::Auth`] or [`CliError::Api`] while fetching the secrets,
+/// [`CliError::Guard`] if a secret's name is one the loader interprets and
+/// `--allow-unsafe-env` was not given, and [`CliError::Launch`] if the command
+/// cannot be started -- 127 when it is not found, 126 when it is found but
+/// cannot be executed.
 pub fn run(args: &RunArgs, global: &GlobalArgs, out: Output) -> Result<(), CliError> {
     let (project, environment) = require_scope(global)?;
 
@@ -85,7 +87,11 @@ pub fn run(args: &RunArgs, global: &GlobalArgs, out: Output) -> Result<(), CliEr
     // arm to write for it and no way to accidentally fall through and report
     // success for a command that has not run.
     match prick_exec::run(&spec) {
-        Err(err) => Err(CliError::Launch(err)),
+        // `into`, not `CliError::Launch`, so this path classifies the same way
+        // the `?`s above do. Nothing here can be a guard refusal today -- the
+        // guard runs in `with_secrets` -- but the two paths agreeing is what
+        // stops that from mattering.
+        Err(err) => Err(err.into()),
     }
 }
 
@@ -145,6 +151,43 @@ mod tests {
     #[test]
     fn a_command_is_required() {
         assert!(Cli::try_parse_from(["prk", "run"]).is_err());
+    }
+
+    /// The guard is a security control and `docs/reference/cli/errors.md`
+    /// tells scripts to branch on its code, so the refusal has to keep that
+    /// code on the way out of `prick-exec`.
+    ///
+    /// Built the way `run` builds it -- a real `LaunchSpec`, the strict guard,
+    /// and the same `?` conversion -- rather than by naming `CliError::Guard`
+    /// directly. Naming the variant is what hid this: the mapping off
+    /// `CliError::Guard` was always right, and nothing on this path reached it.
+    #[test]
+    fn a_refused_unsafe_variable_is_reported_as_one_not_as_a_launch_failure() {
+        use std::ffi::OsString;
+
+        use prick_exec::{EnvGuard, LaunchSpec};
+        use secrecy::SecretString;
+
+        use crate::error::CliError;
+
+        // The body of `run`, from the guard decision to the `?`, and nothing
+        // else: everything before it is a network fetch and everything after
+        // it replaces this process.
+        fn launch(allow_unsafe_env: bool) -> Result<(), CliError> {
+            let guard = if allow_unsafe_env { EnvGuard::permissive() } else { EnvGuard::strict() };
+            let secrets = [("NODE_OPTIONS".to_owned(), SecretString::from("--require /tmp/x.js"))];
+            LaunchSpec::new(vec![OsString::from("node")])?.with_secrets(guard, secrets)?;
+            Ok(())
+        }
+
+        let err = launch(false).expect_err("NODE_OPTIONS must be refused by the strict guard");
+        assert_eq!(err.code(), "UNSAFE_ENVIRONMENT");
+        assert_eq!(err.exit_code(), 11);
+        assert!(err.hint().is_some_and(|hint| hint.contains("--allow-unsafe-env")));
+
+        // Without this the assertions above would still pass if the guard had
+        // simply started refusing everything.
+        assert!(launch(true).is_ok(), "--allow-unsafe-env must still let it through");
     }
 
     #[test]
