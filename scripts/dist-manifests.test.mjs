@@ -106,9 +106,12 @@ describe('archive naming', () => {
   });
 
   it('honours a repository override', () => {
-    assert.match(
+    // Compared whole rather than matched. An unanchored pattern for a URL is
+    // satisfied by a host that merely CONTAINS the expected one, so it would
+    // pass on `https://evil.example/?x=github.com/fork/prick/`.
+    assert.equal(
       archiveUrl(VERSION, 'x86_64-apple-darwin', 'fork/prick'),
-      /github\.com\/fork\/prick\//,
+      'https://github.com/fork/prick/releases/download/v2026.819.0/prk-2026.819.0-x86_64-apple-darwin.tar.gz',
     );
   });
 });
@@ -225,9 +228,13 @@ describe('the Scoop manifest', () => {
     for (const arch of ['64bit', 'arm64']) {
       assert.match(autoupdate.architecture[arch].url, /\$version/);
       assert.match(autoupdate.architecture[arch].extract_dir, /\$version/);
-      assert.doesNotMatch(
-        autoupdate.architecture[arch].url,
-        new RegExp(VERSION.replace(/\./g, '\\.')),
+      // A substring test, not a regex built by escaping the version by hand.
+      // `.replace(/\./g, '\\.')` looks like escaping and is not: it leaves a
+      // backslash in the input untouched, so it is the wrong tool even when
+      // today's input is a CalVer string that cannot contain one.
+      assert.ok(
+        !autoupdate.architecture[arch].url.includes(VERSION),
+        `${arch} autoupdate url froze ${VERSION} in place of Scoop's $version`,
       );
     }
     assert.match(autoupdate.hash.url, /SHA256SUMS$/);
@@ -252,7 +259,9 @@ describe('the Homebrew formula', () => {
   });
 
   it('carries the version and the licence', () => {
-    assert.match(formula(), new RegExp(`^  version "${VERSION.replace(/\./g, '\\.')}"$`, 'm'));
+    // The whole line, newlines included, rather than a regex assembled from the
+    // version -- same reason as the autoupdate assertion above.
+    assert.ok(formula().includes(`\n  version "${VERSION}"\n`));
     assert.match(formula(), /^  license "MIT"$/m);
   });
 
