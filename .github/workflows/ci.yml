@@ -429,6 +429,19 @@ jobs:
         run: mise run lint:zizmor
 
       - name: Actions pinned to digests
+        env:
+          # pinact resolves every `uses:` against the GitHub API to check the
+          # SHA matches the version comment. Unauthenticated, that is 60 requests
+          # an hour shared across everything else leaving this runner's IP -- and
+          # some repositories answer the tag listing with a 504 outright rather
+          # than a rate-limit status, which reads as a broken pin rather than as
+          # a throttle. Reproduced locally: unauthenticated the check fails on
+          # vedantmgoyal9/winget-releaser every time, and with a token it passes
+          # in under a second.
+          #
+          # `github.token` is read-only here and the API calls are all public
+          # repository metadata; this buys the request budget, not access.
+          GITHUB_TOKEN: ${{ github.token }}
         run: mise run lint:pinact
 
       - name: Spell check
