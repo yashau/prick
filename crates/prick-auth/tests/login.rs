@@ -262,6 +262,60 @@ async fn the_token_request_carries_the_verifier_and_never_the_challenge() {
     );
 }
 
+/// THE RESOURCE INDICATOR IS NOT OPTIONAL.
+///
+/// Cloudflare Access refuses an authorization request that carries no
+/// `resource` with `invalid_target` and `No resource parameter found`, and it
+/// delivers that refusal to the loopback callback -- so the login reads as
+/// "the authorization server refused the login", with nothing naming the
+/// parameter that was missing.
+#[tokio::test(flavor = "multi_thread")]
+async fn every_request_names_the_resource_the_metadata_declared() {
+    let server = MockServer::start().await;
+    mount_discovery(&server).await;
+    mount_token(&server, json(&serde_json::json!({ "access_token": "a", "token_type": "Bearer" })))
+        .await;
+
+    let seen = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
+    let recorder = std::sync::Arc::clone(&seen);
+
+    let client = client_for(&server);
+    let outcome = prick_auth::login(
+        &client,
+        &server.uri(),
+        &LoginOptions { timeout: Duration::from_secs(20) },
+        browser_answering(move |authorize| {
+            recorder.lock().expect("not poisoned").clone_from(&authorize.to_string());
+            successful_redirect(authorize)
+        }),
+    )
+    .await
+    .expect("login");
+
+    // What the browser was sent. The value is the one the protected resource
+    // metadata declared, not one this client made up.
+    let url = Url::parse(&seen.lock().expect("not poisoned").clone()).expect("a URL");
+    let params: std::collections::HashMap<_, _> = url.query_pairs().into_owned().collect();
+    assert_eq!(
+        params.get("resource").map(String::as_str),
+        Some(server.uri().as_str()),
+        "the authorization request named no resource: {url}"
+    );
+
+    // And the exchange repeats it, per RFC 8707 section 2.2.
+    let requests = server.received_requests().await.expect("recorded");
+    let exchange = requests
+        .iter()
+        .find(|request| request.url.path() == "/token")
+        .expect("a token request was sent");
+    let sent: std::collections::HashMap<_, _> =
+        url::form_urlencoded::parse(&exchange.body).into_owned().collect();
+    assert_eq!(sent.get("resource").map(String::as_str), Some(server.uri().as_str()));
+
+    // Kept, so a renewal can name the same one without repeating discovery.
+    assert_eq!(outcome.session.resource.as_deref(), Some(server.uri().as_str()));
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn the_authorization_request_uses_s256_with_an_acceptable_challenge() {
     let server = MockServer::start().await;
@@ -555,6 +609,7 @@ async fn a_refresh_renews_the_access_token() {
         &format!("{}/token", server.uri()),
         "registered-client-1",
         &SecretString::from("refresh-1"),
+        Some("https://prick.example.com"),
     )
     .await
     .expect("the refresh must succeed");
@@ -566,6 +621,10 @@ async fn a_refresh_renews_the_access_token() {
     let form = String::from_utf8_lossy(&requests[0].body);
     assert!(form.contains("grant_type=refresh_token"), "{form}");
     assert!(form.contains("refresh_token=refresh-1"), "{form}");
+    // RFC 8707 section 2.2: the renewal names the same resource the first
+    // exchange did, or it is asking for a different token than the one it
+    // replaces.
+    assert!(form.contains("resource=https%3A%2F%2Fprick.example.com"), "{form}");
 }
 
 #[tokio::test]
@@ -588,6 +647,7 @@ async fn a_refresh_that_returns_no_new_refresh_token_keeps_the_old_one() {
         &format!("{}/token", server.uri()),
         "client-1",
         &SecretString::from("refresh-1"),
+        None,
     )
     .await
     .expect("refresh");
@@ -617,6 +677,7 @@ async fn invalid_grant_becomes_a_typed_expired_session() {
         &format!("{}/token", server.uri()),
         "client-1",
         &SecretString::from("revoked"),
+        None,
     )
     .await
     .expect_err("a revoked refresh token cannot renew");
@@ -644,6 +705,7 @@ async fn another_oauth_error_is_reported_as_itself_rather_than_as_an_expiry() {
         &format!("{}/token", server.uri()),
         "client-1",
         &SecretString::from("r"),
+        None,
     )
     .await
     .expect_err("an unknown client is a failure");
@@ -675,6 +737,7 @@ async fn a_stale_session_is_renewed_before_the_request_that_needs_it() {
             issuer: server.uri(),
             client_id: "client-1".to_owned(),
             token_endpoint: format!("{}/token", server.uri()),
+            resource: Some(server.uri()),
             tokens: Tokens {
                 access_token: SecretString::from("access-stale"),
                 refresh_token: Some(SecretString::from("refresh-1")),
@@ -699,6 +762,15 @@ async fn a_stale_session_is_renewed_before_the_request_that_needs_it() {
     // The renewal was written back, so the next invocation does not repeat it.
     let reloaded = store.load().expect("load").expect("a session");
     assert_eq!(reloaded.tokens.access_token.expose_secret(), "access-renewed");
+    assert_eq!(reloaded.resource, Some(server.uri()), "the resource indicator was not kept");
+
+    // And the renewal named the resource the stored session was minted for,
+    // rather than dropping it and asking for a token for something else.
+    let requests = server.received_requests().await.expect("recorded");
+    let form = String::from_utf8_lossy(&requests[0].body);
+    let sent: std::collections::HashMap<_, _> =
+        url::form_urlencoded::parse(form.as_bytes()).into_owned().collect();
+    assert_eq!(sent.get("resource").map(String::as_str), Some(server.uri().as_str()), "{form}");
 }
 
 #[tokio::test]
@@ -718,6 +790,7 @@ async fn a_revoked_session_surfaces_as_expired_rather_than_as_a_server_error() {
             issuer: server.uri(),
             client_id: "client-1".to_owned(),
             token_endpoint: format!("{}/token", server.uri()),
+            resource: None,
             tokens: Tokens {
                 access_token: SecretString::from("stale"),
                 refresh_token: Some(SecretString::from("revoked")),

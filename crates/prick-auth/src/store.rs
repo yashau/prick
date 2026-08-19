@@ -115,6 +115,16 @@ pub struct StoredSession {
     pub client_id: String,
     /// The token endpoint, so a refresh does not repeat discovery.
     pub token_endpoint: String,
+    /// The RFC 8707 resource indicator these tokens were minted for.
+    ///
+    /// Kept so a renewal can name the same resource the first exchange did,
+    /// without repeating discovery to find out what it was.
+    ///
+    /// `None` for a server with nothing in front of it, and for a session
+    /// written before this field existed. Sending no indicator is exactly what
+    /// every login did until Access started refusing it, so an old session
+    /// refreshes as well as it ever did rather than failing to load.
+    pub resource: Option<String>,
     /// The tokens themselves.
     pub tokens: Tokens,
 }
@@ -149,6 +159,8 @@ struct Wire {
     issuer: String,
     client_id: String,
     token_endpoint: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    resource: Option<String>,
     access_token: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     refresh_token: Option<String>,
@@ -170,6 +182,7 @@ impl Wire {
             issuer: session.issuer.clone(),
             client_id: session.client_id.clone(),
             token_endpoint: session.token_endpoint.clone(),
+            resource: session.resource.clone(),
             access_token: session.tokens.access_token.expose_secret().to_owned(),
             refresh_token: session
                 .tokens
@@ -186,6 +199,7 @@ impl Wire {
             issuer: std::mem::take(&mut self.issuer),
             client_id: std::mem::take(&mut self.client_id),
             token_endpoint: std::mem::take(&mut self.token_endpoint),
+            resource: self.resource.take(),
             tokens: Tokens {
                 access_token: SecretString::from(std::mem::take(&mut self.access_token)),
                 refresh_token: self.refresh_token.take().map(SecretString::from),
@@ -606,6 +620,7 @@ mod tests {
             issuer: "https://example.cloudflareaccess.com".to_owned(),
             client_id: "client-123".to_owned(),
             token_endpoint: "https://example.cloudflareaccess.com/token".to_owned(),
+            resource: Some("https://prick.example.com".to_owned()),
             tokens: Tokens {
                 access_token: SecretString::from("access-abc"),
                 refresh_token: Some(SecretString::from("refresh-xyz")),

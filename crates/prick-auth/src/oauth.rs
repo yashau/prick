@@ -4,7 +4,9 @@
 //!
 //! 1. **Probe `/health`.** Three outcomes, all handled explicitly; see
 //!    [`crate::discovery::probe`].
-//! 2. **Discover** the authorization server via RFC 9728 and RFC 8414.
+//! 2. **Discover** the authorization server via RFC 9728 and RFC 8414, and
+//!    with it the RFC 8707 `resource` indicator that every later request
+//!    carries -- Access refuses an authorization request that omits it.
 //! 3. **Bind** a loopback listener on an OS-assigned port. This happens before
 //!    registration because the port is part of the redirect URI that gets
 //!    registered.
@@ -151,6 +153,11 @@ pub fn scopes_for(server: &AuthorizationServer) -> Vec<String> {
 /// redirect URI or a state value cannot terminate the query and inject another
 /// parameter.
 ///
+/// `resource` is the RFC 8707 indicator naming what the token is for, and
+/// Cloudflare Access refuses the request outright without it. It is `None` only
+/// for a server with nothing in front of it, which has no protected resource
+/// metadata to have named one and no authorization server to care.
+///
 /// # Errors
 ///
 /// [`AuthError::Discovery`] if the authorization endpoint is not a URL.
@@ -160,6 +167,7 @@ pub fn authorization_url(
     redirect_uri: &str,
     pkce_challenge: &str,
     state: &str,
+    resource: Option<&str>,
 ) -> Result<String, AuthError> {
     let mut url =
         url::Url::parse(&server.authorization_endpoint).map_err(|err| AuthError::Discovery {
@@ -178,6 +186,9 @@ pub fn authorization_url(
         query.append_pair("state", state);
         query.append_pair("code_challenge", pkce_challenge);
         query.append_pair("code_challenge_method", pkce::METHOD);
+        if let Some(resource) = resource {
+            query.append_pair("resource", resource);
+        }
         if !scopes.is_empty() {
             query.append_pair("scope", &scopes);
         }
@@ -261,6 +272,11 @@ async fn post_token(
 
 /// Exchanges an authorization code for tokens.
 ///
+/// `resource` is repeated here rather than left to the authorization request.
+/// RFC 8707 section 2.2 is explicit that the token request carries it too, and
+/// an authorization server that scopes the audience needs it in order to mint a
+/// token for the right one rather than inferring it from the grant.
+///
 /// # Errors
 ///
 /// [`AuthError::AuthExpired`] for `invalid_grant`, [`AuthError::Denied`] for
@@ -272,19 +288,20 @@ pub async fn exchange_code(
     redirect_uri: &str,
     code: &str,
     verifier: &SecretString,
+    resource: Option<&str>,
 ) -> Result<Tokens, AuthError> {
-    post_token(
-        client,
-        token_endpoint,
-        &[
-            ("grant_type", "authorization_code"),
-            ("code", code),
-            ("redirect_uri", redirect_uri),
-            ("client_id", client_id),
-            ("code_verifier", verifier.expose_secret()),
-        ],
-    )
-    .await
+    let mut form = vec![
+        ("grant_type", "authorization_code"),
+        ("code", code),
+        ("redirect_uri", redirect_uri),
+        ("client_id", client_id),
+        ("code_verifier", verifier.expose_secret()),
+    ];
+    if let Some(resource) = resource {
+        form.push(("resource", resource));
+    }
+
+    post_token(client, token_endpoint, &form).await
 }
 
 /// Renews an access token from a refresh token.
@@ -292,6 +309,10 @@ pub async fn exchange_code(
 /// The server may or may not return a new refresh token. When it does not, the
 /// existing one is kept: dropping it would turn every renewal into the last
 /// one, and the failure would only show up when the next renewal was due.
+///
+/// `resource` is the indicator the session was minted for, which is why the
+/// stored session carries it. A renewal that named a different resource -- or
+/// none -- would be asking for a different token than the one it replaces.
 ///
 /// # Errors
 ///
@@ -302,17 +323,18 @@ pub async fn refresh(
     token_endpoint: &str,
     client_id: &str,
     refresh_token: &SecretString,
+    resource: Option<&str>,
 ) -> Result<Tokens, AuthError> {
-    let mut tokens = post_token(
-        client,
-        token_endpoint,
-        &[
-            ("grant_type", "refresh_token"),
-            ("refresh_token", refresh_token.expose_secret()),
-            ("client_id", client_id),
-        ],
-    )
-    .await?;
+    let mut form = vec![
+        ("grant_type", "refresh_token"),
+        ("refresh_token", refresh_token.expose_secret()),
+        ("client_id", client_id),
+    ];
+    if let Some(resource) = resource {
+        form.push(("resource", resource));
+    }
+
+    let mut tokens = post_token(client, token_endpoint, &form).await?;
 
     if tokens.refresh_token.is_none() {
         tokens.refresh_token = Some(refresh_token.clone());
@@ -397,16 +419,24 @@ where
     // An unprotected server has no challenge and no metadata to find, so it
     // keeps treating the API URL as the issuer rather than probing for
     // documents that are not there.
-    let issuer = if matches!(probe, Probe::Unprotected) {
-        api_url.to_owned()
+    let (issuer, resource) = if matches!(probe, Probe::Unprotected) {
+        (api_url.to_owned(), None)
     } else {
         let health = client.config().url(&["health"]);
-        let resource =
+        let metadata =
             discovery::resolve_protected_resource(client, metadata_url.as_deref(), &health).await?;
 
-        resource.authorization_servers.first().cloned().ok_or_else(|| AuthError::Discovery {
-            reason: "the protected resource metadata names no authorization server".to_owned(),
-        })?
+        let issuer = metadata.authorization_servers.first().cloned().ok_or_else(|| {
+            AuthError::Discovery {
+                reason: "the protected resource metadata names no authorization server".to_owned(),
+            }
+        })?;
+
+        // The same document names what the token is FOR, and RFC 8707 says to
+        // send that back. Access is not lenient about it: an authorization
+        // request carrying no `resource` is refused with `invalid_target`, at
+        // the callback rather than in the browser.
+        (issuer, Some(metadata.resource_indicator(api_url)))
     };
     let server = discovery::fetch_authorization_server(client, &issuer).await?;
 
@@ -428,6 +458,7 @@ where
         &redirect_uri,
         &pkce_pair.challenge,
         &state,
+        resource.as_deref(),
     )?;
     open(&authorize)?;
 
@@ -459,6 +490,7 @@ where
         &redirect_uri,
         code,
         &pkce_pair.verifier,
+        resource.as_deref(),
     )
     .await?;
 
@@ -468,6 +500,7 @@ where
             issuer: server.issuer,
             client_id: registration.client_id,
             token_endpoint: server.token_endpoint,
+            resource,
             tokens,
         },
         probe,
@@ -552,6 +585,7 @@ mod tests {
             "http://127.0.0.1:5000/callback",
             "chal",
             "st",
+            Some("https://prick.example.com"),
         )
         .expect("the endpoint is a URL");
         let parsed = url::Url::parse(&url).expect("a URL was produced");
@@ -563,13 +597,17 @@ mod tests {
         assert_eq!(params["state"], "st");
         assert_eq!(params["code_challenge"], "chal");
         assert_eq!(params["code_challenge_method"], "S256");
+        // RFC 8707. Without it Access answers `invalid_target` and the login
+        // dies at the callback.
+        assert_eq!(params["resource"], "https://prick.example.com");
         assert!(params["scope"].contains("offline_access"), "no refresh token would be issued");
     }
 
     #[test]
     fn the_plain_pkce_method_is_never_requested() {
-        let url = authorization_url(&server(), "c", "http://127.0.0.1:1/callback", "chal", "st")
-            .expect("a URL");
+        let url =
+            authorization_url(&server(), "c", "http://127.0.0.1:1/callback", "chal", "st", None)
+                .expect("a URL");
         assert!(url.contains("code_challenge_method=S256"));
         assert!(!url.contains("plain"));
     }
@@ -577,9 +615,15 @@ mod tests {
     #[test]
     fn query_parameters_are_encoded_rather_than_interpolated() {
         // A state value containing `&` must not become a second parameter.
-        let url =
-            authorization_url(&server(), "c", "http://127.0.0.1:1/callback", "chal", "a&evil=1")
-                .expect("a URL");
+        let url = authorization_url(
+            &server(),
+            "c",
+            "http://127.0.0.1:1/callback",
+            "chal",
+            "a&evil=1",
+            None,
+        )
+        .expect("a URL");
         let parsed = url::Url::parse(&url).expect("a URL");
         let params: std::collections::HashMap<_, _> = parsed.query_pairs().into_owned().collect();
         assert_eq!(params["state"], "a&evil=1");
@@ -590,7 +634,7 @@ mod tests {
     fn an_endpoint_that_is_not_a_url_is_reported_rather_than_concatenated() {
         let mut server = server();
         server.authorization_endpoint = "not a url".to_owned();
-        let err = authorization_url(&server, "c", "http://127.0.0.1:1/callback", "ch", "st")
+        let err = authorization_url(&server, "c", "http://127.0.0.1:1/callback", "ch", "st", None)
             .expect_err("a malformed endpoint");
         assert!(matches!(err, AuthError::Discovery { .. }));
     }
@@ -611,7 +655,7 @@ mod tests {
         server.scopes_supported = Some(vec!["something_else".to_owned()]);
         assert!(scopes_for(&server).is_empty());
 
-        let url = authorization_url(&server, "c", "http://127.0.0.1:1/callback", "ch", "st")
+        let url = authorization_url(&server, "c", "http://127.0.0.1:1/callback", "ch", "st", None)
             .expect("a URL");
         assert!(!url.contains("scope="), "an empty scope was still sent: {url}");
     }
@@ -625,6 +669,16 @@ mod tests {
         let params = vec![("state".to_owned(), "a".to_owned())];
         assert_eq!(single(&params, "state"), Some("a"));
         assert_eq!(single(&params, "code"), None);
+    }
+
+    #[test]
+    fn a_server_with_nothing_in_front_of_it_sends_no_resource_at_all() {
+        // There is no protected resource metadata to have named one, and an
+        // invented indicator is a value the server never advertised.
+        let url =
+            authorization_url(&server(), "c", "http://127.0.0.1:1/callback", "ch", "st", None)
+                .expect("a URL");
+        assert!(!url.contains("resource="), "a resource was invented: {url}");
     }
 
     #[test]

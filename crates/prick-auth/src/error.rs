@@ -28,6 +28,14 @@ use prick_core::classify::ErrorKind;
 pub const MANAGED_OAUTH_SETTING: &str = "Zero Trust > Access > Applications > (your application) > Additional settings > \
      OAuth > Managed OAuth, then Save";
 
+/// The RFC 8707 error code for a resource the authorization server will not
+/// mint a token for.
+///
+/// Named because the generic advice for a denied login -- log in again, or use
+/// a service token -- is wrong for this one. Neither does anything about a
+/// resource indicator the server does not recognise.
+pub const INVALID_TARGET: &str = "invalid_target";
+
 /// A failure during authentication.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
@@ -213,6 +221,12 @@ impl AuthError {
                 "Check that the configuration directory is writable, or set PRK_CONFIG_DIR to \
                  somewhere it is.",
             ),
+            // RFC 8707. `prk` names the resource the server's own metadata
+            // declared, so being refused for it means the metadata and the
+            // Access application disagree about what this hostname is.
+            Self::Denied { error } if error == INVALID_TARGET => Some(
+                "The authorization server did not accept the resource this server's metadata                  names. Check that the URL you passed is the hostname of the Access application                  in front of it.",
+            ),
             Self::Api(err) => err.hint(),
             Self::Discovery { .. }
             | Self::Registration { .. }
@@ -312,6 +326,21 @@ mod tests {
         assert_eq!(err.kind(), ErrorKind::Unreachable);
         assert_eq!(err.exit_code(), 7);
         assert_eq!(err.code(), "UNREACHABLE");
+    }
+
+    #[test]
+    fn a_refused_resource_is_not_answered_with_log_in_again() {
+        // What `prk login` printed before the `resource` parameter was sent:
+        // "run `prk login`, or set a service token", to someone who had just
+        // run `prk login`. Neither is the fix for `invalid_target`.
+        let err = AuthError::Denied { error: INVALID_TARGET.to_owned() };
+        let hint = err.hint().expect("this failure must be actionable");
+        assert!(hint.contains("resource"), "{hint}");
+        assert!(!hint.contains("PRK_ACCESS_CLIENT_ID"), "{hint}");
+
+        // Every other denial keeps the generic advice.
+        let other = AuthError::Denied { error: "access_denied".to_owned() };
+        assert_ne!(other.hint(), err.hint());
     }
 
     #[test]

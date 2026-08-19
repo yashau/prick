@@ -109,8 +109,14 @@ pub async fn resolve_at(
         return Err(AuthError::AuthExpired);
     };
 
-    let tokens =
-        refresh(client, &session.token_endpoint, &session.client_id, &refresh_token).await?;
+    let tokens = refresh(
+        client,
+        &session.token_endpoint,
+        &session.client_id,
+        &refresh_token,
+        session.resource.as_deref(),
+    )
+    .await?;
 
     let renewed = StoredSession { tokens, ..session };
     store.save(&renewed)?;
@@ -150,6 +156,7 @@ mod tests {
             issuer: "https://example.cloudflareaccess.com".to_owned(),
             client_id: "client-1".to_owned(),
             token_endpoint: "https://example.cloudflareaccess.com/token".to_owned(),
+            resource: Some("https://prick.example.com".to_owned()),
             tokens: Tokens {
                 access_token: SecretString::from("access-abc"),
                 refresh_token: refreshable.then(|| SecretString::from("refresh-xyz")),
