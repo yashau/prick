@@ -25,7 +25,7 @@ use crate::config::Config;
 use crate::credential::{Credential, HEADER_REQUEST_ID};
 use crate::error::{ApiError, Transport};
 use crate::models::ApiErrorBody;
-use crate::response::{BODY_CAP, Classified, ResponseFacts, classify, html_title};
+use crate::response::{Classified, ResponseFacts, body_cap, classify, html_title};
 
 /// What a request carries, if anything.
 ///
@@ -63,7 +63,7 @@ impl Body<'_> {
 pub struct Received {
     /// What the response said about itself.
     pub facts: ResponseFacts,
-    /// The body, capped at [`BODY_CAP`].
+    /// The body, capped at whatever [`body_cap`] allowed this response.
     ///
     /// Held only long enough to deserialise or to pull a `<title>` out of. It
     /// never reaches an error, a log line or a diagnostic.
@@ -71,7 +71,7 @@ pub struct Received {
 }
 
 impl Received {
-    /// The body bytes, capped at [`BODY_CAP`].
+    /// The body bytes, capped at whatever [`body_cap`] allowed this response.
     pub fn body(&self) -> &[u8] {
         &self.body
     }
@@ -222,7 +222,11 @@ impl Client {
             facts.request_id = Some(request_id);
         }
 
-        let (body, truncated) = read_capped_body(response).await?;
+        // The cap comes from the facts, which are headers, so it is settled
+        // before a byte of body is taken. An export of a whole environment and
+        // a proxy's error page are not the same quantity and do not get the
+        // same ceiling.
+        let (body, truncated) = read_capped_body(response, body_cap(&facts)).await?;
         facts.truncated = truncated;
         if !facts.is_json() {
             facts.title = html_title(&body);
@@ -500,11 +504,15 @@ fn read_facts(response: &reqwest::Response) -> ResponseFacts {
     }
 }
 
-/// Reads at most [`BODY_CAP`] bytes, reporting whether there was more.
+/// Reads at most `cap` bytes, reporting whether there was more.
 ///
 /// Chunk by chunk rather than `bytes()`, so a server that advertises a
-/// gigabyte cannot make this allocate one.
-async fn read_capped_body(mut response: reqwest::Response) -> Result<(Vec<u8>, bool), ApiError> {
+/// gigabyte cannot make this allocate one, and so the buffer grows to the body
+/// actually received rather than to the ceiling.
+async fn read_capped_body(
+    mut response: reqwest::Response,
+    cap: usize,
+) -> Result<(Vec<u8>, bool), ApiError> {
     let mut body = Vec::new();
     let mut truncated = false;
 
@@ -521,7 +529,7 @@ async fn read_capped_body(mut response: reqwest::Response) -> Result<(Vec<u8>, b
         })?;
 
         let Some(chunk) = chunk else { break };
-        let room = BODY_CAP.saturating_sub(body.len());
+        let room = cap.saturating_sub(body.len());
         if chunk.len() > room {
             body.extend_from_slice(&chunk[..room]);
             truncated = true;
@@ -573,6 +581,45 @@ mod tests {
         assert_eq!(first.len(), 32);
         assert!(first.chars().all(|c| c.is_ascii_hexdigit()));
         assert_ne!(first, second, "two request ids collided, which means no entropy");
+    }
+
+    /// A response of `len` bytes, without a server to serve it.
+    fn body_of(len: usize) -> reqwest::Response {
+        let response = http::Response::builder()
+            .status(200)
+            .body(vec![b'x'; len])
+            .expect("building a response must succeed");
+        reqwest::Response::from(response)
+    }
+
+    #[tokio::test]
+    async fn a_body_within_the_cap_is_read_whole() {
+        let (body, truncated) = read_capped_body(body_of(4096), 8192)
+            .await
+            .expect("a complete body is not a transport failure");
+        assert_eq!(body.len(), 4096);
+        assert!(!truncated, "a body under the cap was reported as cut short");
+    }
+
+    #[tokio::test]
+    async fn a_body_over_the_cap_is_cut_short_and_says_so() {
+        // Reading further would not help: the document is already incomplete,
+        // and a partially-read JSON body is exactly the thing that parses into
+        // something plausible and wrong.
+        let (body, truncated) = read_capped_body(body_of(8192), 4096)
+            .await
+            .expect("an over-long body is not a transport failure");
+        assert_eq!(body.len(), 4096, "the cap did not bound the read");
+        assert!(truncated, "an over-long body was not reported as cut short");
+    }
+
+    #[tokio::test]
+    async fn a_body_of_exactly_the_cap_is_not_reported_as_cut_short() {
+        let (body, truncated) = read_capped_body(body_of(4096), 4096)
+            .await
+            .expect("a complete body is not a transport failure");
+        assert_eq!(body.len(), 4096);
+        assert!(!truncated, "a body of exactly the cap was reported as cut short");
     }
 
     #[test]

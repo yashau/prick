@@ -55,6 +55,15 @@ pub enum ErrorKind {
     Timeout,
     /// Something answered, but it is not a prick server.
     NotPrick,
+    /// The server answered correctly, and the answer was larger than the client
+    /// will read into memory.
+    ///
+    /// Raised by the client, never read off a status. Distinct from
+    /// [`Self::PayloadTooLarge`], which is the server refusing a request this
+    /// client sent -- the direction is the whole difference, and conflating
+    /// them would tell an operator to split a write when what they have is an
+    /// environment they can no longer export.
+    ResponseTooLarge,
     /// A status the client has no specific handling for.
     Unknown,
 }
@@ -140,6 +149,9 @@ impl ErrorKind {
             Self::NotPrick => Some(
                 "The URL answered but is not a prick server. Point --api-url at the Worker's hostname, not at the web UI or a proxy.",
             ),
+            Self::ResponseTooLarge => Some(
+                "This environment holds more secret data than one response can carry. `prk secrets list` names every key and `prk secrets get <KEY>` still reads one at a time; delete or shrink the largest.",
+            ),
             Self::Validation | Self::Unknown => None,
         }
     }
@@ -163,6 +175,7 @@ impl ErrorKind {
     /// | 9 | Output cannot be represented in the requested format |
     /// | 10 | Rate limited |
     /// | 11 | Request rejected as invalid |
+    /// | 12 | The response is too large to read |
     pub fn exit_code(self) -> u8 {
         match self {
             Self::Unauthenticated => 3,
@@ -173,6 +186,7 @@ impl ErrorKind {
             Self::ServerError | Self::ServiceUnavailable => 8,
             Self::RateLimited => 10,
             Self::Validation | Self::PayloadTooLarge => 11,
+            Self::ResponseTooLarge => 12,
             Self::Unknown => 1,
         }
     }
@@ -194,6 +208,7 @@ impl ErrorKind {
             Self::TlsFailure => "TLS_FAILURE",
             Self::Timeout => "TIMEOUT",
             Self::NotPrick => "NOT_A_PRICK_SERVER",
+            Self::ResponseTooLarge => "RESPONSE_TOO_LARGE",
             Self::Unknown => "UNKNOWN",
         }
     }
@@ -240,6 +255,7 @@ mod tests {
         ErrorKind::TlsFailure,
         ErrorKind::Timeout,
         ErrorKind::NotPrick,
+        ErrorKind::ResponseTooLarge,
         ErrorKind::Unknown,
     ];
 
@@ -284,6 +300,7 @@ mod tests {
             ErrorKind::Unreachable,
             ErrorKind::TlsFailure,
             ErrorKind::NotPrick,
+            ErrorKind::ResponseTooLarge,
             ErrorKind::ServiceUnavailable,
         ] {
             assert!(kind.hint().is_some(), "{kind} has no hint");
@@ -312,7 +329,36 @@ mod tests {
         assert_eq!(ErrorKind::Unauthenticated.exit_code(), 3);
         assert_eq!(ErrorKind::Forbidden.exit_code(), 4);
         assert_eq!(ErrorKind::Unreachable.exit_code(), 7);
+        assert_eq!(ErrorKind::ResponseTooLarge.exit_code(), 12);
         assert_eq!(ErrorKind::Unknown.exit_code(), EXIT_FAILURE);
+    }
+
+    #[test]
+    fn an_oversized_response_is_not_reported_as_an_unreachable_server() {
+        // The server was reached and answered correctly. Sharing exit 7 with
+        // "cannot reach the server" would send an operator to look for a proxy
+        // or a wrong hostname, and there is neither.
+        assert_ne!(
+            ErrorKind::ResponseTooLarge.exit_code(),
+            ErrorKind::Unreachable.exit_code(),
+            "an answered request shares an exit code with an unanswered one"
+        );
+        assert_ne!(ErrorKind::ResponseTooLarge.exit_code(), ErrorKind::NotPrick.exit_code());
+
+        // And the hint has to name the size, not the configuration. Pointing at
+        // --api-url is the specific wrong turn this kind exists to prevent.
+        let hint = ErrorKind::ResponseTooLarge.hint().expect("the kind is actionable");
+        assert!(!hint.contains("--api-url"), "the hint blames the URL: {hint}");
+        assert!(hint.contains("prk secrets list"), "the hint names no way to find the cause");
+    }
+
+    #[test]
+    fn a_refused_response_is_kept_apart_from_a_refused_request() {
+        // 413 is the server refusing something this client sent; it keeps its
+        // own code and its own advice about splitting a write.
+        assert_eq!(ErrorKind::from_status(413), ErrorKind::PayloadTooLarge);
+        assert_ne!(ErrorKind::ResponseTooLarge.code(), ErrorKind::PayloadTooLarge.code());
+        assert_ne!(ErrorKind::ResponseTooLarge.exit_code(), ErrorKind::PayloadTooLarge.exit_code());
     }
 
     #[test]
@@ -335,5 +381,7 @@ mod tests {
         assert!(!ErrorKind::Validation.is_retryable());
         assert!(!ErrorKind::PreconditionFailed.is_retryable());
         assert!(!ErrorKind::NotPrick.is_retryable());
+        // The same request produces the same oversized answer.
+        assert!(!ErrorKind::ResponseTooLarge.is_retryable());
     }
 }

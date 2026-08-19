@@ -192,6 +192,12 @@ rather than a silently corrupt line. Use `json` or `yaml` for such a value.
 The value limit counts **UTF-8 bytes** rather than JavaScript string length, so
 a value of emoji or CJK text is measured the way it is stored.
 
+`prk` derives its own ceiling on a response from the value size and the
+per-environment cap, so a whole-environment export at the defaults is always
+readable. Raising either variable past its default can leave an environment the
+server will happily write to and the CLI will not read back — see
+`RESPONSE_TOO_LARGE` below.
+
 The per-environment cap follows from atomicity: a full-environment replace has
 to fit in **one** D1 `batch()`, and `batch()` has a documented 30-second
 ceiling. Exceeding the cap is a `413`, never a partial write.
@@ -212,6 +218,7 @@ test disagrees, the fix is to lower the cap — never to split the batch.
 | `CONFLICT`            | Another writer took the same version number                                                                                                                | Re-run the command                                                                                                              |
 | `PRECONDITION_FAILED` | `--expected-rev` did not match                                                                                                                             | Re-read the revision and re-apply                                                                                               |
 | Exit code 9           | A value contains a control character the chosen format cannot encode                                                                                       | Use `--format json` or `--format yaml`                                                                                          |
+| `RESPONSE_TOO_LARGE`  | The environment holds more secret data than one response carries, so `prk secrets download` and `prk run` cannot read it back while writes still succeed   | `prk secrets list` and `prk secrets get` still work one at a time; delete or shrink the largest values                          |
 
 A decrypt failure is never swallowed. On a reveal it fails the request; in a
 listing the row is marked `UNREADABLE` and a warning tells you not to deploy
