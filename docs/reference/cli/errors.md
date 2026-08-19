@@ -97,12 +97,12 @@ The stable codes emitted under `--json`.
 
 Codes the client raises itself, rather than reading off a response:
 
-| Code                     | Exit     | Meaning                                                                              |
-| ------------------------ | -------- | ------------------------------------------------------------------------------------ |
-| `UNREPRESENTABLE_OUTPUT` | 9        | A value contains a control character the chosen format cannot encode                 |
-| `INVALID_SCOPE`          | 11       | A scope string could not be parsed                                                   |
-| `UNSAFE_ENVIRONMENT`     | 11       | A secret's name is one the loader interprets, and `--allow-unsafe-env` was not given |
-| `LAUNCH_FAILED`          | 126, 127 | `prk run` could not start the command                                                |
+| Code                     | Exit        | Meaning                                                                                                              |
+| ------------------------ | ----------- | -------------------------------------------------------------------------------------------------------------------- |
+| `UNREPRESENTABLE_OUTPUT` | 9           | A value contains a control character the chosen format cannot encode                                                 |
+| `INVALID_SCOPE`          | 11          | A scope string could not be parsed                                                                                   |
+| `UNSAFE_ENVIRONMENT`     | 11          | A secret's name is one the loader interprets, and `--allow-unsafe-env` was not given                                 |
+| `LAUNCH_FAILED`          | 1, 126, 127 | `prk run` could not start the command — **127** not found, **126** found but not executable, **1** for anything else |
 
 "Retryable" means retrying the identical request could plausibly succeed. It is
 deliberately conservative: a write that may have partially applied is not marked
