@@ -137,15 +137,37 @@ impl Context {
 ///
 /// [`CliError::Other`] naming both ways to supply it.
 fn resolve_api_url(global: &GlobalArgs) -> Result<String, CliError> {
+    // Built leniently: a platform that cannot name a configuration directory
+    // has no stored login to find either, and "no server URL is configured" is
+    // a better answer to that than a failure to locate the directory.
+    let store = TokenStore::new(StorageBackend::File).ok();
+    resolve_api_url_from(global, store.as_ref())
+}
+
+/// [`resolve_api_url`] with an injectable store, for tests.
+///
+/// The store is a parameter because the alternative is a test that reads the
+/// developer's own credential file and then passes or fails on whether they
+/// happen to be logged in. `None` stands for "no configuration directory could
+/// be determined", which is the one way building the default store fails.
+///
+/// The store is consulted only when nothing more explicit was supplied, so the
+/// `--api-url` and `PRK_API_URL` path still touches no files.
+///
+/// # Errors
+///
+/// [`CliError::Other`] naming both ways to supply it.
+fn resolve_api_url_from(
+    global: &GlobalArgs,
+    store: Option<&TokenStore>,
+) -> Result<String, CliError> {
     if let Some(url) = global.api_url.as_deref().filter(|url| !url.is_empty()) {
         return Ok(url.trim_end_matches('/').to_owned());
     }
 
     // A previous `prk login` recorded which server it logged in to, so the
     // common case needs neither a flag nor an environment variable.
-    if let Ok(store) = TokenStore::new(StorageBackend::File)
-        && let Ok(Some(session)) = store.load()
-    {
+    if let Some(session) = store.and_then(|store| store.load().ok().flatten()) {
         return Ok(session.api_url);
     }
 
@@ -370,10 +392,19 @@ mod tests {
         }
     }
 
+    /// An empty store, so that the assertion is about the argument and not
+    /// about whether whoever is running the tests has logged in.
+    fn empty_store() -> (tempfile::TempDir, TokenStore) {
+        let dir = tempfile::tempdir().expect("a temporary directory");
+        let store = TokenStore::in_dir(dir.path().join("prick"), StorageBackend::File);
+        (dir, store)
+    }
+
     #[test]
     fn a_command_with_no_server_configured_says_how_to_configure_one() {
         let global = global_with(None, None);
-        let err = resolve_api_url(&global).unwrap_err();
+        let (_dir, store) = empty_store();
+        let err = resolve_api_url_from(&global, Some(&store)).unwrap_err();
         let message = err.to_string();
         assert!(message.contains("--api-url"), "{message}");
         assert!(message.contains("PRK_API_URL"), "{message}");
@@ -381,10 +412,36 @@ mod tests {
     }
 
     #[test]
+    fn a_stored_login_supplies_the_url_when_nothing_else_does() {
+        let (_dir, store) = empty_store();
+        store
+            .save(&prick_auth::StoredSession {
+                api_url: "https://prick.example.com".to_owned(),
+                issuer: "https://example.cloudflareaccess.com".to_owned(),
+                client_id: "client-123".to_owned(),
+                token_endpoint: "https://example.cloudflareaccess.com/token".to_owned(),
+                resource: None,
+                tokens: prick_auth::Tokens {
+                    access_token: SecretString::from("access-abc"),
+                    refresh_token: None,
+                    expires_at: None,
+                },
+            })
+            .expect("a session is stored");
+
+        let global = global_with(None, None);
+        assert_eq!(
+            resolve_api_url_from(&global, Some(&store)).unwrap(),
+            "https://prick.example.com"
+        );
+    }
+
+    #[test]
     fn an_explicit_url_wins_and_is_normalised() {
         let mut global = global_with(None, None);
         global.api_url = Some("https://prick.example.com/".to_owned());
-        assert_eq!(resolve_api_url(&global).unwrap(), "https://prick.example.com");
+        // Explicitly with no store to fall back on: the flag is the answer.
+        assert_eq!(resolve_api_url_from(&global, None).unwrap(), "https://prick.example.com");
     }
 
     #[test]
