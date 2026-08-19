@@ -50,6 +50,11 @@ mise.local.toml
 !.vscode/extensions.json
 !.vscode/settings.json
 
+# Agent tooling, per developer. Unlike .vscode/ there is no committed subset:
+# the contents are one contributor's launch configs, local settings and session
+# state, none of which another checkout wants.
+.claude/
+
 # --- OS -----------------------------------------------------------------
 .DS_Store
 Thumbs.db
