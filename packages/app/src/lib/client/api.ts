@@ -205,7 +205,14 @@ export interface KeyringStatus {
     rowsRemaining: number;
     lastRekeyAt: number | null;
   }[];
-  /** Only true at zero rows on every non-active kid. See the settings screen. */
+  /** Whether `MASTER_KEY_OLD` is set at all. False means there is nothing to remove. */
+  oldKeyLoaded: boolean;
+  /**
+   * Only true at zero rows on every non-active kid. See the settings screen.
+   *
+   * Vacuously true when no old key is loaded, so never render an instruction
+   * from this alone -- gate on `oldKeyLoaded` too.
+   */
   safeToRemoveOldKey: boolean;
 }
 

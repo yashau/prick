@@ -34,6 +34,22 @@ export interface KeyringStatus {
     lastRekeyAt: number | null;
   }[];
   /**
+   * Whether the ring holds any key BESIDES the active one -- that is, whether
+   * `MASTER_KEY_OLD` is actually set on this deployment.
+   *
+   * This exists because `safeToRemoveOldKey` cannot answer it. That boolean is
+   * a statement about rows, and it is vacuously true on an install that has no
+   * old key and nothing stored: no non-active kid means nothing to violate the
+   * `every` below. A readout built on it alone therefore tells a brand new
+   * deployment that it may remove a secret it never had, which reads as "a
+   * rotation completed" to the one audience that must not misread it.
+   *
+   * The two are reported separately rather than folded together because they
+   * fail differently. `safeToRemoveOldKey` false is a hazard; this being false
+   * is merely the absence of a question.
+   */
+  oldKeyLoaded: boolean;
+  /**
    * True only when every non-active kid has `rowsRemaining === 0`.
    *
    * The settings screen renders this as the "safe to remove MASTER_KEY_OLD"
@@ -41,6 +57,11 @@ export interface KeyringStatus {
    * is the ONE irreversible mistake available in this design -- those values
    * can never be decrypted again -- so the UI has to be what tells you, and it
    * only goes green at zero.
+   *
+   * NOT sufficient on its own to tell an operator to act. Read it together
+   * with `oldKeyLoaded`: true here with `oldKeyLoaded` false means "there is
+   * nothing to remove", not "removing it is safe". Consumers that render an
+   * instruction must gate on both.
    */
   safeToRemoveOldKey: boolean;
 }
@@ -199,6 +220,14 @@ export async function getKeyringStatus(ctx: CoreContext): Promise<KeyringStatus>
     activeKid: keyring.active.kid,
     entries,
     /*
+     * Configuration, not progress: does this deployment carry a second key at
+     * all. `keyring.kids` is the ring as loaded, so this is false on a fresh
+     * install and stays false until `MASTER_KEY_OLD` is set -- independent of
+     * how many rows exist, which is exactly what makes it able to disambiguate
+     * the vacuous case below.
+     */
+    oldKeyLoaded: keyring.kids.length > 1,
+    /*
      * TRUE ONLY AT ZERO, AND ONLY WITH EVERYTHING ACCOUNTED FOR.
      *
      * Two distinct hazards, and it is worth being exact about which one each
@@ -220,6 +249,13 @@ export async function getKeyringStatus(ctx: CoreContext): Promise<KeyringStatus>
      * cleverness in this function -- it is defended by the tests in
      * `test/core/keyring.test.ts`, which seed real rows and assert this goes
      * false. If you change `census`, run them and watch them fail first.
+     *
+     * And it is TRUE ON A FRESH INSTALL, vacuously: no non-active kid exists
+     * for `every` to reject. That is not a defect in this expression -- "no
+     * row is stranded" is a correct answer to the question asked -- but it is
+     * not the question an operator reads off it. `oldKeyLoaded` is what
+     * separates the two, and every consumer that turns this into an
+     * instruction has to gate on both.
      */
     safeToRemoveOldKey:
       counted.unattributed === 0 &&

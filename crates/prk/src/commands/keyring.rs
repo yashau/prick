@@ -226,6 +226,7 @@ fn render_status(status: &KeyringStatus, global: &GlobalArgs, out: Output) {
         out.json(&serde_json::json!({
             "active_kid": status.active_kid,
             "entries": entries,
+            "old_key_loaded": status.old_key_loaded,
             "safe_to_remove_old_key": status.safe_to_remove_old_key,
         }));
         return;
@@ -235,24 +236,41 @@ fn render_status(status: &KeyringStatus, global: &GlobalArgs, out: Output) {
         out.data(&format!("{}\t{}\t{} row(s)", entry.kid, entry.status, entry.rows_remaining));
     }
 
-    out.note(removal_guidance(status.safe_to_remove_old_key));
+    out.note(removal_guidance(status.safe_to_remove_old_key, status.old_key_loaded));
 }
 
 /// What to do next, given the readiness signal.
 ///
-/// Both branches name an action. `safe_to_remove_old_key` is the one field in
+/// The branches name an action. `safe_to_remove_old_key` is the one field in
 /// this system an operator can act on unrecoverably -- removing a retired key
 /// while a row still references it makes those values permanently
 /// undecryptable -- so a readout that printed counts and left the reader to
 /// draw the conclusion would be the wrong shape for exactly the case that
 /// matters.
-fn removal_guidance(safe: bool) -> &'static str {
-    if safe {
-        "Nothing references a retired key. `MASTER_KEY_OLD` can be removed; redeploy after you \
-         delete it."
-    } else {
-        "Rows still reference a retired key. Do NOT remove `MASTER_KEY_OLD`: those values would \
-         become permanently undecryptable. Run `prk keyring rekey --until-done`."
+///
+/// Which is also why `safe` alone does not earn the "you may remove it" line.
+/// That field is a statement about rows, and on an install with no
+/// `MASTER_KEY_OLD` and nothing stored it is vacuously true: there is no
+/// non-active key id for a row to be stranded under. Printing the removal
+/// instruction off it alone told every fresh install to go delete a secret it
+/// never set, in the confident voice reserved for the one irreversible action
+/// available here. `old_key_loaded` distinguishes "drained" from "never had
+/// one", and the third arm exists solely to stop saying the first when the
+/// truth is the second.
+fn removal_guidance(safe: bool, old_key_loaded: bool) -> &'static str {
+    match (safe, old_key_loaded) {
+        (false, _) => {
+            "Rows still reference a retired key. Do NOT remove `MASTER_KEY_OLD`: those values \
+             would become permanently undecryptable. Run `prk keyring rekey --until-done`."
+        }
+        (true, true) => {
+            "Nothing references a retired key. `MASTER_KEY_OLD` can be removed; redeploy \
+             after you delete it."
+        }
+        (true, false) => {
+            "No `MASTER_KEY_OLD` is set on this deployment, so there is nothing to remove \
+             and no rotation is in progress."
+        }
     }
 }
 
@@ -371,14 +389,32 @@ mod tests {
     }
 
     #[test]
-    fn the_readout_names_a_next_step_on_both_branches() {
+    fn the_readout_names_a_next_step_on_every_branch() {
         // `safeToRemoveOldKey` is the one field in this system an operator can
         // act on unrecoverably. A readout that printed counts and left the
         // reader to draw the conclusion would be wrong for exactly that case.
-        assert!(removal_guidance(true).contains("can be removed"));
+        assert!(removal_guidance(true, true).contains("can be removed"));
 
-        let unsafe_guidance = removal_guidance(false);
-        assert!(unsafe_guidance.contains("Do NOT remove"), "{unsafe_guidance}");
-        assert!(unsafe_guidance.contains("prk keyring rekey"), "{unsafe_guidance}");
+        for unsafe_guidance in [removal_guidance(false, true), removal_guidance(false, false)] {
+            assert!(unsafe_guidance.contains("Do NOT remove"), "{unsafe_guidance}");
+            assert!(unsafe_guidance.contains("prk keyring rekey"), "{unsafe_guidance}");
+        }
+    }
+
+    #[test]
+    fn a_fresh_install_is_not_told_to_remove_a_key_it_never_set() {
+        // THE REGRESSION. `safe_to_remove_old_key` is vacuously true with no
+        // old key and nothing stored -- no non-active kid exists to strand a
+        // row -- so gating the removal line on it alone told every fresh
+        // install to go delete `MASTER_KEY_OLD`, in the one voice this tool
+        // reserves for an unrecoverable action.
+        let guidance = removal_guidance(true, false);
+
+        assert!(!guidance.contains("can be removed"), "{guidance}");
+        assert!(guidance.contains("nothing to remove"), "{guidance}");
+
+        // And it must not overcorrect into an alarm: nothing is wrong on a
+        // fresh install, so the destructive wording belongs to the hazard.
+        assert!(!guidance.contains("Do NOT remove"), "{guidance}");
     }
 }
