@@ -521,6 +521,8 @@ export const WhoamiResponse = z
     role: Role.nullable(),
     /** True while this actor is an admin by `BOOTSTRAP_ADMINS` alone. */
     bootstrap: z.boolean(),
+    /** The name Access holds for this caller. Cosmetic; `null` when unknown. */
+    displayName: z.string().nullable(),
   })
   .strict();
 

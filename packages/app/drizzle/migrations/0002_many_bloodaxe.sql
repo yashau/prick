@@ -1,0 +1,1 @@
+ALTER TABLE `identities` ADD `display_name_synced_at` integer;

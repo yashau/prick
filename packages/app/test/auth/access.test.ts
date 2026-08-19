@@ -88,6 +88,9 @@ describe("verifyAccessJwt -- accepted", () => {
       subject: "operator@example.com",
       identityId: null,
       bootstrap: false,
+      // The assertion carries no name -- Access keeps it out of the token.
+      // It arrives later, from `get-identity`, and never from here.
+      displayName: null,
     });
   });
 
@@ -116,6 +119,8 @@ describe("verifyAccessJwt -- accepted", () => {
       subject: "e367826f93b8d71185e03fe518aff3b4.access",
       identityId: null,
       bootstrap: false,
+      // A service token never gets one: `common_name` IS its label.
+      displayName: null,
     });
   });
 

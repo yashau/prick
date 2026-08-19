@@ -187,6 +187,7 @@ describe("upsertIdentity", () => {
         subject: "shared-name",
         identityId: null,
         bootstrap: false,
+        displayName: null,
       }),
     );
 

@@ -445,5 +445,5 @@ export function assertCtxAccess(ctx: unknown, options: { requireCtxAccess: boole
  */
 export function actorFromClaims(claims: AccessClaims): Actor {
   const { kind, subject } = classifyClaims(claims);
-  return { kind, subject, identityId: null, bootstrap: false };
+  return { kind, subject, identityId: null, bootstrap: false, displayName: null };
 }

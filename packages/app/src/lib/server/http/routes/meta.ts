@@ -79,7 +79,7 @@ export function whoamiRoutes(): Hono<ApiEnv> {
     describe({
       summary: "Who the server thinks you are",
       description:
-        "Derived entirely from the VERIFIED Access assertion plus the identity row it resolved — never from a header a client controls.\n\n`role` is the caller's **global** role, or `null`. It is not the maximum over every scope: a project-scoped admin reports `null` here and is still an admin of that project.\n\n`bootstrap` is true while the caller is an administrator by virtue of `BOOTSTRAP_ADMINS` alone. It goes false the moment the self-heal has converted the var into a real, revocable grant — which happens on the first authenticated request — and the UI shows a banner for exactly as long as it is true.",
+        "Derived entirely from the VERIFIED Access assertion plus the identity row it resolved — never from a header a client controls.\n\n`role` is the caller's **global** role, or `null`. It is not the maximum over every scope: a project-scoped admin reports `null` here and is still an admin of that project.\n\n`displayName` is the name Cloudflare Access holds for this caller, resolved lazily from `/cdn-cgi/access/get-identity` and cached on the identity row. It is COSMETIC — `subject` is the identifier, and nothing authorises on a name. It is `null` for service tokens, for providers that supply no name, and until the first lookup has run.\n\n`bootstrap` is true while the caller is an administrator by virtue of `BOOTSTRAP_ADMINS` alone. It goes false the moment the self-heal has converted the var into a real, revocable grant — which happens on the first authenticated request — and the UI shows a banner for exactly as long as it is true.",
       tags: ["meta"],
       operationId: "whoami",
       responses: { 200: jsonResponse("The resolved identity.", WhoamiResponse) },
@@ -93,6 +93,7 @@ export function whoamiRoutes(): Hono<ApiEnv> {
         identityId: ctx.actor.identityId,
         role: await resolveEffectiveRole(ctx, { type: "global" }),
         bootstrap: ctx.actor.bootstrap,
+        displayName: ctx.actor.displayName,
       });
     },
   );

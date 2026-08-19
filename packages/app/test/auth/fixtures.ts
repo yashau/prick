@@ -113,11 +113,11 @@ export function testConfig(overrides: Partial<RuntimeConfig> = {}): RuntimeConfi
 }
 
 export function userActor(subject: string): Actor {
-  return { kind: "user", subject, identityId: null, bootstrap: false };
+  return { kind: "user", subject, identityId: null, bootstrap: false, displayName: null };
 }
 
 export function serviceActor(subject: string): Actor {
-  return { kind: "service", subject, identityId: null, bootstrap: false };
+  return { kind: "service", subject, identityId: null, bootstrap: false, displayName: null };
 }
 
 /**

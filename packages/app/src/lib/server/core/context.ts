@@ -28,6 +28,17 @@ export interface Actor {
    * is true.
    */
   bootstrap: boolean;
+  /**
+   * `identities.display_name` -- a human's name, or a service token's label.
+   *
+   * COSMETIC. Never an input to an authorization decision and never an
+   * identifier: `subject` is what this application authenticates on, and it
+   * comes from the JWT this Worker verified. This is a string to draw.
+   *
+   * `null` until Access has been asked and had one to give. Readers fall back
+   * to `subject`.
+   */
+  displayName: string | null;
 }
 
 /**

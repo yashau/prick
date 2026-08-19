@@ -57,9 +57,11 @@ export const API_BASE = "/api/v1";
  * guard, not decoration -- an install left in that state has an admin nobody
  * can revoke through the UI.
  *
- * There is deliberately no `displayName`. `/whoami` does not return one and
- * nothing in `core` will hand an actor its own identity row, so the shell shows
- * the subject.
+ * `displayName` is the name Cloudflare Access holds for this caller, resolved
+ * from `/cdn-cgi/access/get-identity` and cached on the identity row. It is
+ * COSMETIC: `subject` remains the identifier, and nothing may authorise on a
+ * name. `null` when Access has none, or has not been asked yet -- readers fall
+ * back to `subject`.
  */
 export interface Viewer {
   kind: IdentityKind;
@@ -67,6 +69,7 @@ export interface Viewer {
   identityId: string | null;
   role: Role | null;
   bootstrap: boolean;
+  displayName: string | null;
 }
 
 export interface ProjectSummary {

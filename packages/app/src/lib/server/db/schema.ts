@@ -236,6 +236,23 @@ export const identities = sqliteTable(
     displayName: text("display_name"),
 
     /**
+     * When Cloudflare Access was last ASKED for this identity's name -- whether
+     * or not it had one to give.
+     *
+     * The name is resolved lazily from `/cdn-cgi/access/get-identity`, which
+     * means the retry condition needs a way to tell "never looked" from "looked
+     * and Access returned nothing". `display_name` alone cannot: both are NULL.
+     * Without this column an identity whose provider carries no name -- a
+     * one-time-PIN login, a service token -- would send a subrequest to Access
+     * on EVERY authenticated request, forever, to learn the same nothing.
+     *
+     * NULL means never asked. Set on every attempt, including the ones that
+     * fail, so a provider that is down costs one retry per interval rather than
+     * one per request.
+     */
+    displayNameSyncedAt: integer("display_name_synced_at"),
+
+    /**
      * A kill switch that outranks every grant. Checked before grant resolution,
      * so disabling an identity is one write rather than a hunt for its rows.
      */

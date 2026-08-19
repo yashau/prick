@@ -8,6 +8,7 @@ import {
   assertCtxAccess,
   hydrateActor,
   isBootstrapAdmin,
+  scheduleAccessDisplayNameSync,
   selfHealBootstrapGrant,
   upsertIdentity,
   verifyAccessRequest,
@@ -247,6 +248,15 @@ async function createContext(
     const hydrated = await hydrateActor(ctx);
     ctx.actor.identityId = hydrated.identityId;
     ctx.actor.bootstrap = hydrated.bootstrap;
+    ctx.actor.displayName = hydrated.displayName;
+
+    /*
+     *  8. The display name, in the background. Access does not put one in the
+     *     JWT, so it costs a subrequest -- and nothing rendered by THIS
+     *     response depends on it, so the response does not wait. A name
+     *     resolved now appears on the next navigation.
+     */
+    scheduleAccessDisplayNameSync(ctx, request, platform.ctx?.waitUntil?.bind(platform.ctx));
 
     return ctx;
   } catch (cause) {

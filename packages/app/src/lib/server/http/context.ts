@@ -7,6 +7,7 @@ import {
   assertCtxAccess,
   hydrateActor,
   isBootstrapAdmin,
+  scheduleAccessDisplayNameSync,
   selfHealBootstrapGrant,
   upsertIdentity,
   verifyAccessRequest,
@@ -107,11 +108,31 @@ export const authenticate: MiddlewareHandler<ApiEnv> = async (c, next) => {
   const hydrated = await hydrateActor(ctx);
   ctx.actor.identityId = hydrated.identityId;
   ctx.actor.bootstrap = hydrated.bootstrap;
+  ctx.actor.displayName = hydrated.displayName;
+
+  scheduleAccessDisplayNameSync(ctx, c.req.raw, executionCtxWaitUntil(c));
 
   c.set("core", ctx);
 
   await next();
 };
+
+/**
+ * `c.executionCtx.waitUntil`, or `undefined` when there is no execution context.
+ *
+ * Reading `c.executionCtx` THROWS rather than returning undefined when the
+ * runtime supplied none -- the same trap the `requireCtxAccess` branch above
+ * documents. A background task is optional, so the throw is caught and the
+ * caller simply gets no `waitUntil`.
+ */
+function executionCtxWaitUntil(c: Context<ApiEnv>): ((p: Promise<unknown>) => void) | undefined {
+  try {
+    const executionCtx = c.executionCtx;
+    return executionCtx.waitUntil.bind(executionCtx);
+  } catch {
+    return undefined;
+  }
+}
 
 /** The request's `CoreContext`. Only ever set by `authenticate` above. */
 export function core(c: Context<ApiEnv>): CoreContext {
