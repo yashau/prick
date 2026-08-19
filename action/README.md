@@ -4,7 +4,7 @@ Read a project environment from your prick server and hand every secret in it to
 job as a masked environment variable.
 
 ```yaml
-- uses: yashau/prick/action@v2026.815.0
+- uses: yashau/prick/action@v2026.819.0
   with:
     url: ${{ secrets.PRICK_URL }}
     client-id: ${{ secrets.PRICK_ACCESS_CLIENT_ID }}
@@ -75,7 +75,7 @@ thirty. If a listed name is not in the environment the step _fails_ rather than 
 without it — a build that silently loses `DATABASE_URL` fails later and far less clearly.
 
 ```yaml
-- uses: yashau/prick/action@v2026.815.0
+- uses: yashau/prick/action@v2026.819.0
   with:
     url: ${{ secrets.PRICK_URL }}
     client-id: ${{ secrets.PRICK_ACCESS_CLIENT_ID }}
@@ -89,9 +89,9 @@ without it — a build that silently loses `DATABASE_URL` fails later and far le
 **Two environments in one job**, kept apart by a prefix:
 
 ```yaml
-- uses: yashau/prick/action@v2026.815.0
+- uses: yashau/prick/action@v2026.819.0
   with: { url: ..., project: api, environment: staging, prefix: STAGING_ }
-- uses: yashau/prick/action@v2026.815.0
+- uses: yashau/prick/action@v2026.819.0
   with: { url: ..., project: api, environment: production, prefix: PROD_ }
 ```
 
@@ -100,7 +100,7 @@ variable:
 
 ```yaml
 - id: prick
-  uses: yashau/prick/action@v2026.815.0
+  uses: yashau/prick/action@v2026.819.0
   with: { url: ..., project: api, export-to: outputs }
 - uses: some/other-action@v1
   with:
@@ -113,7 +113,7 @@ an environment variable does, and it is easier to print by accident.
 ## Versioning
 
 The action installs `@yashau/prick` **at the action's own ref**, so
-`yashau/prick/action@v2026.815.0` runs CLI `2026.815.0` and the two can never drift. A floating ref
+`yashau/prick/action@v2026.819.0` runs CLI `2026.819.0` and the two can never drift. A floating ref
 (`@v1`, a branch, a commit SHA) names no version, so it falls back to the `latest` dist-tag; pin the
 action to a release tag, or set `version:` explicitly, if you need that nailed down too.
 

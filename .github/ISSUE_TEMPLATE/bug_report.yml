@@ -34,7 +34,7 @@ body:
     attributes:
       label: prk --version
       description: Paste the full output.
-      placeholder: prk 2026.815.0
+      placeholder: prk 2026.819.0
     validations:
       required: true
 

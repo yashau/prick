@@ -52,7 +52,7 @@ on your `PATH`, and keeps it there across Node upgrades.
 Pin a version the same way:
 
 ```bash
-mise use -g npm:@yashau/prick@2026.816.3
+mise use -g npm:@yashau/prick@2026.819.0
 ```
 
 The npm shim note above still applies: this is the npm package, so `prk doctor`
@@ -124,7 +124,7 @@ prk version
 ```
 
 ```
-prk 2026.816.1
+prk 2026.819.0
 ```
 
 ## Build from source
@@ -177,7 +177,7 @@ prk doctor
 ```
 ok   server url     https://prick.example.com (from the stored login)
 ok   token storage  /home/you/.config/prick/credentials.json is owner-only
-ok   api            /api/v1/health answered, version 2026.816.1
+ok   api            /api/v1/health answered, version 2026.819.0
 ok   access         Cloudflare Access with managed OAuth is in front of this server
 ok   identity       you@example.com (user)
 ok   installation   running as a native binary

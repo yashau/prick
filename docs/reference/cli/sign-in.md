@@ -203,7 +203,7 @@ prk doctor
 ```
 ok   server url     https://prick.example.com (from the stored login)
 ok   token storage  /home/you/.config/prick/credentials.json is owner-only
-ok   api            /api/v1/health answered, version 2026.816.1
+ok   api            /api/v1/health answered, version 2026.819.0
 ok   access         Cloudflare Access with managed OAuth is in front of this server
 ok   identity       you@example.com (user)
 ok   installation   running as a native binary
