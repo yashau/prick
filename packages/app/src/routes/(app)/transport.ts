@@ -96,5 +96,6 @@ export async function viewer(ctx: CoreContext): Promise<Viewer> {
     identityId: ctx.actor.identityId,
     role: await resolveEffectiveRole(ctx, { type: "global" }),
     bootstrap: ctx.actor.bootstrap,
+    displayName: ctx.actor.displayName,
   };
 }

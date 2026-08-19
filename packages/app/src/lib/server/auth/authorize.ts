@@ -52,6 +52,14 @@ export interface AuthorizationSnapshot {
   byEnvironment: ReadonlyMap<string, Role>;
   /** True when admin rights come ONLY from `BOOTSTRAP_ADMINS`. */
   bootstrap: boolean;
+  /**
+   * `identities.display_name`. Cosmetic, and carried here only because this
+   * query already reads the row -- resolving it separately would add a D1 read
+   * to every authenticated request to draw a sidebar.
+   */
+  displayName: string | null;
+  /** `identities.display_name_synced_at`. Drives the Access lookup's retry. */
+  displayNameSyncedAt: number | null;
 }
 
 /**
@@ -128,6 +136,8 @@ async function loadSnapshot(ctx: CoreContext): Promise<AuthorizationSnapshot> {
     .select({
       identityId: identities.id,
       disabled: identities.disabled,
+      displayName: identities.displayName,
+      displayNameSyncedAt: identities.displayNameSyncedAt,
       role: grants.role,
       scopeType: grants.scopeType,
       projectId: grants.projectId,
@@ -148,6 +158,8 @@ async function loadSnapshot(ctx: CoreContext): Promise<AuthorizationSnapshot> {
     .select({
       identityId: identities.id,
       disabled: identities.disabled,
+      displayName: identities.displayName,
+      displayNameSyncedAt: identities.displayNameSyncedAt,
       role: groupGrants.role,
       scopeType: groupGrants.scopeType,
       projectId: groupGrants.projectId,
@@ -173,6 +185,8 @@ async function loadSnapshot(ctx: CoreContext): Promise<AuthorizationSnapshot> {
       byProject: new Map(),
       byEnvironment: new Map(),
       bootstrap: bootstrapAdmin,
+      displayName: null,
+      displayNameSyncedAt: null,
     };
   }
 
@@ -194,6 +208,8 @@ async function loadSnapshot(ctx: CoreContext): Promise<AuthorizationSnapshot> {
       byProject: new Map(),
       byEnvironment: new Map(),
       bootstrap: false,
+      displayName: first.displayName,
+      displayNameSyncedAt: first.displayNameSyncedAt,
     };
   }
 
@@ -238,6 +254,8 @@ async function loadSnapshot(ctx: CoreContext): Promise<AuthorizationSnapshot> {
     // Implicit only while there is no real global admin grant. The moment the
     // self-heal has run, this goes false and the UI banner disappears.
     bootstrap: bootstrapAdmin && globalRole !== "admin",
+    displayName: first.displayName,
+    displayNameSyncedAt: first.displayNameSyncedAt,
   };
 }
 
@@ -374,5 +392,6 @@ export async function hydrateActor(ctx: CoreContext): Promise<Actor> {
     subject: ctx.actor.subject,
     identityId: snapshot.identityId,
     bootstrap: snapshot.bootstrap,
+    displayName: snapshot.displayName,
   };
 }

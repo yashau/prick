@@ -85,6 +85,14 @@ pub struct Whoami {
     /// before the self-heal has turned that into a real, revocable grant.
     #[serde(default)]
     pub bootstrap: bool,
+    /// The name Cloudflare Access holds for this caller, if it has one.
+    ///
+    /// COSMETIC. `subject` is the identifier this server authenticated and the
+    /// only thing to render when identity matters; this is a courtesy for
+    /// output meant for a human to read. `None` for service tokens, for
+    /// providers that supply no name, and against a server predating the field.
+    #[serde(default)]
+    pub display_name: Option<String>,
 }
 
 /// A project.

@@ -9,6 +9,7 @@
   import UsersIcon from '@lucide/svelte/icons/users';
   import UsersRoundIcon from '@lucide/svelte/icons/users-round';
 
+  import { initialsFor } from '$lib/client/format';
   import { page } from '$app/state';
   import type { ProjectSummary, Viewer } from '$lib/client/api';
   import ProjectSwitcher from '$lib/components/project-switcher.svelte';
@@ -32,22 +33,15 @@
   const project = $derived(projects.find((entry) => entry.slug === currentProject) ?? null);
 
   /**
-   * The SUBJECT is the only name there is.
+   * `displayName` when Access has one, the address otherwise.
    *
-   * `identities.display_name` exists and is worth having, but nothing lets an
-   * actor read its own identity row: `/whoami` does not return it, and every
-   * `core` function that would is gated on admin. So the shell shows the
-   * address or the service token's common name rather than a blank where a
-   * friendly name would go.
+   * `/whoami` now carries the name Cloudflare Access holds, resolved from
+   * `/cdn-cgi/access/get-identity` and cached on the identity row, so the shell
+   * no longer renders an address where a person's name belongs. It still falls
+   * back to `subject`: service tokens have no name, and neither do providers
+   * that supply none.
    */
-  const initials = $derived(
-    viewer.subject
-      .split(/[\s@.]+/)
-      .filter(Boolean)
-      .slice(0, 2)
-      .map((part) => part[0]?.toUpperCase() ?? '')
-      .join('')
-  );
+  const initials = $derived(initialsFor(viewer));
 
   /**
    * `role` is the GLOBAL role and is `null` for a project-scoped admin, who is
@@ -242,7 +236,13 @@
             <Avatar.Fallback class="rounded-lg">{initials}</Avatar.Fallback>
           </Avatar.Root>
           <div class="grid flex-1 text-left text-sm leading-tight">
-            <span class="truncate font-medium">{viewer.subject}</span>
+            <!--
+              The name when there is one, the address otherwise -- the same
+              `displayName ?? subject` fallback every other identity in this UI
+              renders. The address stays reachable: it is this button's tooltip,
+              and it is what the account screens key on.
+            -->
+            <span class="truncate font-medium">{viewer.displayName ?? viewer.subject}</span>
             <span class="text-muted-foreground truncate text-xs">
               {viewer.role === null ? 'No install-wide role' : `${viewer.role} everywhere`}
             </span>
