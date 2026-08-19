@@ -87,15 +87,48 @@
   never be decrypted again, by anyone, ever. So the UI has to be what tells
   you, and it only goes green at zero -- counted by the server, over the real
   rows, every time this page loads.
+
+  GREEN REQUIRES A KEY TO REMOVE, not just an absence of stranded rows.
+  `safeToRemoveOldKey` is a statement about rows, and on an install with no
+  MASTER_KEY_OLD and nothing stored it is vacuously true -- no non-active kid
+  exists to strand anything. Rendering the green card off that alone told a
+  fresh deployment it was safe to remove a secret it never had, over a
+  database with nothing in it, which reads as "your rotation finished". It is
+  the same sentence in the one state where it means nothing, and this screen
+  is the only thing standing between an operator and an unrecoverable delete.
 -->
-{#if keyring.safeToRemoveOldKey}
+{#if keyring.safeToRemoveOldKey && keyring.oldKeyLoaded}
   <Alert.Root>
     <CircleCheckIcon aria-hidden="true" />
     <Alert.Title>Safe to remove MASTER_KEY_OLD</Alert.Title>
     <Alert.Description>
-      Every stored value is sealed under the active key id
-      <code class="font-mono text-xs">{keyring.activeKid}</code>. Removing the previous key from
-      the Worker's secrets now loses nothing.
+      {#if total === 0}
+        Nothing is stored yet, so no value depends on the previous key. Removing it from the
+        Worker's secrets now loses nothing.
+      {:else}
+        All {total.toLocaleString()} stored
+        {total === 1 ? 'value is' : 'values are'} sealed under the active key id
+        <code class="font-mono text-xs">{keyring.activeKid}</code>. Removing the previous key from
+        the Worker's secrets now loses nothing.
+      {/if}
+    </Alert.Description>
+  </Alert.Root>
+{:else if keyring.safeToRemoveOldKey}
+  <!--
+    No MASTER_KEY_OLD is loaded, so the question this screen exists to answer
+    has not been asked yet. Deliberately NOT the green card: there is nothing
+    to remove, and "safe to remove" over an empty ring is an answer to a
+    question nobody put. Deliberately not destructive either -- nothing is
+    wrong. It states the configuration and stops.
+  -->
+  <Alert.Root>
+    <KeyRoundIcon aria-hidden="true" />
+    <Alert.Title>No key rotation in progress</Alert.Title>
+    <Alert.Description>
+      This install carries one key, active id
+      <code class="font-mono text-xs">{keyring.activeKid}</code>, and
+      <code class="font-mono text-xs">MASTER_KEY_OLD</code> is not set — so there is nothing to
+      remove. During a rotation this is where you will be told whether the old key can go.
     </Alert.Description>
   </Alert.Root>
 {:else if outstanding > 0}

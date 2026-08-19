@@ -205,7 +205,7 @@
     },
     "/api/v1/admin/keyring": {
       "get": {
-        "description": "Which key ids exist, how many rows still reference each, and whether `MASTER_KEY_OLD` can be removed. Requires global admin.\n\n`safeToRemoveOldKey` is true only when every non-active kid has zero rows remaining. Removing the old key while rows still reference a retired kid is the **one irreversible mistake** available in this design — those values can never be decrypted again — so the indicator only goes green at zero, and the UI has to be what tells you.\n\nThe counts are taken live over `secret_versions` and include **history**, not just current versions: an earlier version stranded under a retired kid is a rollback that stops working when the key goes.",
+        "description": "Which key ids exist, how many rows still reference each, and whether `MASTER_KEY_OLD` can be removed. Requires global admin.\n\n`oldKeyLoaded` reports whether this deployment carries a second key at all, and it is the field that separates 'drained' from 'there was never anything to drain'. `safeToRemoveOldKey` is true only when every non-active kid has zero rows remaining, which is VACUOUSLY true on an install that has no old key and nothing stored. Only `oldKeyLoaded && safeToRemoveOldKey` means removing the key now loses nothing; render no instruction from `safeToRemoveOldKey` alone. Removing the old key while rows still reference a retired kid is the **one irreversible mistake** available in this design — those values can never be decrypted again — so the indicator only goes green at zero, and the UI has to be what tells you.\n\nThe counts are taken live over `secret_versions` and include **history**, not just current versions: an earlier version stranded under a retired kid is a rollback that stops working when the key goes.",
         "operationId": "getKeyringStatus",
         "responses": {
           "200": {
@@ -261,6 +261,9 @@
                       },
                       "type": "array"
                     },
+                    "oldKeyLoaded": {
+                      "type": "boolean"
+                    },
                     "safeToRemoveOldKey": {
                       "type": "boolean"
                     }
@@ -268,6 +271,7 @@
                   "required": [
                     "activeKid",
                     "entries",
+                    "oldKeyLoaded",
                     "safeToRemoveOldKey"
                   ],
                   "type": "object"

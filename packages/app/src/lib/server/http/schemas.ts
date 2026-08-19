@@ -480,7 +480,12 @@ export const KeyringStatusResponse = z
         })
         .strict(),
     ),
-    /** The "safe to remove MASTER_KEY_OLD" indicator. True only at zero rows. */
+    /** Whether `MASTER_KEY_OLD` is loaded at all. False means nothing to remove. */
+    oldKeyLoaded: z.boolean(),
+    /**
+     * The "safe to remove MASTER_KEY_OLD" indicator. True only at zero rows,
+     * and vacuously true when `oldKeyLoaded` is false.
+     */
     safeToRemoveOldKey: z.boolean(),
   })
   .strict();

@@ -117,6 +117,54 @@ function entryFor(status: Awaited<ReturnType<typeof getKeyringStatus>>, kid: str
 }
 
 // ---------------------------------------------------------------------------
+// oldKeyLoaded
+// ---------------------------------------------------------------------------
+
+/*
+ * THE VACUOUS TRUE, which is the whole reason this field exists.
+ *
+ * `safeToRemoveOldKey` asks "is any row stranded under a non-active kid". With
+ * a one-key ring there is no non-active kid, so the answer is true and always
+ * was -- correct, and not the question an operator reads off it. Every readout
+ * built on that boolean alone told a fresh install to go delete a secret it had
+ * never set. These tests pin the two apart.
+ */
+describe("oldKeyLoaded", () => {
+  it("is false on a one-key ring, where safeToRemoveOldKey is vacuously true", async () => {
+    const status = await getKeyringStatus(admin(before));
+
+    expect(status.oldKeyLoaded).toBe(false);
+    // True over an empty set of non-active kids -- which is exactly why it may
+    // not be rendered as an instruction on its own.
+    expect(status.safeToRemoveOldKey).toBe(true);
+  });
+
+  it("stays false with rows stored, because it is configuration and not progress", async () => {
+    await seedUnderOldKey({ TOKEN: "s3cret" });
+
+    const status = await getKeyringStatus(admin(before));
+
+    expect(status.oldKeyLoaded).toBe(false);
+    expect(status.safeToRemoveOldKey).toBe(true);
+  });
+
+  it("is true once MASTER_KEY_OLD is in the ring, drained or not", async () => {
+    await seedUnderOldKey({ TOKEN: "s3cret" });
+
+    const stranded = await getKeyringStatus(admin(after));
+    expect(stranded.oldKeyLoaded).toBe(true);
+    expect(stranded.safeToRemoveOldKey).toBe(false);
+
+    await rekeyPage(admin(after), 100);
+
+    const drained = await getKeyringStatus(admin(after));
+    expect(drained.oldKeyLoaded).toBe(true);
+    // Only NOW do the two together mean "you may remove it".
+    expect(drained.safeToRemoveOldKey).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // safeToRemoveOldKey
 // ---------------------------------------------------------------------------
 

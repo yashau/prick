@@ -436,12 +436,27 @@ pub struct KeyringStatus {
     /// One entry per key id ever observed, active and retired alike.
     #[serde(default)]
     pub entries: Vec<KeyringEntry>,
+    /// Whether this deployment carries a key besides the active one -- that
+    /// is, whether `MASTER_KEY_OLD` is set at all.
+    ///
+    /// `serde(default)` because it is additive: a server predating the field
+    /// omits it and this reads `false`, which suppresses the "you may remove
+    /// it" branch rather than inventing one. The degradation runs toward
+    /// saying less, which is the only safe direction for a field whose other
+    /// value authorises an unrecoverable delete.
+    #[serde(default)]
+    pub old_key_loaded: bool,
     /// Whether `MASTER_KEY_OLD` can be removed.
     ///
     /// True only when every non-active key id reports zero rows. Removing a
     /// retired key while a row still references it is the one irreversible
     /// mistake available in this design, so this is the field to wait on rather
     /// than a judgement about how long a rekey has been running.
+    ///
+    /// NOT actionable alone. It is a statement about rows, so it is vacuously
+    /// true when no old key exists to strand any -- a fresh install reports
+    /// `true` here having never rotated anything. Pair it with
+    /// `old_key_loaded` before turning it into an instruction.
     pub safe_to_remove_old_key: bool,
 }
 
@@ -783,7 +798,7 @@ mod tests {
     #[test]
     fn the_key_ring_and_a_page_of_progress_deserialise() {
         let status: KeyringStatus = serde_json::from_str(
-            r#"{"activeKid":"9d1c","safeToRemoveOldKey":false,
+            r#"{"activeKid":"9d1c","safeToRemoveOldKey":false,"oldKeyLoaded":true,
                 "entries":[{"kid":"9d1c","status":"active","rowsRemaining":0,"lastRekeyAt":null},
                            {"kid":"4f2a","status":"retiring","rowsRemaining":2417,
                             "lastRekeyAt":1760000000000}]}"#,
@@ -792,6 +807,7 @@ mod tests {
 
         assert_eq!(status.active_kid, "9d1c");
         assert!(!status.safe_to_remove_old_key);
+        assert!(status.old_key_loaded);
         assert_eq!(status.entries[1].rows_remaining, 2417);
         assert_eq!(status.entries[1].last_rekey_at, Some(1_760_000_000_000));
 
