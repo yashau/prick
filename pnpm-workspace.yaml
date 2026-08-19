@@ -107,3 +107,41 @@ catalog:
   vite-plus: 0.2.9
   vitest: 4.1.10
   wrangler: 4.121.0
+
+# -----------------------------------------------------------------------------
+# One upstream bug, patched here until it ships.
+#
+# `wrangler dev` treats a SINGLE failed proxied request as fatal to the whole
+# dev server. Every request the browser makes is forwarded by wrangler's own
+# ProxyWorker to the Worker runtime; if that inner fetch REJECTS, the
+# ProxyWorker reports it to the ProxyController, `DevEnv.handleErrorEvent` finds
+# no matching non-fatal case, and re-emits it as a top-level `error`. The dev
+# command is `await events.once(devEnv, "teardown")`, and Node's `events.once`
+# rejects on `error` -- so the command throws and the process exits 1.
+#
+# It exits SILENTLY. The rejection crosses a Worker boundary, so the cause is a
+# plain object rather than an Error; `castErrorCause` wraps it in `new Error()`,
+# whose message is "". The entire report is `✘ [ERROR]` with nothing after it.
+#
+# The inner fetch rejects with `Network connection lost.` when a client
+# disconnects while its request body is still being uploaded -- which a browser
+# does routinely, e.g. Playwright closing a page while a form POST is in flight.
+# That is a client event, not a server fault, and it killed `e2e` mid-run:
+# `wrangler dev` died about twenty tests in and every remaining spec failed with
+# `ERR_CONNECTION_REFUSED`, three attempts each, none of them naming the cause.
+# Re-running the job "fixed" it because the race simply did not recur.
+#
+# The patch is upstream's own fix, applied to the shipped bundle: report the
+# failure and keep serving. It is two call sites because wrangler bundles the
+# ProxyController twice (its own, and the remote-bindings copy).
+#
+#   issue  https://github.com/cloudflare/workers-sdk/issues/15203
+#   fix    https://github.com/cloudflare/workers-sdk/pull/15207
+#
+# REMOVE THIS -- both the patch file and the entry below -- as soon as a
+# wrangler release contains the fix. A version bump that leaves it here fails
+# the install rather than applying quietly, which is the intended prompt to go
+# and check.
+# -----------------------------------------------------------------------------
+patchedDependencies:
+  wrangler@4.121.0: patches/wrangler@4.121.0.patch

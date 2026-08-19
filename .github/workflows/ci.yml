@@ -108,6 +108,11 @@ jobs:
               # reached CI without running the Action's own suite.
               - 'scripts/**'
               - 'action/**'
+              # A patched dependency is application behaviour, not metadata:
+              # `patches/wrangler@*.patch` is the only thing keeping `wrangler
+              # dev` alive under the e2e suite. Editing it must run the suite
+              # that proves it still works.
+              - 'patches/**'
             e2e:
               - *js
               - 'e2e/**'
@@ -370,6 +375,12 @@ jobs:
       #
       # The dmesg grep is the other half: a SIGKILL with no exit code is the OOM
       # killer, and that is a different fix from a crash.
+      #
+      # It was neither. `code=1 signal=null`, no OOM kill recorded, 8 GB free --
+      # `wrangler dev` exited on ONE failed proxied request, reporting it as
+      # `✘ [ERROR]` with an empty message. That bug is patched; see
+      # `pnpm-workspace.yaml`. This step stays because it is what made the answer
+      # readable from the job page, and the next death will be a different one.
       #
       # ON PUBLISHING THIS LOG, since `playwright.config.ts` turns screenshots
       # off over exactly this concern: the e2e Worker holds no secret. Its
