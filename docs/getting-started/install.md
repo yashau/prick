@@ -56,7 +56,54 @@ mise use -g npm:@yashau/prick@2026.816.3
 ```
 
 The npm shim note above still applies: this is the npm package, so `prk doctor`
-reports the Node hop. For `prk run` in a hot loop, use a release tarball.
+reports the Node hop. For `prk run` in a hot loop, use one of the direct installs
+below.
+
+## With Homebrew
+
+```bash
+brew install yashau/prick/prk
+```
+
+The tap holds one formula, generated from the same checksums the release page is
+attested against. It covers macOS on Apple silicon and Intel, and Linux on x86-64
+and arm64, and it installs the shell completions for you.
+
+## With Scoop
+
+```powershell
+scoop bucket add prick https://github.com/yashau/scoop-bucket
+```
+
+```powershell
+scoop install prick/prk
+```
+
+Both x64 and arm64 Windows are in the manifest, and `scoop update prk` follows
+new releases on its own.
+
+## With WinGet
+
+```powershell
+winget install yashau.prick
+```
+
+## With cargo
+
+```bash
+cargo binstall prk
+```
+
+`cargo binstall` downloads the same archive the release page serves, so this is
+the compiled, attested binary rather than a local rebuild of it. Without
+`cargo-binstall` installed, the source build is:
+
+```bash
+cargo install prk
+```
+
+That compiles `prk` and its four library crates from crates.io, which takes a few
+minutes and needs a Rust toolchain.
 
 ## From a release tarball
 

@@ -529,6 +529,39 @@ run = "node scripts/cli-release.mjs cut"
 description = "Follow the most recent cli-release.yml run. Read-only"
 run = "node scripts/cli-release.mjs status"
 
+# --- the other distribution channels ---------------------------------------
+# npm and the GitHub release are cli-release.yml's own doing. These two tasks
+# cover the rest: the source registry, and the manifests the OS package managers
+# read. Both are called by cli-release.yml AND runnable here, so the release
+# path is rehearsable on a laptop rather than only in CI.
+
+[tasks."publish:crates"]
+description = "Publish every publishable crate to crates.io, in dependency order"
+usage = 'flag "--dry-run" help="Run every pre-upload check and stop before the HTTP PUT"'
+# --workspace does the ordering: cargo reads the dependency graph, publishes
+# prick-core first and prk last, and verifies each crate against the siblings it
+# just packaged rather than against the registry. xtask stays out of it by
+# setting `publish = false`.
+#
+# --allow-dirty is load-bearing and is NOT a shortcut. Every manifest in this
+# repository reads 0.0.0-dev; `version:set` stamps the released version in
+# immediately before this runs, so the tree is dirty by design, in exactly the
+# files cargo is about to package.
+#
+# Run `mise run publish:crates --dry-run` before touching anything a package
+# boundary depends on -- it packages and compiles all five crates and stops at
+# the upload, which is the only check that sees what crates.io will see.
+run = "cargo publish --workspace --locked --allow-dirty {% if usage.dry_run %}--dry-run{% endif %}"
+
+[tasks."dist:manifests"]
+description = "Render the Scoop manifest and Homebrew formula from a release's SHA256SUMS"
+usage = '''
+arg "<version>" help="CalVer version, e.g. 2026.815.0"
+arg "<checksums>" help="Path to the SHA256SUMS the package job wrote"
+arg "<out>" help="Directory to render scoop/ and homebrew/ into"
+'''
+run = "node scripts/dist-manifests.mjs --version {{ usage.version }} --checksums {{ usage.checksums }} --out {{ usage.out }}"
+
 # --- documentation site ----------------------------------------------------
 # The docs site is a SEPARATE Worker from the app: public, no secrets, no
 # access control. Cloudflare credentials live in GitHub repository secrets, so

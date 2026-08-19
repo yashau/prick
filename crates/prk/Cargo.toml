@@ -39,3 +39,28 @@ tempfile = { workspace = true }
 
 [lints]
 workspace = true
+
+# ---------------------------------------------------------------------------
+# cargo-binstall: fetch the release archive instead of compiling from source.
+#
+# Without this, `cargo binstall prk` guesses at a URL layout we do not use and
+# falls back to `cargo install` -- a five-minute compile to obtain a binary that
+# is already built, signed and attested on the release page.
+#
+# Every string below must agree with the archive step in cli-release.yml, which
+# stages each build into `prk-<version>-<target>/` and archives that directory
+# by name. scripts/dist-manifests.test.mjs asserts the same naming for Scoop and
+# Homebrew; this block is the third consumer of it.
+# ---------------------------------------------------------------------------
+[package.metadata.binstall]
+pkg-url = "{ repo }/releases/download/v{ version }/prk-{ version }-{ target }.{ archive-format }"
+# The binary sits inside the staging directory, not at the archive root.
+bin-dir = "prk-{ version }-{ target }/{ bin }{ binary-ext }"
+pkg-fmt = "tgz"
+
+# Windows ships a zip, because a .tar.gz is not something Explorer opens.
+[package.metadata.binstall.overrides.x86_64-pc-windows-msvc]
+pkg-fmt = "zip"
+
+[package.metadata.binstall.overrides.aarch64-pc-windows-msvc]
+pkg-fmt = "zip"

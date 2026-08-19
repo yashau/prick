@@ -163,8 +163,16 @@ not.
 ## What cli-release.yml does
 
 ```
-version → build (6 runner legs → 8 artefacts) → package → publish-npm → github-release
+version → build (6 legs → 8 artefacts) → package → publish-npm ─┬─→ publish-crates
+                                                                 │
+                                                                 └─→ github-release ─┬─→ publish-manifests
+                                                                                     └─→ publish-winget
 ```
+
+Everything left of `publish-npm` runs on a dispatched dry run too. Of the four
+jobs to its right, three of them do: `publish-crates` packages and verifies with
+`--dry-run`, and `publish-manifests` renders both files and prints them. Only
+`publish-winget` is push-only, for the reason given below.
 
 ### version
 
@@ -240,6 +248,154 @@ The notes range is pinned to the previous `v*` tag rather than left to GitHub's
 own "previous release" guess. Two release lines share this repository's releases,
 and the guess is as likely to land on a docs release — which would generate a
 changelog of Rust commits on a documentation release, or vice versa.
+
+### publish-crates
+
+`cargo publish --workspace` sends all five crates to crates.io. Cargo reads the
+dependency graph and does the ordering itself — `prick-core` first, `prk` last —
+and verifies each crate against the siblings it just packaged rather than against
+the registry, which is what lets a five-crate workspace go out in one command
+under a version that does not exist upstream yet. `xtask` sets `publish = false`
+and stays behind.
+
+`--allow-dirty` is load-bearing rather than a shortcut. Every manifest in the
+tree reads `0.0.0-dev` and `version:set` stamps the real version in immediately
+before this runs, so the tree is dirty by design, in exactly the files cargo is
+about to package.
+
+Rehearse it on a laptop before touching anything a package boundary depends on:
+
+```bash
+mise run publish:crates --dry-run
+```
+
+That packages and compiles all five crates and stops at the upload. It is the
+only check that sees what crates.io will see — `cargo build` resolves path
+dependencies that a published crate does not have.
+
+A partial publish rolls **forward**. Versions on crates.io are immutable, so if
+`prick-core` lands and `prick-auth` then fails, re-running fails on `prick-core`
+rather than resuming. Cut the next `N`.
+
+`crates/prk/Cargo.toml` carries a `[package.metadata.binstall]` block, which is
+what makes `cargo binstall prk` fetch the release archive instead of falling back
+to a five-minute compile of a binary that is already built, signed and attested.
+Its `{ version }` and `{ target }` are binstall's own placeholders, resolved on
+the user's machine — `version:set` leaves them alone, and must keep doing so.
+
+### publish-manifests
+
+Renders the Scoop manifest and the Homebrew formula from the `SHA256SUMS` the
+package job already wrote and attested, then commits each into its own
+repository. No archive is downloaded and nothing is re-hashed, so a manifest can
+never point at bytes nobody signed.
+
+```bash
+mise run dist:manifests <version> dist/assets/SHA256SUMS dist/manifests
+```
+
+| File              | Goes to                 | Read by                         |
+| ----------------- | ----------------------- | ------------------------------- |
+| `bucket/prk.json` | `yashau/scoop-bucket`   | `scoop install prick/prk`       |
+| `Formula/prk.rb`  | `yashau/homebrew-prick` | `brew install yashau/prick/prk` |
+
+The commit goes through the contents API rather than a clone: two files in two
+repositories is not worth a working tree, and it keeps the token out of a remote
+URL, out of `.git/config` and off the disk. Reading the existing blob sha first
+also makes each write a compare-and-swap, so a concurrent edit is rejected rather
+than clobbered.
+
+The commit is **optional**, on the same terms as npm's `latest` promotion. With
+the App configured it happens; without it the job prints both manifests into the
+summary, attaches them as the `package-manifests` artefact and exits 0. A release
+whose bucket has not caught up is a complete release — the archives, the
+attestations and the release page are all already published.
+
+The Scoop manifest's `checkver` matches an **asset file name** in the release
+list rather than reading `releases/latest`. Two release lines share this
+repository's releases, and a `docs-v*` release is periodically the newest one
+while carrying no binaries at all; only a CLI release has a
+`prk-<version>-x86_64-pc-windows-msvc.zip`.
+
+The formula ships the **gnu** Linux builds. Homebrew on Linux runs against glibc,
+and offering two candidates per architecture would make the formula pick one
+arbitrarily.
+
+### publish-winget
+
+Hands the release to komac, which opens a pull request against
+`microsoft/winget-pkgs`. It is the odd one out in three ways:
+
+- **It cannot be rehearsed.** komac reads a published release, so a dispatch has
+  nothing to do that would not be a no-op or a spurious pull request. It is the
+  one gated-and-unrehearsed step left in this workflow — and also the only
+  publish here that is **reversible**, because a wrong pull request is closed
+  where a wrong npm or crates.io version is permanent.
+- **It cannot use the GitHub App.** An installation token can only act on
+  repositories the App is installed on, and nobody installs an App on
+  `microsoft/winget-pkgs`. Opening a pull request there needs a token that acts
+  as a _user_ — a classic PAT with `public_repo`. That is the one standing
+  credential in this pipeline, and like every other one here it is optional:
+  absent, the job prints the `komac` command and exits 0.
+- **It cannot introduce a package.** The action updates an identifier winget-pkgs
+  already knows. The first submission is a manual `komac new`.
+
+## One-time setup for the other channels
+
+None of this blocks a release. Each channel is independently optional, and a
+release with none of them configured still publishes to npm, attaches every
+archive to the release page and attests all of it.
+
+**crates.io** — `cargo publish` always authenticates with a registry token. What
+trusted publishing changes is that the token is **minted per run**: `id-token:
+write` lets the runner ask GitHub for an OIDC JWT, crates.io trades the JWT for a
+token that expires in 30 minutes, and the action revokes it when the job ends.
+Nothing is stored in repository secrets.
+
+It cannot be turned on first. crates.io requires that **the crate already exists**
+— "initial publish requires an API token" — and all five of ours are new. So the
+first release bootstraps, in the same three steps npm needed:
+
+1. Create an API token at
+   [crates.io/settings/tokens](https://crates.io/settings/tokens) with the
+   **`publish-new`** scope. Expiry is chosen in days, so there is no
+   make-it-expire-in-an-hour option — the revoke in step 3 is what bounds it,
+   not the expiry.
+2. Set it as the `CARGO_REGISTRY_TOKEN` repository secret and cut a release.
+   `publish-crates` sees the secret, skips the OIDC exchange and publishes all
+   five crates with it.
+3. On each of the five crates, go to **Settings → Trusted Publishing → Add** and
+   enter GitHub, owner `yashau`, repository `prick`, workflow filename
+   `cli-release.yml`, no environment. Then **delete the secret and revoke the
+   token.**
+
+The workflow filename is matched exactly; a trusted publisher registered against
+the wrong file fails the exchange at the next release rather than at
+configuration time.
+
+Bootstrapping from a laptop instead works, but take the version seriously:
+crates.io versions are immutable, so hand-publishing `2026.819.0` and then
+cutting `v2026.819.0` fails the release at `publish-crates` with "already
+uploaded". Going through the workflow keeps the tag the only thing that decides
+a version.
+
+**Scoop and Homebrew** — create `yashau/scoop-bucket` and
+`yashau/homebrew-prick` (the `homebrew-` prefix is what makes `brew tap` find
+it). Register a GitHub App owned by the same account with **Contents: read and
+write**, install it on those two repositories and nothing else, and set
+`DIST_APP_ID` and `DIST_APP_PRIVATE_KEY` as repository secrets here. The
+workflow narrows the minted token to `contents: write` on top of that, and it
+expires in an hour.
+
+**WinGet** — submit `yashau.prick` once by hand, from a machine with komac:
+
+```bash
+komac new yashau.prick
+```
+
+Then create a classic PAT with `public_repo`, fork `microsoft/winget-pkgs` to the
+same account, and set the PAT as `WINGET_TOKEN`. Every later release updates the
+identifier automatically.
 
 ## What docs-release.yml does
 

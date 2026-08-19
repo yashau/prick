@@ -495,11 +495,20 @@ Worker + UI, end-to-end, scripts, the GitHub Action and the MCP server — and C
 them on every push. `prick-core` additionally carries a machine-checked purity proof under miri.
 `mise run test` prints the current counts, which is the only place they stay right.
 
+The CLI ships a prebuilt, provenance-attested binary for every platform, through whichever channel
+you already use:
+
 ```bash
-npm install -g @yashau/prick
+brew install yashau/prick/prk     # macOS, Linux
+scoop install prick/prk           # Windows
+winget install yashau.prick       # Windows
+cargo binstall prk                # anywhere with a Rust toolchain
+npm install -g @yashau/prick      # anywhere with Node
 ```
 
-Ships a prebuilt binary for each platform. Or build from source with `mise run build:rust`.
+Or take the archive straight off the [releases page](https://github.com/yashau/prick/releases), or
+build from source with `mise run build:rust`. See
+**[Install the CLI](docs/getting-started/install.md)**.
 
 If you already use mise, let it own the install instead:
 
