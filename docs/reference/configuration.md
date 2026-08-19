@@ -109,6 +109,13 @@ never find out that they had not. `REQUIRE_CTX_ACCESS` accepts only the literals
 `"true"` and `"false"`, quoted — it is a string var, so a JSON boolean arrives as
 something else.
 
+`SECRET_MAX_BYTES` and `ENV_MAX_SECRETS` bound more than the server. `prk`
+derives the largest response it will read from those two defaults, so an
+environment written at the defaults always exports. **Lowering** either is free.
+**Raising** either lets an environment grow past what the CLI reads back:
+`prk secrets list` and `prk secrets get` keep working one value at a time, while
+`prk secrets download` and `prk run` fail with `RESPONSE_TOO_LARGE` (exit 12).
+
 `ACCESS_AUD` must be non-empty. An empty value would make the audience assertion
 vacuous, and a verifier that accepts tokens minted for a _different_ Access
 application in the same account is not a verifier.

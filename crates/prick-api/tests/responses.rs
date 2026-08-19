@@ -314,22 +314,51 @@ async fn a_worker_exception_page_is_read_out_of_the_title() {
 }
 
 #[tokio::test]
-async fn an_over_long_body_is_refused_rather_than_parsed() {
-    // A body larger than the cap cannot be trusted to be complete, and a
-    // partially-read JSON document is exactly the kind of thing that parses
-    // into something plausible and wrong.
+async fn an_export_of_secrets_at_the_servers_own_limit_is_read_rather_than_refused() {
+    // The reported failure. The server takes a secret of up to
+    // SERVER_SECRET_VALUE_CAP bytes and an environment holds many of them, so
+    // two accepted writes already exceed anything sized for one response. A cap
+    // below what the server accepts leaves an environment that cannot be
+    // exported or run while writes to it keep succeeding, and the operator is
+    // told to check --api-url.
     let server = MockServer::start().await;
-    let huge = format!(r#"{{"service":"prick","version":"1","pad":"{}"}}"#, "x".repeat(80 * 1024));
-    mount(
-        &server,
-        HEALTH,
-        ResponseTemplate::new(200).set_body_raw(huge.into_bytes(), "application/json"),
-    )
-    .await;
+    let blob = "x".repeat(prick_api::response::SERVER_SECRET_VALUE_CAP);
+    let export = format!(r#"{{"BLOB_ONE":"{blob}","BLOB_TWO":"{blob}"}}"#);
+    assert!(export.len() > 2 * prick_api::response::NON_JSON_BODY_CAP);
 
-    let err = client_for(&server).health().await.expect_err("an over-long body is a failure");
+    Mock::given(method("GET"))
+        .and(path("/api/v1/projects/api/environments/production/secrets:export"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_raw(export.into_bytes(), "application/json"),
+        )
+        .mount(&server)
+        .await;
+
+    let values = prick_api::ops::export_secrets(&client_for(&server), "api", "production")
+        .await
+        .expect("an export the server accepted must be readable");
+    assert_eq!(values.len(), 2);
+    assert_eq!(values.keys().collect::<Vec<_>>(), ["BLOB_ONE", "BLOB_TWO"]);
+}
+
+#[tokio::test]
+async fn a_page_that_is_not_json_is_still_read_only_as_far_as_its_title() {
+    // The tight cap is the one that guards an unknown body, and a megabyte of
+    // HTML must not become a megabyte in memory. Everything past the `<head>`
+    // is discarded, and the diagnosis is unchanged by the discarding.
+    let server = MockServer::start().await;
+    let page = format!(
+        "<html><head><title>Sign in to continue</title></head><body>{}</body></html>",
+        "padding ".repeat(200 * 1024)
+    );
+    assert!(page.len() > prick_api::response::NON_JSON_BODY_CAP);
+    mount(&server, HEALTH, ResponseTemplate::new(200).set_body_raw(page.into_bytes(), "text/html"))
+        .await;
+
+    let err = client_for(&server).health().await.expect_err("HTML is not an API response");
     assert_eq!(err.kind(), ErrorKind::NotPrick);
-    assert!(err.to_string().contains("exceeded"), "{err}");
+    assert!(err.to_string().contains("Sign in to continue"), "{err}");
+    assert!(err.facts().is_some_and(|facts| facts.truncated), "the page was read whole: {err}");
 }
 
 #[tokio::test]

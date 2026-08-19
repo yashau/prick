@@ -92,6 +92,10 @@ which = "8"
 windows-sys = "0.61"
 
 # dev-only
+# reqwest's own request/response types are built from `http`, so a test can hand
+# `read_capped_body` a response of an exact length without standing up a server
+# to serve one.
+http = "1"
 tempfile = "3"
 wiremock = "0.6"
 

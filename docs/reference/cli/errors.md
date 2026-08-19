@@ -53,6 +53,7 @@ Scripts branch on these, so a value keeps its meaning for good.
 | 9    | Output cannot be represented in the requested format |
 | 10   | Rate limited                                         |
 | 11   | Request rejected as invalid                          |
+| 12   | The response is too large to read                    |
 
 [`prk run`](/reference/cli/run) adds two more, matching what a shell uses for
 the same conditions: **127** when the command was not found, **126** when it was
@@ -93,6 +94,7 @@ The stable codes emitted under `--json`.
 | `TLS_FAILURE`         | 7    | no        | The TLS handshake failed — typically a corporate proxy with a private certificate authority |
 | `TIMEOUT`             | 7    | yes       | The request exceeded `--timeout`                                                            |
 | `NOT_A_PRICK_SERVER`  | 7    | no        | Something answered, but it is not a prick server                                            |
+| `RESPONSE_TOO_LARGE`  | 12   | no        | The server answered correctly and the answer is larger than the client will read            |
 | `UNKNOWN`             | 1    | no        | A status with no specific handling                                                          |
 
 Codes the client raises itself, rather than reading off a response:
@@ -178,6 +180,36 @@ prk doctor
 Status is classified **before** the response body is parsed, which is what turns
 a proxy's HTML error page into this message rather than an unreadable decoding
 error.
+
+### `RESPONSE_TOO_LARGE` (exit 12)
+
+The request reached the server and the server answered correctly. The answer is
+simply bigger than `prk` will read into memory, so none of it was parsed.
+
+In practice this is one environment holding more secret data than a single
+response can carry. Writes to it keep succeeding — the server sizes each secret
+on its own — while `prk secrets download` and `prk run` cannot read the whole
+set back.
+
+Reading one secret at a time still works, and so does the listing, so you can
+find and remove the offender:
+
+```bash
+prk secrets list -P api -E production
+```
+
+```bash
+prk secrets delete BLOB_ONE -P api -E production
+```
+
+The ceiling is derived from the server's own `SECRET_MAX_BYTES` and
+`ENV_MAX_SECRETS`, so a default deployment cannot reach it. Raising either of
+those above its default is what puts an environment beyond what a client will
+read.
+
+It is deliberately neither `UNREACHABLE` nor `NOT_A_PRICK_SERVER`, which both
+exit 7: nothing is wrong with `--api-url`, with DNS, or with any proxy in
+between, and an exit code that said otherwise would send you to look.
 
 ### `SERVICE_UNAVAILABLE` with `NO_ADMINS_CONFIGURED`
 

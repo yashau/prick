@@ -503,6 +503,11 @@ prk secrets rollback DATABASE_URL --to 3 -P api -E production --json
 The value limit counts **UTF-8 bytes**, so a value of emoji or CJK text is
 measured the way it is stored.
 
+`prk` sizes its own read ceiling from the first two rows, so a whole-environment
+export at the defaults always fits. Raising `SECRET_MAX_BYTES` or
+`ENV_MAX_SECRETS` past their defaults can put an environment beyond what the CLI
+will read back — that is `RESPONSE_TOO_LARGE`, exit 12.
+
 ## Common errors
 
 | Error                    | Exit | What happened                                                                       | What to do                                                   |
@@ -513,6 +518,7 @@ measured the way it is stored.
 | `PAYLOAD_TOO_LARGE`      | 11   | The environment would exceed its cap, or a value is too large                       | Split across environments, or raise the limit                |
 | `VALIDATION_FAILED`      | 11   | A key name was rejected, or the uploaded document could not be parsed unambiguously | Fix the line the error names; the parser rules are above     |
 | `UNREPRESENTABLE_OUTPUT` | 9    | A value cannot be encoded in the chosen format                                      | Use `--format json` or `--format yaml`                       |
+| `RESPONSE_TOO_LARGE`     | 12   | The environment holds more secret data than one response can carry                  | `prk secrets list`, then delete or shrink the largest values |
 | `DECRYPT_FAILED`         | —    | Stored bytes were not sealed against the row they sit in                            | Treat as tampering; see [Key rotation](/guides/key-rotation) |
 
 ## Next steps

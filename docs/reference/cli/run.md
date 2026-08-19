@@ -157,6 +157,7 @@ Names only — never values.
 | `LAUNCH_FAILED`      | 127  | The command was not found on `PATH`                                      |
 | `LAUNCH_FAILED`      | 126  | The command was found but is not executable                              |
 | `FORBIDDEN`          | 4    | You have no read grant on this environment                               |
+| `RESPONSE_TOO_LARGE` | 12   | The environment holds more secret data than one response can carry       |
 
 ## Next steps
 

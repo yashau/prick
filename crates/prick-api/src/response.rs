@@ -23,25 +23,84 @@
 //!
 //! # What is retained from the body
 //!
-//! The read is capped at [`BODY_CAP`]. From what is read, the only thing kept
-//! is the HTML `<title>`, truncated to [`TITLE_CAP`]. A Cloudflare error page
-//! puts the error number there -- `1033`, `1016`, `530` -- which is exactly the
-//! fact an operator needs and is the only part of the page that is.
+//! From a response that does not claim to be JSON, the only thing kept is the
+//! HTML `<title>`, truncated to [`TITLE_CAP`]. A Cloudflare error page puts the
+//! error number there -- `1033`, `1016`, `530` -- which is exactly the fact an
+//! operator needs and is the only part of the page that is. Such a body is read
+//! no further than [`NON_JSON_BODY_CAP`], because nothing past the `<head>` is
+//! ever looked at.
 //!
 //! Nothing else survives. The body is never echoed, never logged and never
 //! attached to an error, because a response body from a secrets manager may
 //! contain a secret and this code cannot tell.
+//!
+//! # Why there are two caps
+//!
+//! A cap on an unknown body is an allocation bound and should be tight. A cap
+//! on this server's own answer is a different quantity entirely: it must be at
+//! least as large as the largest document the server can be made to produce, or
+//! writes the server accepts one at a time add up to a read the client refuses.
+//! One number cannot be both, so [`BODY_CAP`] is derived from the server's own
+//! limits and [`NON_JSON_BODY_CAP`] stays small.
 
 use std::fmt::Write as _;
 
 use prick_core::classify::ErrorKind;
+use prick_core::keyname::MAX_KEY_LEN;
 
-/// The most of a response body that is ever read.
+/// The most of a response body that is ever read when the response does not
+/// claim to be JSON.
 ///
-/// Enough for any real API response and for the whole of a Cloudflare error
-/// page; small enough that a hostile or broken server cannot make the client
-/// allocate without bound.
-pub const BODY_CAP: usize = 64 * 1024;
+/// Enough for the whole of a Cloudflare error page, and for the `<head>` of any
+/// login or captive-portal page that puts its diagnosis in a `<title>`. Nothing
+/// else is ever taken from such a body, so reading further would buy nothing.
+pub const NON_JSON_BODY_CAP: usize = 64 * 1024;
+
+/// The server's cap on one decrypted secret value, in UTF-8 bytes.
+///
+/// Mirrors `SECRET_VALUE_MAX_BYTES` in `packages/shared/src/limits.ts`, which a
+/// deployment may lower through the `SECRET_MAX_BYTES` variable. Lowering it
+/// only leaves [`BODY_CAP`] more generous than it needs to be, which is the
+/// safe direction: a cap can be too large without anything breaking.
+pub const SERVER_SECRET_VALUE_CAP: usize = 64 * 1024;
+
+/// The server's cap on how many secrets one environment may hold.
+///
+/// Mirrors `ENV_MAX_SECRETS` in `packages/shared/src/limits.ts`, and is
+/// likewise a default a deployment may lower.
+pub const SERVER_ENV_SECRET_CAP: usize = 500;
+
+/// How much JSON string escaping is allowed to expand a secret value.
+///
+/// A serialiser writes a control byte as `\u00XX` -- six bytes for one -- and a
+/// quote or a backslash as two. Two covers every value except one made mostly
+/// of control characters, and such a value cannot be written to a `.env` file
+/// at all, so an export of it is not the thing to size the buffer around.
+const ESCAPE_ALLOWANCE: usize = 2;
+
+/// The bytes of JSON around one entry of an export: `"":"",`.
+const ENTRY_FRAMING: usize = 6;
+
+/// The most of a JSON response body that is ever read.
+///
+/// Derived, not chosen. The largest document this server can produce is a
+/// whole-environment export: [`SERVER_ENV_SECRET_CAP`] entries, each a key of
+/// at most [`prick_core::keyname::MAX_KEY_LEN`] bytes and a value of at most
+/// [`SERVER_SECRET_VALUE_CAP`] before escaping, plus the enclosing braces.
+///
+/// The defect this derivation exists to prevent is a cap *below* what the
+/// server accepts. The server takes each secret on its own merits, so a handful
+/// of writes it is right to accept can leave an environment whose read-back the
+/// client refuses -- and that environment is then unexportable and unrunnable
+/// while writes to it keep succeeding. Tying the number to the server's own
+/// limits is what makes that state unreachable.
+///
+/// It is still a bound: a hostile or broken server cannot make the client
+/// allocate without end, and the buffer only ever grows to the body actually
+/// received, so an ordinary response of a few kilobytes costs a few kilobytes.
+pub const BODY_CAP: usize = SERVER_ENV_SECRET_CAP
+    * (MAX_KEY_LEN + SERVER_SECRET_VALUE_CAP * ESCAPE_ALLOWANCE + ENTRY_FRAMING)
+    + 2;
 
 /// The most of an extracted `<title>` that is ever retained.
 pub const TITLE_CAP: usize = 200;
@@ -72,9 +131,10 @@ pub struct ResponseFacts {
     pub location: Option<String>,
     /// The server's `X-Request-Id`, for locating the audit row.
     pub request_id: Option<String>,
-    /// The HTML `<title>`, if the body had one within [`BODY_CAP`].
+    /// The HTML `<title>`, if the body had one within [`NON_JSON_BODY_CAP`].
     pub title: Option<String>,
-    /// Whether the body was longer than [`BODY_CAP`] and was cut short.
+    /// Whether the body was longer than the cap that applied to it and was cut
+    /// short. See [`body_cap`].
     pub truncated: bool,
 }
 
@@ -134,6 +194,19 @@ impl ResponseFacts {
         }
         None
     }
+}
+
+/// The cap that applies to a response, decided from what it says about itself.
+///
+/// The content type is read from the headers, so this is known before a single
+/// body byte is taken. A response claiming JSON may be a whole-environment
+/// export and gets [`BODY_CAP`]; anything else is read only as far as a
+/// `<title>` could be and gets [`NON_JSON_BODY_CAP`].
+///
+/// A hostile server can of course claim JSON. It then gets the larger of two
+/// bounds, which is still a bound.
+pub fn body_cap(facts: &ResponseFacts) -> usize {
+    if facts.is_json() { BODY_CAP } else { NON_JSON_BODY_CAP }
 }
 
 /// The host part of a URL, without scheme, port, path or credentials.
@@ -231,26 +304,41 @@ pub fn classify(facts: &ResponseFacts) -> Option<Classified> {
             "Cloudflare could not reach the Worker behind this hostname".to_owned(),
         ),
         status if status >= 400 => {
-            if facts.is_json() {
-                // A real API error. The caller parses the envelope for the
-                // server's own code and message.
-                None
-            } else {
+            if !facts.is_json() {
                 describe(
                     ErrorKind::from_status(status),
                     describe_non_json(facts, "an error response"),
                 )
+            } else if facts.truncated {
+                // The envelope was cut off, so its code and message are gone
+                // and the status is all that is left. The reason they are gone
+                // is the size, and that is what to report.
+                describe(ErrorKind::ResponseTooLarge, describe_over_cap())
+            } else {
+                // A real API error. The caller parses the envelope for the
+                // server's own code and message.
+                None
             }
         }
         _ if !facts.is_json() => {
             describe(ErrorKind::NotPrick, describe_non_json(facts, "a successful response"))
         }
-        _ if facts.truncated => describe(
-            ErrorKind::NotPrick,
-            format!("the response body exceeded {BODY_CAP} bytes, which no API response does"),
-        ),
+        _ if facts.truncated => describe(ErrorKind::ResponseTooLarge, describe_over_cap()),
         _ => None,
     }
+}
+
+/// Describes a response the client stopped reading because of its size.
+///
+/// Names the size and nothing else. The server was reached, answered, and
+/// answered correctly; the failure is that the answer does not fit, and an
+/// operator sent to check `--api-url` over this would find nothing wrong with
+/// it. [`ErrorKind::ResponseTooLarge`] carries the way out.
+fn describe_over_cap() -> String {
+    format!(
+        "the response body exceeded {BODY_CAP} bytes, which is the most this client reads \
+         into memory, so none of it was parsed"
+    )
 }
 
 /// Describes a response whose content type is not JSON, without echoing it.
@@ -504,6 +592,48 @@ mod tests {
     fn a_truncated_json_response_is_refused_rather_than_parsed() {
         let facts = ResponseFacts { truncated: true, ..json(200) };
         let classified = classify(&facts).expect("an over-long body is a failure");
+        assert_eq!(classified.kind, ErrorKind::ResponseTooLarge);
+    }
+
+    #[test]
+    fn an_over_cap_body_is_reported_as_a_size_problem_and_not_as_a_wrong_url() {
+        // The server was reached and answered correctly. Reporting this as
+        // `NotPrick` sends an operator to look for a proxy or a typo in
+        // --api-url, and there is neither -- the environment simply holds more
+        // than one response can carry.
+        let classified = classify(&ResponseFacts { truncated: true, ..json(200) })
+            .expect("an over-long body is a failure");
+
+        assert_eq!(classified.kind, ErrorKind::ResponseTooLarge);
+        assert!(classified.message.contains(&BODY_CAP.to_string()), "{}", classified.message);
+        assert!(!classified.message.contains("api-url"), "{}", classified.message);
+        assert_eq!(classified.kind.exit_code(), 12);
+    }
+
+    #[test]
+    fn a_truncated_error_envelope_reports_the_size_rather_than_the_status() {
+        // Nothing of the envelope survived, so its code and message are gone.
+        // Saying "the server returned HTTP 500" would name the one fact that is
+        // not the problem.
+        let classified = classify(&ResponseFacts { truncated: true, ..json(500) })
+            .expect("an over-long body is a failure");
+        assert_eq!(classified.kind, ErrorKind::ResponseTooLarge);
+    }
+
+    #[test]
+    fn an_error_envelope_that_fits_is_still_left_to_the_envelope_parser() {
+        assert_eq!(classify(&json(422)), None);
+        assert_eq!(classify(&json(500)), None);
+    }
+
+    #[test]
+    fn an_over_long_html_page_is_still_the_url_being_wrong() {
+        // A megabyte of HTML is not a size problem to solve; it is the proof
+        // that whatever answered is not this API.
+        let mut facts = html(200);
+        facts.truncated = true;
+        facts.title = Some("Sign in".to_owned());
+        let classified = classify(&facts).expect("HTML is not a valid API response");
         assert_eq!(classified.kind, ErrorKind::NotPrick);
     }
 
@@ -573,9 +703,40 @@ mod tests {
     }
 
     #[test]
-    fn the_body_cap_is_small_enough_to_be_a_bound_and_large_enough_for_a_page() {
-        assert_eq!(BODY_CAP, 65_536);
-        const { assert!(TITLE_CAP < BODY_CAP) }
+    fn the_non_json_cap_is_small_enough_to_be_a_bound_and_large_enough_for_a_page() {
+        assert_eq!(NON_JSON_BODY_CAP, 65_536);
+        const { assert!(TITLE_CAP < NON_JSON_BODY_CAP) }
+    }
+
+    #[test]
+    fn the_json_cap_is_never_smaller_than_a_whole_environment_export() {
+        /// A whole environment at the server's own limits, unescaped, with the
+        /// JSON framing around every entry.
+        const FULL_EXPORT: usize =
+            SERVER_ENV_SECRET_CAP * (MAX_KEY_LEN + SERVER_SECRET_VALUE_CAP + ENTRY_FRAMING) + 2;
+
+        // The defect the derivation exists to prevent. Two secrets at the
+        // server's own per-secret limit already exceed a flat 64 KiB, so the
+        // server accepts both writes and the client then refuses to read the
+        // environment back -- unexportable and unrunnable, with nothing having
+        // gone wrong at the server.
+        const { assert!(BODY_CAP > 2 * SERVER_SECRET_VALUE_CAP) }
+        const { assert!(BODY_CAP >= FULL_EXPORT) }
+
+        // Still a bound rather than an invitation: a body is read once, into
+        // memory, so the ceiling has to stay a number a laptop can hold.
+        const { assert!(BODY_CAP < 128 * 1024 * 1024) }
+    }
+
+    #[test]
+    fn the_cap_that_applies_is_decided_by_what_the_response_claims_to_be() {
+        assert_eq!(body_cap(&json(200)), BODY_CAP);
+        assert_eq!(body_cap(&html(200)), NON_JSON_BODY_CAP);
+        // No content type is not a claim of JSON, so it gets the tight bound.
+        assert_eq!(
+            body_cap(&ResponseFacts { status: 200, ..ResponseFacts::default() }),
+            NON_JSON_BODY_CAP
+        );
     }
 
     #[test]
