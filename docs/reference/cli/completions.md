@@ -81,7 +81,7 @@ prk version
 ```
 
 ```
-prk 2026.816.1
+prk 2026.819.0
 ```
 
 `prk --version` prints the same thing.
@@ -105,7 +105,7 @@ prk doctor
 ```
 
 ```
-ok   api            /api/v1/health answered, version 2026.816.1
+ok   api            /api/v1/health answered, version 2026.819.0
 ```
 
 A client and a server on different versions is normal and supported — the API is

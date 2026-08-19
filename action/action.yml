@@ -1,7 +1,7 @@
 # =============================================================================
 # The official action for consuming prick secrets in a workflow.
 #
-#   - uses: yashau/prick/action@v2026.815.0
+#   - uses: yashau/prick/action@v2026.819.0
 #     with:
 #       url: ${{ secrets.PRICK_URL }}
 #       client-id: ${{ secrets.PRICK_ACCESS_CLIENT_ID }}

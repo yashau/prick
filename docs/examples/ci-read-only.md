@@ -164,7 +164,7 @@ anyone cleaning it up, and it stays in the table as a record that it existed.
 ## Optional: use the action instead of the CLI
 
 ```yaml title=".github/workflows/deploy.yml"
-- uses: yashau/prick/action@v2026.815.0
+- uses: yashau/prick/action@v2026.819.0
   with:
     url: ${{ secrets.PRICK_URL }}
     client-id: ${{ secrets.PRICK_CLIENT_ID }}
