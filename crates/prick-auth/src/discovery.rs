@@ -30,6 +30,13 @@ use crate::error::AuthError;
 /// The `.well-known` suffix for RFC 8414 authorization server metadata.
 pub const WELL_KNOWN_AS: &str = ".well-known/oauth-authorization-server";
 
+/// The `.well-known` suffix for RFC 9728 protected resource metadata.
+///
+/// Cloudflare Access advertises its own `cloudflare-access-protected-resource`
+/// spelling in the challenge. This is the standard one, and the fallback when
+/// the advertised URL does not resolve.
+pub const WELL_KNOWN_PR: &str = ".well-known/oauth-protected-resource";
+
 /// The `.well-known` suffix for `OpenID` Connect discovery.
 ///
 /// Tried after the RFC 8414 name: an authorization server that implements both
@@ -245,6 +252,28 @@ pub fn well_known_urls(issuer: &str) -> Vec<String> {
     urls
 }
 
+/// Builds the RFC 9728 metadata URLs for a resource, in the order to try them.
+///
+/// Section 3.1 inserts the well-known segment **between the host and the
+/// resource path**, exactly as RFC 8414 does for an issuer -- so the metadata
+/// for `https://host/api/v1/health` lives at
+/// `https://host/.well-known/oauth-protected-resource/api/v1/health`.
+///
+/// The path-less form is tried second. A deployment that describes the origin
+/// rather than the individual endpoint answers there and nowhere else, and it
+/// names the same authorization server either way.
+pub fn protected_resource_urls(resource: &str) -> Vec<String> {
+    let resource = resource.trim_end_matches('/');
+    let (origin, path) = split_origin(resource);
+
+    let mut urls = Vec::with_capacity(2);
+    if !path.is_empty() {
+        urls.push(format!("{origin}/{WELL_KNOWN_PR}{path}"));
+    }
+    urls.push(format!("{origin}/{WELL_KNOWN_PR}"));
+    urls
+}
+
 /// Splits `https://host:port/path` into its origin and its path.
 fn split_origin(url: &str) -> (&str, &str) {
     let Some(scheme_end) = url.find("://") else { return (url, "") };
@@ -275,6 +304,64 @@ pub async fn fetch_protected_resource(
         });
     }
     Ok(metadata)
+}
+
+/// Resolves protected resource metadata, tolerating an advertised URL that
+/// does not resolve.
+///
+/// THE ADVERTISED URL IS TRIED FIRST AND IS NOT TRUSTED TO WORK.
+///
+/// RFC 9728 says the `WWW-Authenticate` challenge names where the metadata
+/// lives, and following it is the correct behaviour. But Cloudflare Access, on
+/// the managed-OAuth beta, advertises
+/// `/.well-known/cloudflare-access-protected-resource<resource-path>` and
+/// serves 404 there -- while serving the same document at that prefix WITHOUT
+/// the path, and at the standard `oauth-protected-resource` prefix WITH it.
+/// Both working variants name the same authorization server, so a login that
+/// gave up at the advertised 404 failed while every fact it needed was one
+/// request away.
+///
+/// So the advertised URL keeps its precedence and stops being load-bearing.
+/// The fallbacks are derived from the resource this client is actually talking
+/// to, never from the challenge, which means a challenge that points somewhere
+/// unexpected cannot redirect discovery to a host of its choosing.
+///
+/// # Errors
+///
+/// [`AuthError::Discovery`] when no candidate yields a document naming an
+/// authorization server. The message lists every URL tried, because the useful
+/// question after this fails is which spellings the deployment answers.
+pub async fn resolve_protected_resource(
+    client: &Client,
+    advertised: Option<&str>,
+    resource: &str,
+) -> Result<ProtectedResource, AuthError> {
+    let mut candidates: Vec<String> = Vec::new();
+    if let Some(url) = advertised {
+        candidates.push(url.to_owned());
+    }
+    for url in protected_resource_urls(resource) {
+        if !candidates.contains(&url) {
+            candidates.push(url);
+        }
+    }
+
+    // `fetch_protected_resource` is the one definition of "usable metadata" --
+    // fetched, parsed, and naming at least one authorization server. Reusing it
+    // per candidate keeps that rule in one place; the error is discarded because
+    // a candidate that does not answer is the expected case here, not a failure.
+    for url in &candidates {
+        if let Ok(metadata) = fetch_protected_resource(client, url).await {
+            return Ok(metadata);
+        }
+    }
+
+    Err(AuthError::Discovery {
+        reason: format!(
+            "no protected resource metadata naming an authorization server at any of: {}",
+            candidates.join(", ")
+        ),
+    })
 }
 
 /// Fetches RFC 8414 authorization server metadata, trying each well-known URL.
@@ -376,6 +463,51 @@ pub async fn register_client(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// THE CLOUDFLARE BETA SHAPE.
+    ///
+    /// Access advertises
+    /// `/.well-known/cloudflare-access-protected-resource<path>` and answers 404
+    /// there, while serving the same document at the standard spelling WITH the
+    /// path and at its own spelling WITHOUT it. The fallback list has to contain
+    /// the one that works, derived from the resource rather than the challenge.
+    #[test]
+    fn the_standard_spelling_is_derived_from_the_resource_path() {
+        let urls = protected_resource_urls("https://prick.example.com/api/v1/health");
+
+        assert_eq!(
+            urls[0],
+            "https://prick.example.com/.well-known/oauth-protected-resource/api/v1/health"
+        );
+        assert_eq!(urls[1], "https://prick.example.com/.well-known/oauth-protected-resource");
+    }
+
+    #[test]
+    fn the_well_known_segment_goes_between_host_and_path_not_after_it() {
+        // RFC 9728 section 3.1. Appending it -- the OpenID Connect habit --
+        // would ask for `/api/v1/health/.well-known/...`, which is a path this
+        // Worker routes to the admin UI.
+        let urls = protected_resource_urls("https://prick.example.com/api/v1/health");
+
+        assert!(
+            !urls.iter().any(|url| url.ends_with("/health/.well-known/oauth-protected-resource"))
+        );
+    }
+
+    #[test]
+    fn a_path_less_resource_yields_one_candidate() {
+        assert_eq!(
+            protected_resource_urls("https://prick.example.com"),
+            ["https://prick.example.com/.well-known/oauth-protected-resource"]
+        );
+    }
+
+    #[test]
+    fn a_trailing_slash_does_not_produce_a_doubled_one() {
+        for url in protected_resource_urls("https://prick.example.com/") {
+            assert!(!url.contains("com//"), "{url}");
+        }
+    }
 
     #[test]
     fn a_challenge_yields_its_metadata_url() {
