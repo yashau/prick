@@ -66,7 +66,10 @@ and is still an admin of that project.
      The error names the dashboard path that enables it.
    - `200` with a JSON body to an unauthenticated caller — **a loud warning**,
      because Access is not in front of this hostname.
-2. Discover the authorization server via RFC 8414 / RFC 9728 metadata.
+2. Discover the authorization server via RFC 8414 / RFC 9728 metadata, and with
+   it the RFC 8707 `resource` indicator naming what the token is for. Access
+   refuses an authorization request that omits it, and the refusal arrives at
+   the loopback callback as `invalid_target` rather than in the browser.
 3. Register a client dynamically for `http://127.0.0.1:<ephemeral>/callback`.
    The port is whatever the OS assigns, so two concurrent logins do not collide,
    and the address is the literal `127.0.0.1` because the redirect URI must

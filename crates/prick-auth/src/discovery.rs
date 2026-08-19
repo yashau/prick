@@ -193,6 +193,35 @@ pub struct ProtectedResource {
     pub authorization_servers: Vec<String>,
 }
 
+impl ProtectedResource {
+    /// The RFC 8707 `resource` indicator to send with every request for a token
+    /// that will be presented to this resource.
+    ///
+    /// # A login dies without one
+    ///
+    /// Cloudflare Access's managed OAuth requires it. An authorization request
+    /// that omits it is refused with `invalid_target` and
+    /// `error_description=No resource parameter found` -- and the refusal
+    /// arrives at the loopback callback rather than in the browser, so it reads
+    /// as "the sign-in was denied" rather than as "a parameter was missing".
+    ///
+    /// # Why an absent `resource` still produces one
+    ///
+    /// It is REQUIRED in an RFC 9728 document, but a document that omits it is
+    /// no reason to send nothing, because nothing is the one value guaranteed
+    /// to be refused. The fallback is the resource this client is actually
+    /// talking to, which is what the indicator is meant to name anyway.
+    pub fn resource_indicator(&self, fallback: &str) -> String {
+        match self.resource.as_deref().map(str::trim).filter(|value| !value.is_empty()) {
+            // Exactly as the document spells it. This is the identifier the
+            // authorization server matches against, so "normalising" a trailing
+            // slash off it is only a way to be refused for a new reason.
+            Some(resource) => resource.to_owned(),
+            None => fallback.trim_end_matches('/').to_owned(),
+        }
+    }
+}
+
 /// RFC 8414 authorization server metadata.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[non_exhaustive]
@@ -647,6 +676,34 @@ mod tests {
         )
         .expect("the shape matches");
         assert_eq!(metadata.authorization_servers, ["https://example.cloudflareaccess.com"]);
+        assert_eq!(
+            metadata.resource_indicator("https://ignored.example.com"),
+            "https://prick.example.com",
+            "the indicator has to be the one the document declares"
+        );
+    }
+
+    #[test]
+    fn a_document_declaring_no_resource_still_yields_an_indicator() {
+        // Sending none is the one value Cloudflare Access is guaranteed to
+        // refuse, so an omitted `resource` falls back to what this client is
+        // actually talking to rather than to nothing.
+        let metadata: ProtectedResource =
+            serde_json::from_str(r#"{"authorization_servers":["https://as"]}"#)
+                .expect("`resource` is optional to parse even though RFC 9728 requires it");
+        assert_eq!(
+            metadata.resource_indicator("https://prick.example.com/"),
+            "https://prick.example.com"
+        );
+
+        let blank: ProtectedResource =
+            serde_json::from_str(r#"{"resource":"   ","authorization_servers":["https://as"]}"#)
+                .expect("the shape matches");
+        assert_eq!(
+            blank.resource_indicator("https://prick.example.com"),
+            "https://prick.example.com",
+            "a declared-but-empty resource is no resource"
+        );
     }
 
     #[test]
