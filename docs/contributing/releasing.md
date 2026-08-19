@@ -356,15 +356,25 @@ It cannot be turned on first. crates.io requires that **the crate already exists
 — "initial publish requires an API token" — and all five of ours are new. So the
 first release bootstraps, in the same three steps npm needed:
 
-1. Create an API token at
+1. Verify the publishing account's email at
+   [crates.io/settings/profile](https://crates.io/settings/profile). crates.io
+   refuses every publish without one, and it refuses it at the **upload**, after
+   the token has been accepted and all five crates have been packaged and
+   compiled — `400 Bad Request: A verified email address is required`. Nothing
+   earlier in a release sees it, so the first attempt at `v2026.819.0` spent six
+   build legs and a full npm publish to discover it.
+2. Create an API token at
    [crates.io/settings/tokens](https://crates.io/settings/tokens) with the
    **`publish-new`** scope. Expiry is chosen in days, so there is no
-   make-it-expire-in-an-hour option — the revoke in step 3 is what bounds it,
-   not the expiry.
-2. Set it as the `CARGO_REGISTRY_TOKEN` repository secret and cut a release.
+   make-it-expire-in-an-hour option — the revoke in the last step is what bounds
+   it, not the expiry.
+3. Set it as the `CARGO_REGISTRY_TOKEN` repository secret and cut a release.
    `publish-crates` sees the secret, skips the OIDC exchange and publishes all
-   five crates with it.
-3. On each of the five crates, go to **Settings → Trusted Publishing → Add** and
+   five crates with it. If only this job failed, re-run **it** rather than
+   cutting a new version: crates.io publishes the whole workspace in one command
+   and reports which crates it did not reach, so a failure at the first upload
+   leaves nothing behind to collide with.
+4. On each of the five crates, go to **Settings → Trusted Publishing → Add** and
    enter GitHub, owner `yashau`, repository `prick`, workflow filename
    `cli-release.yml`, no environment. Then **delete the secret and revoke the
    token.**
