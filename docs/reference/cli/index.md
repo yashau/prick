@@ -15,8 +15,8 @@ prk secrets list --project api --env production
 ```
 
 ```
-DATABASE_URL	v4	you@example.com
-STRIPE_SECRET_KEY	v2	you@example.com
+DATABASE_URL	v4	you@example.com	Primary Postgres, read-write
+STRIPE_SECRET_KEY	v2	you@example.com	none
 ```
 
 ## Before you begin

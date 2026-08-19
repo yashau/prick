@@ -187,8 +187,8 @@ prk secrets list --env production
 ```
 
 ```
-DATABASE_URL	v4	you@example.com
-STRIPE_SECRET_KEY	v3	you@example.com
+DATABASE_URL	v4	you@example.com	none
+STRIPE_SECRET_KEY	v3	you@example.com	none
 ```
 
 ### 5. Issue a replacement credential

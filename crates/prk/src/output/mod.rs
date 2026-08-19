@@ -1,15 +1,15 @@
 //! The only module in the workspace allowed to write to stdout or stderr.
 //!
-//! # Why the allow is here and nowhere else
+//! # Why every byte comes through here
 //!
-//! `[workspace.lints.clippy]` denies `print_stdout` and `print_stderr`. This
-//! file lifts the ban for itself, which means the complete set of places a
-//! `prk` process can emit a byte is the handful of functions below. Reviewing
-//! "can a secret leak to a stream" is reading one file, not auditing a tree,
-//! and adding a stray `eprintln!` elsewhere fails the build.
+//! `[workspace.lints.clippy]` denies `print_stdout` and `print_stderr`, which
+//! means the complete set of places a `prk` process can emit a byte is the
+//! handful of functions below. Reviewing "can a secret leak to a stream" is
+//! reading one file, not auditing a tree, and adding a stray `eprintln!`
+//! elsewhere fails the build.
 //!
-//! **Do not widen the allow.** If a module needs to say something, it calls
-//! into here.
+//! **Do not reach for a stream elsewhere.** If a module needs to say
+//! something, it calls into here.
 //!
 //! # The stream contract
 //!
@@ -40,10 +40,40 @@
 //!
 //! So `--color` decides one thing: whether the `error:` and `warning:` prefixes
 //! on stderr carry SGR codes.
+//!
+//! # A closed reader is not a crash
+//!
+//! `println!` **panics** when the write fails, and `prk completions bash |
+//! head -2` closes the reader while the script is still being written. That
+//! turned a routine shell idiom into an unhandled panic -- and under the `dist`
+//! profile, which is `panic = "abort"`, into a `__fastfail` whose `0xC0000409`
+//! exit status truncates to **9**, the code the taxonomy already gives to
+//! `UNREPRESENTABLE_OUTPUT`. A crash wearing another failure's number is worse
+//! than a crash.
+//!
+//! So nothing here uses the `print!` family. Every byte goes through
+//! `write_stdout`, which keeps the error and records it for [`crate::run`] to
+//! act on once the command has returned:
+//!
+//! - The reader closed the pipe on ordinary output: exit 0, say nothing. The
+//!   stream that would carry the complaint is the one that closed.
+//! - The reader closed the pipe part way through **secret material**, or the
+//!   write failed for some reason other than a reader hanging up: loud, with
+//!   its own exit code. A half-written `.env` on the far side of a pipe must
+//!   never be mistaken for a whole one.
+//!
+//! Which of the two a payload is, is the caller's to declare: [`Output::data`]
+//! and its siblings are for ordinary output, [`Output::secret_data`] and its
+//! siblings for anything carrying a value.
+//!
+//! There is no `#![allow(clippy::print_stdout)]` here any more, because there is
+//! nothing left to allow: the ban now holds in every file in the workspace
+//! without exception, and this module reaches the streams through their handles
+//! instead.
 
-#![allow(clippy::print_stdout, clippy::print_stderr)]
-
-use std::io::IsTerminal as _;
+use std::io::{IsTerminal as _, Write as _};
+use std::sync::OnceLock;
+use std::sync::atomic::{AtomicU8, Ordering};
 
 use crate::cli::{ColorChoice, GlobalArgs};
 use crate::error::CliError;
@@ -83,9 +113,139 @@ fn paint(text: &str, colour: &str, styled: bool) -> String {
     if styled { format!("{colour}{text}{RESET}") } else { text.to_owned() }
 }
 
+/// How much of the answer reached stdout.
+///
+/// The three states are ordered by how much has to be said about them, which is
+/// what lets the latch below be a `fetch_max`: whatever order the writes happen
+/// in, the run reports the worst thing that happened to the stream, and nothing
+/// can downgrade what was already recorded.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StdoutOutcome {
+    /// Everything written reached the other end.
+    Whole,
+
+    /// The reader closed the pipe while ordinary output was being written.
+    ///
+    /// `prk completions bash | head -2` is this, and it is not a failure.
+    ReaderGone,
+
+    /// stdout could not be written in full, and somebody has to be told.
+    ///
+    /// Either the payload carried secret material, or the write failed for a
+    /// reason that is not a reader hanging up -- a full disk on a redirect,
+    /// say, which is a truncated file rather than a satisfied reader.
+    Truncated,
+}
+
+impl StdoutOutcome {
+    /// The latch's representation. Higher is worse; see the type's docs.
+    fn code(self) -> u8 {
+        match self {
+            Self::Whole => 0,
+            Self::ReaderGone => 1,
+            Self::Truncated => 2,
+        }
+    }
+
+    /// The outcome a latch value stands for.
+    ///
+    /// Anything unrecognised reads as [`Self::Truncated`]: for a value that
+    /// cannot occur, the safe direction is the loud one.
+    fn from_code(code: u8) -> Self {
+        match code {
+            0 => Self::Whole,
+            1 => Self::ReaderGone,
+            _ => Self::Truncated,
+        }
+    }
+}
+
+/// The worst thing that has happened to stdout so far.
+static STDOUT: AtomicU8 = AtomicU8::new(0);
+
+/// The first stdout failure, in the stream's own words.
+///
+/// First rather than last: it is the one that says why the stream stopped
+/// taking bytes, and every write after it fails for the same reason.
+static STDOUT_FAILURE: OnceLock<String> = OnceLock::new();
+
+/// What has happened to stdout over this run.
+pub fn stdout_outcome() -> StdoutOutcome {
+    StdoutOutcome::from_code(STDOUT.load(Ordering::Relaxed))
+}
+
+/// Why stdout stopped taking bytes, if it did.
+pub fn stdout_failure() -> Option<&'static str> {
+    STDOUT_FAILURE.get().map(String::as_str)
+}
+
+/// Whether a payload carries secret material.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Payload {
+    /// Nothing a reader could not ask for again.
+    Public,
+
+    /// A value, or a document rendered out of values.
+    Secret,
+}
+
+/// Writes to stdout, recording a failure rather than panicking on one.
+///
+/// Flushed on every call. `LineWriter` would flush each line by itself, but the
+/// content that matters most here -- a rendered `.env` handed over whole by
+/// [`data_raw`] -- carries its own line structure and can end without a
+/// newline, and a broken pipe left to the runtime's flush at exit is discovered
+/// after the last moment anyone could be told about it.
+///
+/// Once stdout has failed the stream is left alone. Pushing the rest of a
+/// document into a pipe nobody is reading achieves nothing, and rediscovering
+/// the same error once per row is how one dead reader becomes a thousand.
+fn write_stdout(message: &str, newline: bool, payload: Payload) {
+    if stdout_outcome() != StdoutOutcome::Whole {
+        return;
+    }
+
+    let mut stream = std::io::stdout().lock();
+    let written = if newline { writeln!(stream, "{message}") } else { write!(stream, "{message}") }
+        .and_then(|()| stream.flush());
+
+    let Err(err) = written else { return };
+
+    let _ = STDOUT_FAILURE.set(err.to_string());
+    STDOUT.fetch_max(outcome_for(err.kind(), payload).code(), Ordering::Relaxed);
+}
+
+/// What a failed stdout write means, given what was being written.
+///
+/// The one place the policy lives, as a function of two values, so that it can
+/// be read and tested without a broken stream to hand.
+///
+/// A broken pipe is the reader's decision and only the reader's: `head -2` got
+/// what it asked for. Any other error is the machine failing to do what it was
+/// told -- a full disk on a redirect leaves a truncated file, not a satisfied
+/// reader -- and secret material is truncated loudly whatever the reason,
+/// because the caller on the other side cannot tell a short `.env` from a
+/// complete one.
+fn outcome_for(kind: std::io::ErrorKind, payload: Payload) -> StdoutOutcome {
+    match (kind, payload) {
+        (std::io::ErrorKind::BrokenPipe, Payload::Public) => StdoutOutcome::ReaderGone,
+        _ => StdoutOutcome::Truncated,
+    }
+}
+
+/// Writes a line to stderr, and gives up quietly if it cannot.
+///
+/// There is nowhere to report a failure to write to the place failures are
+/// reported, and panicking over one would be the same defect this module exists
+/// to keep off stdout.
+fn write_stderr(message: &str) {
+    let mut stream = std::io::stderr().lock();
+    let _ = writeln!(stream, "{message}").and_then(|()| stream.flush());
+}
+
 /// Writes a line of program output to stdout.
 pub fn data(message: &str) {
-    println!("{message}");
+    write_stdout(message, true, Payload::Public);
 }
 
 /// Writes program output to stdout with no trailing newline added.
@@ -93,12 +253,12 @@ pub fn data(message: &str) {
 /// For content that carries its own line structure, such as a generated
 /// completion script.
 pub fn data_raw(message: &str) {
-    print!("{message}");
+    write_stdout(message, false, Payload::Public);
 }
 
 /// Writes an informational line to stderr.
 pub fn note(message: &str) {
-    eprintln!("{message}");
+    write_stderr(message);
 }
 
 /// Writes a warning to stderr, deciding colour from the environment.
@@ -111,7 +271,7 @@ pub fn warn(message: &str) {
 
 /// Writes a warning to stderr.
 fn warn_styled(message: &str, styled: bool) {
-    eprintln!("{} {message}", paint("warning:", YELLOW, styled));
+    write_stderr(&format!("{} {message}", paint("warning:", YELLOW, styled)));
 }
 
 /// Writes an error to stderr, deciding colour from the environment.
@@ -121,7 +281,7 @@ pub fn error(message: &str) {
 
 /// Writes an error to stderr.
 fn error_styled(message: &str, styled: bool) {
-    eprintln!("{} {message}", paint("error:", RED, styled));
+    write_stderr(&format!("{} {message}", paint("error:", RED, styled)));
 }
 
 /// Verbosity and format settings, resolved once from the global flags.
@@ -183,6 +343,28 @@ impl Output {
     /// Emits a JSON document on stdout, as the sole output of the run.
     pub fn json(self, value: &serde_json::Value) {
         data(&value.to_string());
+    }
+
+    /// Emits program output that carries secret material.
+    ///
+    /// Byte for byte the same as [`Output::data`]; the difference is what
+    /// happens if the write fails. A reader that hangs up on a listing has seen
+    /// enough, and the run ends quietly. A reader that hangs up half way
+    /// through a value leaves a caller holding something that looks like a
+    /// value and is not one, and that ends the run loudly. See this module's
+    /// header.
+    pub fn secret_data(self, message: &str) {
+        write_stdout(message, true, Payload::Secret);
+    }
+
+    /// Emits secret-bearing output without adding a trailing newline.
+    pub fn secret_data_raw(self, message: &str) {
+        write_stdout(message, false, Payload::Secret);
+    }
+
+    /// Emits a JSON document built out of secret material.
+    pub fn secret_json(self, value: &serde_json::Value) {
+        write_stdout(&value.to_string(), true, Payload::Secret);
     }
 
     /// Emits an informational line on stderr.
@@ -351,5 +533,66 @@ mod tests {
         let err = CliError::NotImplemented { command: "secrets set" };
         let rendered = envelope(&err).to_string();
         assert!(!rendered.contains('\u{1b}'), "{rendered}");
+    }
+
+    #[test]
+    fn a_worse_stdout_outcome_always_has_a_higher_code() {
+        // The latch is a `fetch_max`, so this ordering is the whole mechanism:
+        // a run that loses the reader and then fails to write a value must
+        // report the value, whichever order the two writes happened in.
+        assert!(StdoutOutcome::Whole.code() < StdoutOutcome::ReaderGone.code());
+        assert!(StdoutOutcome::ReaderGone.code() < StdoutOutcome::Truncated.code());
+    }
+
+    #[test]
+    fn every_outcome_survives_the_round_trip_through_the_latch() {
+        for outcome in [StdoutOutcome::Whole, StdoutOutcome::ReaderGone, StdoutOutcome::Truncated] {
+            assert_eq!(StdoutOutcome::from_code(outcome.code()), outcome);
+        }
+    }
+
+    #[test]
+    fn a_latch_value_that_cannot_occur_reads_as_the_loud_one() {
+        // Nothing writes a 3, and if something ever did, the answer that costs
+        // a spurious error is better than the one that hides a truncated value.
+        assert_eq!(StdoutOutcome::from_code(3), StdoutOutcome::Truncated);
+        assert_eq!(StdoutOutcome::from_code(u8::MAX), StdoutOutcome::Truncated);
+    }
+
+    #[test]
+    fn a_reader_that_hangs_up_is_only_quiet_for_output_it_could_ask_for_again() {
+        use std::io::ErrorKind;
+
+        assert_eq!(
+            outcome_for(ErrorKind::BrokenPipe, Payload::Public),
+            StdoutOutcome::ReaderGone,
+            "`prk completions bash | head -2` is a shell idiom, not a failure"
+        );
+        assert_eq!(
+            outcome_for(ErrorKind::BrokenPipe, Payload::Secret),
+            StdoutOutcome::Truncated,
+            "a half-written value must never be mistaken for a whole one"
+        );
+    }
+
+    #[test]
+    fn a_write_that_failed_for_any_other_reason_is_always_loud() {
+        use std::io::ErrorKind;
+
+        // A redirect onto a full disk is not a reader that had seen enough.
+        for kind in [ErrorKind::StorageFull, ErrorKind::PermissionDenied, ErrorKind::Other] {
+            for payload in [Payload::Public, Payload::Secret] {
+                assert_eq!(outcome_for(kind, payload), StdoutOutcome::Truncated, "{kind:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_run_that_has_written_nothing_reports_a_whole_stdout() {
+        // The latch is process-wide and starts at `Whole`. This test asserts
+        // the starting point rather than a transition, because a transition
+        // would have to break a real stdout to arrange -- and the outcome of
+        // one is asserted end to end by the pipe tests in `tests/pipe.rs`.
+        assert_eq!(StdoutOutcome::from_code(0), StdoutOutcome::Whole);
     }
 }

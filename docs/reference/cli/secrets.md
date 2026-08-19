@@ -13,7 +13,7 @@ project and an environment. Give them as `--project` / `--env`, or set
 prk secrets list
 prk secrets get <KEY>
 prk secrets set <KEY> [--stdin] [--description <TEXT>] [--reason <TEXT>]
-prk secrets rm <KEY>
+prk secrets rm <KEY> [--reason <TEXT>]
 prk secrets upload <FILE> [--merge] [--dry-run] [--expected-rev <REV>] [--reason <TEXT>]
 prk secrets download [--format <FORMAT>] [--output <FILE>]
 prk secrets history <KEY>
@@ -22,17 +22,17 @@ prk secrets rollback <KEY> --to <N> [--reason <TEXT>]
 
 ## All flags at a glance
 
-| Flag                    | Command                     | Meaning                                                     |
-| ----------------------- | --------------------------- | ----------------------------------------------------------- |
-| `--stdin`               | `set`                       | Read the value from stdin instead of prompting              |
-| `--description <TEXT>`  | `set`                       | Note stored with the secret and shown in listings           |
-| `--reason <TEXT>`       | `set`, `upload`, `rollback` | Recorded verbatim in the audit row                          |
-| `--merge`               | `upload`                    | Merge into the environment instead of replacing it          |
-| `--dry-run`             | `upload`                    | Report what would change and exit without writing           |
-| `--expected-rev <REV>`  | `upload`                    | Fail unless the environment is still at this revision       |
-| `--format <FORMAT>`     | `download`                  | `env` (default), `shell`, `yaml`, `json`                    |
-| `--output <FILE>`, `-o` | `download`                  | Write to a file instead of stdout, created with mode `0600` |
-| `--to <N>`              | `rollback`                  | The version to restore. Required                            |
+| Flag                    | Command                           | Meaning                                                     |
+| ----------------------- | --------------------------------- | ----------------------------------------------------------- |
+| `--stdin`               | `set`                             | Read the value from stdin instead of prompting              |
+| `--description <TEXT>`  | `set`                             | Note stored with the secret and shown in listings           |
+| `--reason <TEXT>`       | `set`, `rm`, `upload`, `rollback` | Recorded verbatim in the audit row                          |
+| `--merge`               | `upload`                          | Merge into the environment instead of replacing it          |
+| `--dry-run`             | `upload`                          | Report what would change and exit without writing           |
+| `--expected-rev <REV>`  | `upload`                          | Fail unless the environment is still at this revision       |
+| `--format <FORMAT>`     | `download`                        | `env` (default), `shell`, `yaml`, `json`                    |
+| `--output <FILE>`, `-o` | `download`                        | Write to a file instead of stdout, created with mode `0600` |
+| `--to <N>`              | `rollback`                        | The version to restore. Required                            |
 
 ## `prk secrets list`
 
@@ -43,12 +43,14 @@ prk secrets list --project api --env production
 ```
 
 ```
-DATABASE_URL	v4	you@example.com
-STRIPE_SECRET_KEY	v2	deploy@example.com
+DATABASE_URL	v4	you@example.com	Primary Postgres, read-write
+STRIPE_SECRET_KEY	v2	deploy@example.com	none
 ```
 
-Columns are tab-separated: key, current version, who last wrote it. With nothing
-to show:
+Columns are tab-separated: key, current version, who last wrote it, and the
+`--description` stored with it. A key with no description reads `none` rather
+than leaving the column empty, because a blank after a tab looks like a
+rendering fault. With nothing to show:
 
 ```
 No secrets in this environment.
@@ -76,9 +78,13 @@ prk secrets list --project api --env production --json
 A secret whose ciphertext will not decrypt is listed rather than dropped:
 
 ```
-DATABASE_URL	v4	you@example.com
-STRIPE_SECRET_KEY	v2	UNREADABLE
+DATABASE_URL	v4	you@example.com	Primary Postgres, read-write
+STRIPE_SECRET_KEY	v2	UNREADABLE	Live mode, rotates quarterly
 ```
+
+The description survives, because it is plaintext metadata stored beside the key
+name — what failed to decrypt is the value, and the note is often the only thing
+left saying what the row was for.
 
 ```
 warning: 1 secret(s) could not be decrypted. This is a data-integrity failure, not a display problem: do not deploy from this environment until it is resolved.
@@ -190,6 +196,17 @@ Delete secret `OLD_TOKEN`? [y/N]
 ```
 Deleted `OLD_TOKEN` (rev 45).
 ```
+
+### Record why it went
+
+```bash
+prk secrets rm OLD_TOKEN --reason "rotated out after the 2026-08-14 incident" --project api --env production
+```
+
+The most destructive thing you can do to one secret is also the one you are most
+often asked to explain afterwards, and the tombstone is the only row left to
+explain it on. `--reason` is copied verbatim into that audit row, exactly as it
+is for [`set`](#record-why), `upload` and `rollback`.
 
 A delete writes a **tombstone version** — a history row with `op = 'delete'` and
 no ciphertext — so history survives. Recreating the key later continues the

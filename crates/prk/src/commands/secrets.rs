@@ -76,6 +76,14 @@ pub enum SecretsCommand {
         /// The secret's key.
         #[arg(value_name = "KEY")]
         key: String,
+
+        /// Recorded verbatim in the audit row. Never contains a value.
+        ///
+        /// The most destructive thing that can be done to one secret is the
+        /// one an operator most often has to explain afterwards, and the
+        /// tombstone is the only row left to explain it on.
+        #[arg(long, value_name = "TEXT")]
+        reason: Option<String>,
     },
 
     /// Replace an environment's secrets from a file.
@@ -261,19 +269,19 @@ pub fn run(command: &SecretsCommand, global: &GlobalArgs, out: Output) -> Result
                 // The value is the answer to the question that was asked, so it
                 // goes to stdout as the sole document. There is no version:
                 // the reveal route returns the key and the plaintext.
-                out.json(&serde_json::json!({
+                out.secret_json(&serde_json::json!({
                     "key": secret.key,
                     "value": secret.value.expose_secret(),
                 }));
             } else {
-                out.data(secret.value.expose_secret());
+                out.secret_data(secret.value.expose_secret());
             }
         }
 
         SecretsCommand::Set(args) => set(&context, project, environment, args, global, out)?,
 
-        SecretsCommand::Remove { key } => {
-            remove(&context, project, environment, key, global, out)?;
+        SecretsCommand::Remove { key, reason } => {
+            remove(&context, project, environment, key, reason.as_deref(), global, out)?;
         }
 
         SecretsCommand::Download(args) => {
@@ -388,11 +396,16 @@ fn descriptions_for<'a>(
 ///
 /// A one-entry `delete` in a batch. The old versions stay in history as
 /// tombstones, which is what makes delete-then-recreate continue the sequence.
+///
+/// The reason rides in the same batch `set` and `upload` put theirs in, and
+/// lands on the same audit row the tombstone does. There is nothing special
+/// about it here; it is only that this is the write that most needs one.
 fn remove(
     context: &Context,
     project: &str,
     environment: &str,
     key: &str,
+    reason: Option<&str>,
     global: &GlobalArgs,
     out: Output,
 ) -> Result<(), CliError> {
@@ -404,7 +417,7 @@ fn remove(
         context.client(),
         project,
         environment,
-        &BatchRequest { delete: vec![key], ..BatchRequest::default() },
+        &BatchRequest { delete: vec![key], reason, ..BatchRequest::default() },
     ))?;
 
     if global.json {
@@ -570,11 +583,7 @@ fn list(secrets: &[prick_api::models::SecretMeta], global: &GlobalArgs, out: Out
     }
 
     for meta in secrets {
-        if meta.unreadable {
-            out.data(&format!("{}\tv{}\tUNREADABLE", meta.key, meta.version));
-        } else {
-            out.data(&format!("{}\tv{}\t{}", meta.key, meta.version, meta.updated_by));
-        }
+        out.data(&describe_secret(meta));
     }
 
     let unreadable = secrets.iter().filter(|meta| meta.unreadable).count();
@@ -584,6 +593,34 @@ fn list(secrets: &[prick_api::models::SecretMeta], global: &GlobalArgs, out: Out
              not a display problem: do not deploy from this environment until it is resolved."
         ));
     }
+}
+
+/// One listing row.
+///
+/// Four tab-separated columns: key, current version, who wrote it last, and the
+/// description. The fourth is here because `--description` describes itself as
+/// "shown in a listing" -- before it, the flag stored a note that only `--json`
+/// would ever show, which is a promise the help text was making and the output
+/// was not keeping.
+///
+/// "none" rather than an empty column, for the same reason
+/// [`crate::commands::projects`] prints it: a blank after a tab reads as a
+/// rendering fault rather than as an absent description.
+///
+/// An unreadable row gets one too. A description is plaintext metadata stored
+/// beside the key name -- what failed to decrypt is the value, and the note is
+/// often the only thing left saying what the row was for.
+///
+/// A value rather than an `out.data` call, so a test can assert the shape of a
+/// row without capturing a stream.
+fn describe_secret(meta: &prick_api::models::SecretMeta) -> String {
+    let author = if meta.unreadable { "UNREADABLE" } else { meta.updated_by.as_str() };
+    format!(
+        "{}\tv{}\t{author}\t{}",
+        meta.key,
+        meta.version,
+        meta.description.as_deref().unwrap_or("none")
+    )
 }
 
 /// Renders an export and writes it where it was asked to go.
@@ -611,7 +648,10 @@ fn download(
                 out.note(&format!("Wrote {} secrets to {}.", values.len(), path.display()));
             }
         }
-        None => out.data_raw(&rendered),
+        // Secret-bearing, so a reader that hangs up part way through ends the
+        // run loudly. A `.env` cut in half is the one export nobody can tell
+        // from a whole one.
+        None => out.secret_data_raw(&rendered),
     }
 
     Ok(())
@@ -686,6 +726,8 @@ fn read_value(args: &SetArgs, global: &GlobalArgs, out: Output) -> Result<Secret
 
 #[cfg(test)]
 mod tests {
+    use clap::Parser as _;
+
     use super::*;
 
     #[test]
@@ -719,6 +761,50 @@ mod tests {
         // would erase the description of every secret rotated without the flag.
         assert!(descriptions_for("K", None).is_empty());
         assert_eq!(descriptions_for("K", Some("live mode")), vec![("K", Some("live mode"))]);
+    }
+
+    #[test]
+    fn a_listing_row_shows_the_description_the_set_flag_promised() {
+        // `--description` says "shown in a listing". This is the listing.
+        let row = describe_secret(&meta("DATABASE_URL", Some("Primary Postgres, read-write")));
+        assert_eq!(row, "DATABASE_URL\tv4\tyou@example.com\tPrimary Postgres, read-write");
+    }
+
+    #[test]
+    fn a_secret_without_a_description_says_none_rather_than_nothing() {
+        // A blank fourth column reads as a rendering fault; `prk projects get`
+        // prints "none" for the same reason.
+        let row = describe_secret(&meta("API_KEY", None));
+        assert_eq!(row, "API_KEY\tv4\tyou@example.com\tnone");
+    }
+
+    #[test]
+    fn an_unreadable_row_keeps_its_description() {
+        // The ciphertext is what failed. The description is plaintext metadata
+        // stored beside the key, and it is often the only thing left that says
+        // what the row was for.
+        let mut broken = meta("STRIPE_SECRET_KEY", Some("Live mode, rotates quarterly"));
+        broken.unreadable = true;
+        let row = describe_secret(&broken);
+        assert_eq!(row, "STRIPE_SECRET_KEY\tv4\tUNREADABLE\tLive mode, rotates quarterly");
+    }
+
+    /// A listing row as the server sends one.
+    ///
+    /// Built by deserialising the wire shape rather than by a struct literal,
+    /// which `#[non_exhaustive]` rules out from here anyway -- and which means
+    /// these tests also fail if the field a description arrives in is renamed.
+    fn meta(key: &str, description: Option<&str>) -> prick_api::models::SecretMeta {
+        serde_json::from_value(serde_json::json!({
+            "key": key,
+            "description": description,
+            "version": 4,
+            "updatedAt": 1_760_000_000_000_i64,
+            "updatedBy": "you@example.com",
+            "kid": "k1",
+            "unreadable": false,
+        }))
+        .expect("a listing row as the server sends one")
     }
 
     #[test]
@@ -763,11 +849,40 @@ mod tests {
     }
 
     #[test]
+    fn a_delete_can_say_why() {
+        // The one per-secret write that cannot be undone was also the one that
+        // could not be annotated. `set` and `rollback` have taken --reason
+        // since they existed; parsing the published argv is what proves this
+        // one does too.
+        let cli = crate::cli::Cli::try_parse_from([
+            "prk",
+            "secrets",
+            "rm",
+            "OLD_TOKEN",
+            "--reason",
+            "rotated out after the 2026-08-14 incident",
+            "--project",
+            "api",
+            "--env",
+            "production",
+        ])
+        .expect("the invocation printed in docs/reference/cli/secrets.md must parse");
+
+        let crate::cli::Command::Secrets(SecretsCommand::Remove { key, reason }) = cli.command
+        else {
+            panic!("`secrets rm` did not parse as itself");
+        };
+
+        assert_eq!(key, "OLD_TOKEN");
+        assert_eq!(reason.as_deref(), Some("rotated out after the 2026-08-14 incident"));
+    }
+
+    #[test]
     fn every_subcommand_reports_a_path() {
         for command in [
             SecretsCommand::List,
             SecretsCommand::Get { key: "K".to_owned() },
-            SecretsCommand::Remove { key: "K".to_owned() },
+            SecretsCommand::Remove { key: "K".to_owned(), reason: None },
             SecretsCommand::History { key: "K".to_owned() },
             SecretsCommand::Rollback { key: "K".to_owned(), to: 1, reason: None },
         ] {

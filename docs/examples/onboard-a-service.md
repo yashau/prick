@@ -114,11 +114,12 @@ prk secrets list
 ```
 
 ```
-DATABASE_URL	v1	you@example.com
-STRIPE_SECRET_KEY	v1	you@example.com
+DATABASE_URL	v1	you@example.com	none
+STRIPE_SECRET_KEY	v1	you@example.com	Test mode, rotates quarterly
 ```
 
-Values never appear in a listing. To read one back:
+The fourth column is the `--description` you set above; `none` is a key that has
+no note, not a rendering fault. Values never appear in a listing. To read one back:
 
 ```bash
 prk secrets get DATABASE_URL
