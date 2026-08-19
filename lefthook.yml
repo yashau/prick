@@ -35,8 +35,21 @@ pre-commit:
       run: rustfmt --edition 2024 {staged_files}
       stage_fixed: true
 
+    # No `svelte` in this glob. `vp fmt` is Oxfmt, which has no Svelte support:
+    # hand it a .svelte file and it drops it silently, so the glob was promising
+    # a formatter that never ran. Harmless on a mixed commit, fatal on a commit
+    # that stages ONLY .svelte files -- every path gets excluded, Oxfmt finds no
+    # targets at all, and it exits 2:
+    #
+    #     Expected at least one target file. All matched files may have been
+    #     excluded by ignore rules.
+    #
+    # Same failure mode as lint-js-app below, found the same way: the hook was
+    # broken for a whole class of commits, and which class depended on what you
+    # staged. .svelte files are formatted by nothing in this repository at
+    # present; listing them here did not change that, it only hid it.
     - name: fmt-js
-      glob: "*.{js,mjs,cjs,ts,mts,cts,jsx,tsx,svelte,json,jsonc,json5,css,md,yml,yaml,html}"
+      glob: "*.{js,mjs,cjs,ts,mts,cts,jsx,tsx,json,jsonc,json5,css,md,yml,yaml,html}"
       run: vp fmt {staged_files}
       stage_fixed: true
 
