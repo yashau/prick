@@ -1,0 +1,28 @@
+diff --git a/wrangler-dist/cli.js b/wrangler-dist/cli.js
+index 9345fc99a8922769799e1a3008feb34d83400b81..893aaf2e91ae6f00a7e1e2e5f6ff21b3bb68a2ee 100644
+--- a/wrangler-dist/cli.js
++++ b/wrangler-dist/cli.js
+@@ -183957,7 +183957,10 @@ var init_dist12 = __esm({
+             this.onPreviewTokenExpired();
+             break;
+           case "error":
+-            this.emitErrorEvent("Error inside ProxyWorker", message.error);
++            logger3.error(
++              "Error proxying request to the local Worker:",
++              message.error.message
++            );
+             break;
+         }
+       }
+@@ -279576,7 +279579,10 @@ var init_ProxyController = __esm({
+             this.emitPreviewTokenExpiredEvent(message.proxyData);
+             break;
+           case "error":
+-            this.emitErrorEvent("Error inside ProxyWorker", message.error);
++            logger2.error(
++              "Error proxying request to the local Worker:",
++              message.error.message
++            );
+             break;
+           case "debug-log":
+             logger2.debug("[ProxyWorker]", ...message.args);

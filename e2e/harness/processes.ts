@@ -257,6 +257,17 @@ export async function startDevServer(options: {
    * So record the death where the evidence already is, with the two fields that
    * decide the diagnosis: a `signal` of SIGKILL is the OOM killer, a non-zero
    * `code` is workerd deciding to stop on its own.
+   *
+   * That death had ONE cause, and it is now fixed rather than watched for. A
+   * single proxied request that failed -- `Network connection lost.`, raised
+   * when a client disconnects mid-upload, which is what Playwright does every
+   * time it closes a page while a form POST is in flight -- was fatal to the
+   * whole dev server, and was reported as `✘ [ERROR]` with an empty message.
+   * `pnpm-workspace.yaml` carries the upstream patch and the full explanation.
+   *
+   * This listener stays regardless. It cost nothing, it is what turned seventy
+   * identical `ERR_CONNECTION_REFUSED` failures into one legible line, and the
+   * next reason the Worker dies will not be that one.
    */
   let exited: { code: number | null; signal: NodeJS.Signals | null } | null = null;
   child.once("exit", (code, signal) => {
