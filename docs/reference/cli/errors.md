@@ -54,6 +54,7 @@ Scripts branch on these, so a value keeps its meaning for good.
 | 10   | Rate limited                                         |
 | 11   | Request rejected as invalid                          |
 | 12   | The response is too large to read                    |
+| 13   | Output could not be written to stdout in full        |
 
 [`prk run`](/reference/cli/run) adds two more, matching what a shell uses for
 the same conditions: **127** when the command was not found, **126** when it was
@@ -102,6 +103,7 @@ Codes the client raises itself, rather than reading off a response:
 | Code                     | Exit        | Meaning                                                                                                              |
 | ------------------------ | ----------- | -------------------------------------------------------------------------------------------------------------------- |
 | `UNREPRESENTABLE_OUTPUT` | 9           | A value contains a control character the chosen format cannot encode                                                 |
+| `TRUNCATED_OUTPUT`       | 13          | stdout would not take the whole answer, and what it took carried secret material                                     |
 | `INVALID_SCOPE`          | 11          | A scope string could not be parsed                                                                                   |
 | `UNSAFE_ENVIRONMENT`     | 11          | A secret's name is one the loader interprets, and `--allow-unsafe-env` was not given                                 |
 | `LAUNCH_FAILED`          | 1, 126, 127 | `prk run` could not start the command — **127** not found, **126** found but not executable, **1** for anything else |
@@ -232,6 +234,31 @@ prk secrets download --format json -P api -E production
 ```
 
 Both `json` and `yaml` can represent any value.
+
+### `TRUNCATED_OUTPUT` (exit 13)
+
+stdout stopped taking bytes part way through the answer — the reader of a pipe
+closed early, or a redirect ran out of disk. Whatever is on the other side is
+**incomplete**, however plausible it looks:
+
+```bash
+prk secrets download -P api -E production | head -20
+```
+
+```
+error: stdout would not take the whole answer, so what it received is truncated: The pipe has been ended. (os error 109)
+  help: Whatever read this got part of the answer. Write to a file with `prk secrets download --output <FILE>` instead of piping, and treat anything already written as incomplete.
+```
+
+Its quiet twin is not an error at all. A reader that closes on ordinary output —
+`prk completions bash | head -2`, or `prk secrets list | head` — has seen what it
+asked for, so the run **exits 0 and says nothing**. Only a truncated value, or a
+write that failed for a reason no reader chose, gets this code.
+
+Nothing else in the taxonomy changes number when a pipe breaks. Its two
+neighbours are both about something else: exit 9 is a value that cannot be
+encoded, and exit 12 is a response too large to read — a size problem at the
+other end of the run, on the way in rather than on the way out.
 
 ## Next steps
 

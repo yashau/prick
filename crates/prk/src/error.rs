@@ -77,6 +77,21 @@ pub enum CliError {
     #[error(transparent)]
     Auth(#[from] prick_auth::AuthError),
 
+    /// stdout would not take the whole answer.
+    ///
+    /// Raised after the command has returned, from [`crate::run`], because that
+    /// is the first moment it is known whether anything else went wrong. It is
+    /// **not** every short write: a reader that closes a pipe part way through
+    /// ordinary output has seen what it wanted, and that run ends quietly at 0.
+    /// This is the other two cases -- a value cut in half, and a write that
+    /// failed for a reason no reader chose -- where a caller is left holding
+    /// something that looks whole and is not.
+    ///
+    /// Carries the stream's own words, because "the pipe has been ended" and
+    /// "no space left on device" call for different next steps.
+    #[error("stdout would not take the whole answer, so what it received is truncated: {0}")]
+    TruncatedOutput(String),
+
     /// A failure with no more specific type.
     #[error("{0}")]
     Other(String),
@@ -119,6 +134,7 @@ impl CliError {
             // transparent to a script.
             Self::Launch(err) => u8::try_from(err.exit_code()).unwrap_or(EXIT_FAILURE),
             Self::Format(_) => prick_core::classify::EXIT_UNREPRESENTABLE,
+            Self::TruncatedOutput(_) => prick_core::classify::EXIT_TRUNCATED,
             Self::Scope(_) | Self::Guard(_) => ErrorKind::Validation.exit_code(),
             Self::NotImplemented { .. } | Self::Other(_) => EXIT_FAILURE,
         }
@@ -131,6 +147,7 @@ impl CliError {
             Self::Auth(err) => err.code(),
             Self::Launch(_) => "LAUNCH_FAILED",
             Self::Format(_) => "UNREPRESENTABLE_OUTPUT",
+            Self::TruncatedOutput(_) => "TRUNCATED_OUTPUT",
             Self::Scope(_) => "INVALID_SCOPE",
             Self::Guard(_) => "UNSAFE_ENVIRONMENT",
             Self::NotImplemented { .. } => "NOT_IMPLEMENTED",
@@ -152,6 +169,11 @@ impl CliError {
             Self::Format(_) => Some(
                 "The value contains a control character this format cannot encode. \
                  Use --format json or --format yaml, both of which can.",
+            ),
+            Self::TruncatedOutput(_) => Some(
+                "Whatever read this got part of the answer. Write to a file with \
+                 `prk secrets download --output <FILE>` instead of piping, and treat \
+                 anything already written as incomplete.",
             ),
             Self::Guard(_) => Some(
                 "Rename the secret, or pass --allow-unsafe-env if the child really is \
@@ -205,6 +227,22 @@ mod tests {
         });
         assert_eq!(err.exit_code(), prick_core::classify::EXIT_UNREPRESENTABLE);
         assert!(err.hint().is_some_and(|h| h.contains("json")));
+    }
+
+    #[test]
+    fn a_truncated_stream_is_neither_an_unrepresentable_value_nor_an_oversized_response() {
+        // All three are about output and mean different things: 9 is "this
+        // value cannot be written in this format", 12 is "the answer was too
+        // big to read in", 13 is "the format and the size were fine and the
+        // stream stopped taking it". Anyone debugging a pipeline reads the
+        // number first.
+        let err = CliError::TruncatedOutput("the pipe has been ended".to_owned());
+        assert_eq!(err.exit_code(), prick_core::classify::EXIT_TRUNCATED);
+        assert_ne!(err.exit_code(), prick_core::classify::EXIT_UNREPRESENTABLE);
+        assert_ne!(err.exit_code(), ErrorKind::ResponseTooLarge.exit_code());
+        assert_eq!(err.code(), "TRUNCATED_OUTPUT");
+        assert!(err.to_string().contains("the pipe has been ended"));
+        assert!(err.hint().is_some_and(|hint| hint.contains("--output")));
     }
 
     #[test]

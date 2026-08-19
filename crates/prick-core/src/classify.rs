@@ -176,6 +176,7 @@ impl ErrorKind {
     /// | 10 | Rate limited |
     /// | 11 | Request rejected as invalid |
     /// | 12 | The response is too large to read |
+    /// | 13 | Output could not be written to stdout in full |
     pub fn exit_code(self) -> u8 {
         match self {
             Self::Unauthenticated => 3,
@@ -229,6 +230,18 @@ pub const EXIT_USAGE: u8 = 2;
 /// request: the data simply cannot be written to that format without silent
 /// corruption. See [`crate::format::FormatError::UnrepresentableControl`].
 pub const EXIT_UNREPRESENTABLE: u8 = 9;
+
+/// Exit code for output that could not be written to stdout in full.
+///
+/// The opposite of [`EXIT_UNREPRESENTABLE`]: there, the value could not be
+/// turned into the requested format; here, it was, and the stream would not
+/// take all of it. A reader closing a pipe on ordinary output is neither --
+/// that is a successful run, quietly cut short, and it exits 0.
+///
+/// 13 rather than 12 because [`ErrorKind::ResponseTooLarge`] took 12 first, and
+/// the two are a size problem at each end of the same run: 12 is a response
+/// this client will not read, 13 is an answer stdout would not take.
+pub const EXIT_TRUNCATED: u8 = 13;
 
 impl fmt::Display for ErrorKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -325,6 +338,11 @@ mod tests {
                 EXIT_UNREPRESENTABLE,
                 "{kind} collided with the unrepresentable-output code"
             );
+            assert_ne!(
+                kind.exit_code(),
+                EXIT_TRUNCATED,
+                "{kind} collided with the truncated-output code"
+            );
         }
         assert_eq!(ErrorKind::Unauthenticated.exit_code(), 3);
         assert_eq!(ErrorKind::Forbidden.exit_code(), 4);
@@ -359,6 +377,24 @@ mod tests {
         assert_eq!(ErrorKind::from_status(413), ErrorKind::PayloadTooLarge);
         assert_ne!(ErrorKind::ResponseTooLarge.code(), ErrorKind::PayloadTooLarge.code());
         assert_ne!(ErrorKind::ResponseTooLarge.exit_code(), ErrorKind::PayloadTooLarge.exit_code());
+    }
+
+    #[test]
+    fn the_client_side_codes_do_not_collide_with_each_other() {
+        // Every number a script can branch on that no status produces, in one
+        // place. A repeat here is how a broken pipe comes to look like an
+        // unencodable value -- and 12 was taken by ResponseTooLarge while this
+        // code was being written, which is the collision this catches.
+        let mut codes =
+            [EXIT_SUCCESS, EXIT_FAILURE, EXIT_USAGE, EXIT_UNREPRESENTABLE, EXIT_TRUNCATED];
+        let count = codes.len();
+        codes.sort_unstable();
+        let unique: Vec<u8> = {
+            let mut seen = codes.to_vec();
+            seen.dedup();
+            seen
+        };
+        assert_eq!(unique.len(), count, "two exit codes share a number: {codes:?}");
     }
 
     #[test]

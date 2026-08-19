@@ -139,8 +139,8 @@ Encrypt the file at rest.
    ```
 
    ```
-   DATABASE_URL	v4	you@example.com
-   STRIPE_SECRET_KEY	v2	deploy@example.com
+   DATABASE_URL	v4	you@example.com	none
+   STRIPE_SECRET_KEY	v2	deploy@example.com	none
    ```
 
    ```bash
