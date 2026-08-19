@@ -10,11 +10,12 @@ One Worker, one D1 database, and nothing else to operate.
 [![CI](https://img.shields.io/github/actions/workflow/status/yashau/prick/ci.yml?branch=main&label=CI&labelColor=238112&color=C8F93A&logo=githubactions&logoColor=white)](https://github.com/yashau/prick/actions/workflows/ci.yml)
 [![CodeQL](https://img.shields.io/github/actions/workflow/status/yashau/prick/codeql.yml?branch=main&label=CodeQL&labelColor=238112&color=C8F93A&logo=github&logoColor=white)](https://github.com/yashau/prick/actions/workflows/codeql.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-C8F93A?labelColor=238112&logo=opensourceinitiative&logoColor=white)](LICENSE)
-[![Status](https://img.shields.io/badge/status-pre--release-8EDC20?labelColor=238112&logo=rust&logoColor=white)](#-status)
+[![crates.io](https://img.shields.io/crates/v/prk?label=crates.io&labelColor=238112&color=C8F93A&logo=rust&logoColor=white)](https://crates.io/crates/prk)
+[![npm](https://img.shields.io/npm/v/%40yashau%2Fprick?label=npm&labelColor=238112&color=C8F93A&logo=npm&logoColor=white)](https://www.npmjs.com/package/@yashau/prick)
 
-**[Examples](#-examples)** · **[Access control](#-access-control)** · **[Getting started](#-getting-started)** ·
-**[Quickstart](docs/getting-started/quickstart.md)** · **[CLI reference](docs/reference/cli/index.md)** ·
-**[Docs](docs/index.md)**
+**[Install](#-install)** · **[Examples](#-examples)** · **[Access control](#-access-control)** ·
+**[Getting started](#-getting-started)** · **[Quickstart](docs/getting-started/quickstart.md)** ·
+**[CLI reference](docs/reference/cli/index.md)** · **[Docs](docs/index.md)**
 
 </div>
 
@@ -53,6 +54,46 @@ process at runtime — portably, and without ever touching disk.
 Everything sits behind one Access-protected hostname. Access authenticates at the edge before the
 Worker runs; the Worker independently verifies the signed JWT to learn _who_ is calling, then
 consults its own grant table to decide _what_ they may do.
+
+## 📦 Install
+
+`prk` is one static binary. Every channel below serves the same prebuilt artefact from the
+[release page](https://github.com/yashau/prick/releases), and every one of those is
+provenance-attested — `gh attestation verify <archive> --repo yashau/prick` checks it against this
+repository.
+
+```bash
+brew install yashau/prick/prk    # macOS, Linux
+cargo binstall prk               # anywhere with a Rust toolchain
+npm install -g @yashau/prick     # anywhere with Node
+winget install yashau.prick      # Windows
+```
+
+Scoop takes the bucket first:
+
+```powershell
+scoop bucket add prick https://github.com/yashau/scoop-bucket
+scoop install prick/prk
+```
+
+`cargo install prk` builds from source instead, and the
+[release page](https://github.com/yashau/prick/releases) carries plain archives for eight
+platforms with a `SHA256SUMS` and an SPDX SBOM beside them.
+
+If you already use mise, let it own the install:
+
+```bash
+mise use -g npm:@yashau/prick
+```
+
+npm's global prefix sits inside the active Node's install directory, so a plain `npm install -g`
+lands somewhere that is only on `PATH` while mise is activated — and moves the day mise bumps Node.
+mise's own npm backend puts a `prk` shim in the shims directory that is already on your `PATH`, and
+keeps it there across Node upgrades.
+
+The npm route adds a Node process to every invocation, which `prk doctor` reports; the direct
+installs above avoid it. See **[Install the CLI](docs/getting-started/install.md)** for the whole
+picture, shell completions included.
 
 ## 💻 Examples
 
@@ -490,36 +531,18 @@ See **[Backup and recovery](docs/guides/backup-and-recovery.md)** and
 
 ## 📊 Status
 
-**Pre-release.** The architecture is settled and the test suite is real: six suites — Rust,
-Worker + UI, end-to-end, scripts, the GitHub Action and the MCP server — and CI runs every one of
-them on every push. `prick-core` additionally carries a machine-checked purity proof under miri.
-`mise run test` prints the current counts, which is the only place they stay right.
+The CLI is published on **crates.io, npm, Homebrew, Scoop and WinGet**, and the Worker is yours to
+deploy. Releases are CalVer, cut from a git tag, and every archive carries a provenance attestation
+and an SBOM.
 
-The CLI ships a prebuilt, provenance-attested binary for every platform, through whichever channel
-you already use:
+The test suite is real: six suites — Rust, Worker + UI, end-to-end, scripts, the GitHub Action and
+the MCP server — and CI runs every one of them on every push. `prick-core` additionally carries a
+machine-checked purity proof under miri, and `cargo audit bin` works on a downloaded binary because
+the dependency list is embedded in it. `mise run test` prints the current counts, which is the only
+place they stay right.
 
-```bash
-brew install yashau/prick/prk     # macOS, Linux
-scoop install prick/prk           # Windows
-winget install yashau.prick       # Windows
-cargo binstall prk                # anywhere with a Rust toolchain
-npm install -g @yashau/prick      # anywhere with Node
-```
-
-Or take the archive straight off the [releases page](https://github.com/yashau/prick/releases), or
-build from source with `mise run build:rust`. See
-**[Install the CLI](docs/getting-started/install.md)**.
-
-If you already use mise, let it own the install instead:
-
-```bash
-mise use -g npm:@yashau/prick
-```
-
-npm's global prefix sits inside the active Node's install directory, so a plain `npm install -g`
-lands somewhere that is only on `PATH` while mise is activated — and moves the day mise bumps Node.
-mise's own npm backend puts a `prk` shim in the shims directory that is already on your `PATH`, and
-keeps it there across Node upgrades.
+Migrations are additive only, the API is versioned at `/api/v1`, and a client and server on
+different versions is supported — `prk doctor` reports both.
 
 ## 🛠️ Development
 
