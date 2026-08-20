@@ -67,7 +67,16 @@
     </Table.Header>
     <Table.Body>
       {#each identities as identity (identity.id)}
-        <Table.Row>
+        <!--
+          The whole row opens the identity, via a pseudo-element on the name's
+          own anchor rather than a handler on the `<tr>` -- so middle-click,
+          ctrl-click, "copy link address" and Enter all keep working, and a
+          screen reader still sees one link per row.
+
+          `relative` is what the overlay is positioned against, and the two
+          cells carrying their own controls are lifted above it below.
+        -->
+        <Table.Row class="relative has-[a:focus-visible]:bg-muted/50">
           <Table.Cell>
             <IdentityCell
               kind={identity.kind}
@@ -75,6 +84,7 @@
               displayName={identity.displayName}
               disabled={identity.disabled}
               href="/users/{identity.id}"
+              rowLink
             />
           </Table.Cell>
 
@@ -90,7 +100,8 @@
             </span>
           </Table.Cell>
 
-          <Table.Cell>
+          <!-- Above the overlay: each badge is its own link to a group. -->
+          <Table.Cell class="relative z-10">
             {#if (memberships[identity.id] ?? []).length === 0}
               <span class="text-muted-foreground text-sm">—</span>
             {:else}
@@ -122,7 +133,8 @@
             {/if}
           </Table.Cell>
 
-          <Table.Cell>
+          <!-- Above the overlay: the kill switch must never be a row click. -->
+          <Table.Cell class="relative z-10">
             {#if canManage}
               <form
                 bind:this={forms[identity.id]}

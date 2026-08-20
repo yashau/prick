@@ -33,7 +33,14 @@
 </script>
 
 <Card.Root>
+  <!--
+    The form carries the card's own column layout: `Card.Root` spaces its
+    sections with `gap-(--card-spacing)`, which only reaches direct children,
+    and a form wrapping the header, content and footer is one child -- so the
+    gap lands nowhere and the three sections stack flush.
+  -->
   <form
+    class="flex flex-col gap-(--card-spacing)"
     method="POST"
     action="?/update"
     use:enhance={() => {
@@ -95,7 +102,7 @@
       </Field.Group>
     </Card.Content>
 
-    <Card.Footer>
+    <Card.Footer class="border-t">
       <Button type="submit" disabled={submitting}>
         {submitting ? 'Saving…' : 'Save changes'}
       </Button>
