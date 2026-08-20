@@ -13,7 +13,10 @@
 //! 4. **Register dynamically** for `http://127.0.0.1:<port>/callback`.
 //! 5. **PKCE S256**, with the Cloudflare quirk handled -- see
 //!    [`generate_pkce`].
-//! 6. **Open the browser**, then accept exactly one request on the listener.
+//! 6. **Open the browser**, then take the redirect from whichever channel
+//!    delivers it -- one request on the listener, or an address pasted by an
+//!    operator whose browser cannot reach this machine. See
+//!    [`crate::callback::await_redirect`] for why both are open at once.
 //! 7. **Compare `state` in constant time.**
 //! 8. **Exchange** the code and store the tokens.
 //!
@@ -36,7 +39,7 @@ use serde::Deserialize;
 use prick_api::{Body, Client};
 use prick_core::pkce;
 
-use crate::callback::CallbackListener;
+use crate::callback::{self, CallbackListener, RedirectSource};
 use crate::discovery::{self, AuthorizationServer, Probe};
 use crate::error::AuthError;
 use crate::store::{StoredSession, Tokens};
@@ -360,11 +363,20 @@ fn single<'a>(params: &'a [(String, String)], name: &str) -> Option<&'a str> {
 pub struct LoginOptions {
     /// How long to wait for the browser round trip.
     pub timeout: Duration,
+
+    /// Whether a redirect pasted on stdin may complete the login.
+    ///
+    /// The caller decides, because the caller knows whether there is a person
+    /// at a terminal: it belongs off when stdin is not a terminal or `--no-input`
+    /// was given, and on otherwise. When it is on, the paste races the loopback
+    /// listener and the first answer wins -- see [`crate::callback::await_redirect`]
+    /// for why that is a race rather than a decision.
+    pub accept_pasted_redirect: bool,
 }
 
 impl Default for LoginOptions {
     fn default() -> Self {
-        Self { timeout: Duration::from_secs(LOGIN_TIMEOUT_SECS) }
+        Self { timeout: Duration::from_secs(LOGIN_TIMEOUT_SECS), accept_pasted_redirect: false }
     }
 }
 
@@ -375,6 +387,8 @@ pub struct LoginOutcome {
     pub session: StoredSession,
     /// What the unauthenticated probe revealed.
     pub probe: Probe,
+    /// Which channel the authorization response arrived on.
+    pub redirect_source: RedirectSource,
 }
 
 /// Runs the whole interactive login.
@@ -462,11 +476,17 @@ where
     )?;
     open(&authorize)?;
 
-    // 7. One request, on a blocking thread so the reactor stays free.
+    // 7. The redirect, from whichever channel produces it: the loopback
+    //    listener the browser was pointed at, or an operator pasting the
+    //    address it was redirected to. On a blocking thread so the reactor
+    //    stays free.
     let timeout = options.timeout;
-    let params = tokio::task::spawn_blocking(move || listener.wait_for_callback(timeout))
-        .await
-        .map_err(|err| AuthError::Io(std::io::Error::other(err.to_string())))??;
+    let accept_pasted = options.accept_pasted_redirect;
+    let (params, redirect_source) = tokio::task::spawn_blocking(move || {
+        callback::await_redirect(listener, timeout, accept_pasted)
+    })
+    .await
+    .map_err(|err| AuthError::Io(std::io::Error::other(err.to_string())))??;
 
     if let Some(error) = single(&params, "error") {
         return Err(AuthError::Denied { error: error.to_owned() });
@@ -504,6 +524,7 @@ where
             tokens,
         },
         probe,
+        redirect_source,
     })
 }
 

@@ -55,6 +55,7 @@ pub mod oauth;
 pub mod session;
 pub mod store;
 
+pub use callback::RedirectSource;
 pub use credential::{Credential, ServiceToken, TokenSource, service_token_from_env};
 pub use discovery::Probe;
 pub use error::AuthError;
