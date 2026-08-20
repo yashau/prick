@@ -201,7 +201,7 @@ prk secrets list -P api -E production
 ```
 
 ```bash
-prk secrets delete BLOB_ONE -P api -E production
+prk secrets rm BLOB_ONE -P api -E production
 ```
 
 The ceiling is derived from the server's own `SECRET_MAX_BYTES` and

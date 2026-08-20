@@ -158,12 +158,20 @@ fn is_exec_format_error(source: &io::Error) -> bool {
     source.raw_os_error() == Some(libc::ENOEXEC)
 }
 
-/// Windows reports a non-image file as `ERROR_BAD_EXE_FORMAT`.
+/// Windows reports a file that is not a runnable image under two codes.
+///
+/// `ERROR_BAD_EXE_FORMAT` is the one a malformed or 16-bit image gets.
+/// `ERROR_EXE_MACHINE_TYPE_MISMATCH` covers an image built for another machine,
+/// and is also what `CreateProcess` reports for a file whose contents are not an
+/// image at all -- a script saved as `.exe`, say. Both mean the file was found
+/// and cannot be executed here, which is what a shell exits 126 for.
 #[cfg(windows)]
 fn is_exec_format_error(source: &io::Error) -> bool {
     /// `ERROR_BAD_EXE_FORMAT`.
     const ERROR_BAD_EXE_FORMAT: i32 = 193;
-    source.raw_os_error() == Some(ERROR_BAD_EXE_FORMAT)
+    /// `ERROR_EXE_MACHINE_TYPE_MISMATCH`.
+    const ERROR_EXE_MACHINE_TYPE_MISMATCH: i32 = 216;
+    matches!(source.raw_os_error(), Some(ERROR_BAD_EXE_FORMAT | ERROR_EXE_MACHINE_TYPE_MISMATCH))
 }
 
 #[cfg(not(any(unix, windows)))]
@@ -217,6 +225,18 @@ mod tests {
         assert!(matches!(err, LaunchError::NoExecFormat { .. }));
         assert_eq!(err.exit_code(), 126);
         assert!(err.hint().is_some_and(|h| h.contains("shebang")));
+    }
+
+    /// The code a file that is not an image at all actually arrives with, so a
+    /// `.exe` holding anything else exits 126 rather than falling through to
+    /// the generic 1.
+    #[cfg(windows)]
+    #[test]
+    fn an_image_this_machine_cannot_run_is_recognised_too() {
+        let err =
+            LaunchError::from_io(&OsString::from("script.exe"), io::Error::from_raw_os_error(216));
+        assert!(matches!(err, LaunchError::NoExecFormat { .. }));
+        assert_eq!(err.exit_code(), 126);
     }
 
     #[test]
