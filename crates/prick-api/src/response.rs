@@ -266,9 +266,14 @@ pub fn classify(facts: &ResponseFacts) -> Option<Classified> {
 
     // A Cloudflare security product intercepted the request. The status alone
     // would say 403 and nothing else.
+    //
+    // `Mitigated`, not `Forbidden`: this is checked BEFORE the 403 arm below
+    // for the same reason it has its own kind at all -- an edge challenge and an
+    // Access denial are the same status with fixes in different systems, and
+    // Forbidden's hint sends the reader to the grant table.
     if let Some(mitigation) = facts.cf_mitigated.as_deref() {
         return describe(
-            ErrorKind::Forbidden,
+            ErrorKind::Mitigated,
             format!(
                 "Cloudflare intercepted this request with a `{mitigation}` mitigation, so it \
                  never reached the server"
@@ -541,7 +546,11 @@ mod tests {
             ..ResponseFacts::default()
         };
         let classified = classify(&facts).expect("a challenge is a failure");
-        assert_eq!(classified.kind, ErrorKind::Forbidden);
+        assert_eq!(
+            classified.kind,
+            ErrorKind::Mitigated,
+            "an edge challenge must not be reported as an authorization failure"
+        );
         assert!(classified.message.contains("challenge"));
     }
 

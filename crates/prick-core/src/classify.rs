@@ -55,6 +55,23 @@ pub enum ErrorKind {
     Timeout,
     /// Something answered, but it is not a prick server.
     NotPrick,
+    /// A Cloudflare security product intercepted the request at the edge, so it
+    /// never reached the Worker.
+    ///
+    /// Read off the `cf-mitigated` response header, never off a status: the
+    /// status alone is a bare 403, which is indistinguishable from Access
+    /// refusing the identity.
+    ///
+    /// Deliberately **not** [`Self::Forbidden`]. The two look alike -- both
+    /// arrive as a 403 -- and their fixes are in different systems: Forbidden
+    /// means the grant table has no row for this identity, and this means a bot
+    /// or WAF rule matched a request that was never authorized in the first
+    /// place. Pointing an operator at `prk whoami` and the grant table for a
+    /// managed challenge sends them to audit a system that is working.
+    ///
+    /// Not retryable. The identical request is challenged identically until
+    /// something changes at the edge.
+    Mitigated,
     /// The server answered correctly, and the answer was larger than the client
     /// will read into memory.
     ///
@@ -149,6 +166,9 @@ impl ErrorKind {
             Self::NotPrick => Some(
                 "The URL answered but is not a prick server. Point --api-url at the Worker's hostname, not at the web UI or a proxy.",
             ),
+            Self::Mitigated => Some(
+                "Cloudflare challenged this request before it reached the server, which bot scoring does to datacenter IPs and non-browser clients. Skip Super Bot Fight Mode for this client with a WAF custom rule; plain Bot Fight Mode cannot be skipped and has to be turned off.",
+            ),
             Self::ResponseTooLarge => Some(
                 "This environment holds more secret data than one response can carry. `prk secrets list` names every key and `prk secrets get <KEY>` still reads one at a time; delete or shrink the largest.",
             ),
@@ -183,7 +203,11 @@ impl ErrorKind {
             Self::Forbidden => 4,
             Self::NotFound => 5,
             Self::Conflict | Self::PreconditionFailed => 6,
-            Self::Unreachable | Self::TlsFailure | Self::Timeout | Self::NotPrick => 7,
+            Self::Unreachable
+            | Self::TlsFailure
+            | Self::Timeout
+            | Self::NotPrick
+            | Self::Mitigated => 7,
             Self::ServerError | Self::ServiceUnavailable => 8,
             Self::RateLimited => 10,
             Self::Validation | Self::PayloadTooLarge => 11,
@@ -209,6 +233,7 @@ impl ErrorKind {
             Self::TlsFailure => "TLS_FAILURE",
             Self::Timeout => "TIMEOUT",
             Self::NotPrick => "NOT_A_PRICK_SERVER",
+            Self::Mitigated => "MITIGATED",
             Self::ResponseTooLarge => "RESPONSE_TOO_LARGE",
             Self::Unknown => "UNKNOWN",
         }
@@ -268,6 +293,7 @@ mod tests {
         ErrorKind::TlsFailure,
         ErrorKind::Timeout,
         ErrorKind::NotPrick,
+        ErrorKind::Mitigated,
         ErrorKind::ResponseTooLarge,
         ErrorKind::Unknown,
     ];

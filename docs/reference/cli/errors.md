@@ -79,24 +79,25 @@ fi
 
 The stable codes emitted under `--json`.
 
-| Code                  | Exit | Retryable | Meaning                                                                                     |
-| --------------------- | ---- | --------- | ------------------------------------------------------------------------------------------- |
-| `UNAUTHENTICATED`     | 3    | no        | No credentials, or they expired and could not be refreshed                                  |
-| `FORBIDDEN`           | 4    | no        | Authenticated, but not granted the role this operation needs                                |
-| `NOT_FOUND`           | 5    | no        | The project, environment, secret or version does not exist — or is not visible to you       |
-| `CONFLICT`            | 6    | yes       | A concurrent writer won                                                                     |
-| `PRECONDITION_FAILED` | 6    | no        | `--expected-rev` did not match                                                              |
-| `VALIDATION_FAILED`   | 11   | no        | The payload was rejected                                                                    |
-| `PAYLOAD_TOO_LARGE`   | 11   | no        | The environment would exceed its secret cap                                                 |
-| `RATE_LIMITED`        | 10   | yes       | The server asked the client to slow down                                                    |
-| `SERVER_ERROR`        | 8    | yes       | The server failed internally                                                                |
-| `SERVICE_UNAVAILABLE` | 8    | yes       | Up but temporarily refusing work, or no admins configured yet                               |
-| `UNREACHABLE`         | 7    | yes       | DNS, connection refused, or no route                                                        |
-| `TLS_FAILURE`         | 7    | no        | The TLS handshake failed — typically a corporate proxy with a private certificate authority |
-| `TIMEOUT`             | 7    | yes       | The request exceeded `--timeout`                                                            |
-| `NOT_A_PRICK_SERVER`  | 7    | no        | Something answered, but it is not a prick server                                            |
-| `RESPONSE_TOO_LARGE`  | 12   | no        | The server answered correctly and the answer is larger than the client will read            |
-| `UNKNOWN`             | 1    | no        | A status with no specific handling                                                          |
+| Code                  | Exit | Retryable | Meaning                                                                                      |
+| --------------------- | ---- | --------- | -------------------------------------------------------------------------------------------- |
+| `UNAUTHENTICATED`     | 3    | no        | No credentials, or they expired and could not be refreshed                                   |
+| `FORBIDDEN`           | 4    | no        | Authenticated, but not granted the role this operation needs                                 |
+| `NOT_FOUND`           | 5    | no        | The project, environment, secret or version does not exist — or is not visible to you        |
+| `CONFLICT`            | 6    | yes       | A concurrent writer won                                                                      |
+| `PRECONDITION_FAILED` | 6    | no        | `--expected-rev` did not match                                                               |
+| `VALIDATION_FAILED`   | 11   | no        | The payload was rejected                                                                     |
+| `PAYLOAD_TOO_LARGE`   | 11   | no        | The environment would exceed its secret cap                                                  |
+| `RATE_LIMITED`        | 10   | yes       | The server asked the client to slow down                                                     |
+| `SERVER_ERROR`        | 8    | yes       | The server failed internally                                                                 |
+| `SERVICE_UNAVAILABLE` | 8    | yes       | Up but temporarily refusing work, or no admins configured yet                                |
+| `UNREACHABLE`         | 7    | yes       | DNS, connection refused, or no route                                                         |
+| `TLS_FAILURE`         | 7    | no        | The TLS handshake failed — typically a corporate proxy with a private certificate authority  |
+| `TIMEOUT`             | 7    | yes       | The request exceeded `--timeout`                                                             |
+| `NOT_A_PRICK_SERVER`  | 7    | no        | Something answered, but it is not a prick server                                             |
+| `MITIGATED`           | 7    | no        | A Cloudflare security product challenged or blocked the request before it reached the server |
+| `RESPONSE_TOO_LARGE`  | 12   | no        | The server answered correctly and the answer is larger than the client will read             |
+| `UNKNOWN`             | 1    | no        | A status with no specific handling                                                           |
 
 Codes the client raises itself, rather than reading off a response:
 
@@ -182,6 +183,28 @@ prk doctor
 Status is classified **before** the response body is parsed, which is what turns
 a proxy's HTML error page into this message rather than an unreadable decoding
 error.
+
+### `MITIGATED` (exit 7)
+
+Cloudflare intercepted the request at the edge, so it never reached your Worker.
+The message names the mitigation it applied:
+
+```
+error: Cloudflare intercepted this request with a `challenge` mitigation, so it never reached the server
+  help: Cloudflare challenged this request before it reached the server, which bot scoring does to datacenter IPs and non-browser clients. Skip Super Bot Fight Mode for this client with a WAF custom rule; plain Bot Fight Mode cannot be skipped and has to be turned off.
+```
+
+This is read off the `cf-mitigated` response header rather than the status,
+because the status is a bare `403` — identical to Access refusing your
+identity. The distinction matters: `FORBIDDEN` is fixed with a grant, and no
+grant will ever fix this one. Nothing about your credential is wrong, and
+retrying is pointless until something changes at the edge.
+
+It is common on a server or a CI runner and rare on a laptop, because bot scoring
+reacts to datacenter IP ranges and non-browser clients — which is exactly what
+`prk` on a VPS looks like.
+
+See [Cloudflare protections](/guides/cloudflare-protections) for the fix.
 
 ### `RESPONSE_TOO_LARGE` (exit 12)
 
