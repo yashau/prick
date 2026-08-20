@@ -1,7 +1,9 @@
 <script lang="ts">
+  import ChevronsUpDownIcon from '@lucide/svelte/icons/chevrons-up-down';
   import FolderIcon from '@lucide/svelte/icons/folder';
   import KeyRoundIcon from '@lucide/svelte/icons/key-round';
   import LayersIcon from '@lucide/svelte/icons/layers';
+  import LogOutIcon from '@lucide/svelte/icons/log-out';
   import ScrollTextIcon from '@lucide/svelte/icons/scroll-text';
   import SettingsIcon from '@lucide/svelte/icons/settings';
   import SlidersHorizontalIcon from '@lucide/svelte/icons/sliders-horizontal';
@@ -15,6 +17,7 @@
   import ProjectSwitcher from '$lib/components/project-switcher.svelte';
   import * as Avatar from '$lib/components/ui/avatar/index.js';
   import { Badge } from '$lib/components/ui/badge/index.js';
+  import * as DropdownMenu from '$lib/components/ui/dropdown-menu/index.js';
   import { ScrollArea } from '$lib/components/ui/scroll-area/index.js';
   import * as Sidebar from '$lib/components/ui/sidebar/index.js';
 
@@ -231,32 +234,89 @@
   <Sidebar.Footer>
     <Sidebar.Menu>
       <Sidebar.MenuItem>
-        <Sidebar.MenuButton size="lg" tooltipContent={viewer.subject}>
-          <Avatar.Root class="size-8 rounded-lg">
-            <Avatar.Fallback class="rounded-lg">{initials}</Avatar.Fallback>
-          </Avatar.Root>
-          <div class="grid flex-1 text-left text-sm leading-tight">
-            <!--
-              The name when there is one, the address otherwise -- the same
-              `displayName ?? subject` fallback every other identity in this UI
-              renders. The address stays reachable: it is this button's tooltip,
-              and it is what the account screens key on.
-            -->
-            <span class="truncate font-medium">{viewer.displayName ?? viewer.subject}</span>
-            <span class="text-muted-foreground truncate text-xs">
-              {viewer.role === null ? 'No install-wide role' : `${viewer.role} everywhere`}
-            </span>
-          </div>
-          <Badge variant="outline" class="ml-auto" title={viewer.role === null
-            ? 'No global grant. Any access you have is scoped to a project or an environment.'
-            : `Global ${viewer.role}`}>
-            {roleLabel}
+        <DropdownMenu.Root>
+          <DropdownMenu.Trigger>
+            {#snippet child({ props })}
+              <Sidebar.MenuButton
+                {...props}
+                size="lg"
+                tooltipContent={viewer.subject}
+                class="data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground"
+              >
+                <Avatar.Root class="size-8 rounded-lg">
+                  <Avatar.Fallback class="rounded-lg">{initials}</Avatar.Fallback>
+                </Avatar.Root>
+                <div class="grid flex-1 text-left text-sm leading-tight">
+                  <!--
+                    The name when there is one, the address otherwise -- the same
+                    `displayName ?? subject` fallback every other identity in this UI
+                    renders. The address stays reachable: it is this button's tooltip,
+                    it heads the menu below, and it is what the account screens key on.
+                  -->
+                  <span class="truncate font-medium">{viewer.displayName ?? viewer.subject}</span>
+                  <span class="text-muted-foreground truncate text-xs">
+                    {viewer.role === null ? 'No install-wide role' : `${viewer.role} everywhere`}
+                  </span>
+                </div>
+                <Badge variant="outline" class="ml-auto" title={viewer.role === null
+                  ? 'No global grant. Any access you have is scoped to a project or an environment.'
+                  : `Global ${viewer.role}`}>
+                  {roleLabel}
+                  {#if viewer.kind === 'service'}
+                    <KeyRoundIcon class="size-3" aria-hidden="true" />
+                    <span class="sr-only">service token</span>
+                  {/if}
+                </Badge>
+                <ChevronsUpDownIcon class="size-4" aria-hidden="true" />
+              </Sidebar.MenuButton>
+            {/snippet}
+          </DropdownMenu.Trigger>
+          <DropdownMenu.Content
+            class="w-(--bits-dropdown-menu-anchor-width) min-w-60"
+            align="end"
+            side="top"
+          >
+            <DropdownMenu.GroupHeading class="text-muted-foreground font-normal">
+              {viewer.subject}
+            </DropdownMenu.GroupHeading>
+            <DropdownMenu.Separator />
             {#if viewer.kind === 'service'}
-              <KeyRoundIcon class="size-3" aria-hidden="true" />
-              <span class="sr-only">service token</span>
+              <!--
+                A service token authenticates per request with its client id and
+                secret. There is no cookie to clear, so there is nothing here to
+                honour -- say that rather than offering a button that would do
+                nothing.
+              -->
+              <DropdownMenu.Item disabled>
+                <KeyRoundIcon class="size-4" aria-hidden="true" />
+                Service tokens hold no session
+              </DropdownMenu.Item>
+            {:else}
+              <DropdownMenu.Item>
+                {#snippet child({ props })}
+                  <!--
+                    `data-sveltekit-reload` is load-bearing. This path is
+                    same-origin, so the router would otherwise claim the click and
+                    look for a route that does not exist; the endpoint is served by
+                    Cloudflare at the edge and never reaches the Worker, so it has
+                    to be a real document request.
+
+                    Scope worth knowing: this clears the Access session for the
+                    whole team, not just this app, and previously issued tokens
+                    stop being accepted after 20-30 seconds. Entra keeps its own
+                    session, so signing back in lands on its account picker rather
+                    than a password prompt -- which is the point, since picking a
+                    different account is the reason to use this.
+                  -->
+                  <a {...props} href="/cdn-cgi/access/logout" data-sveltekit-reload>
+                    <LogOutIcon class="size-4" aria-hidden="true" />
+                    Sign out
+                  </a>
+                {/snippet}
+              </DropdownMenu.Item>
             {/if}
-          </Badge>
-        </Sidebar.MenuButton>
+          </DropdownMenu.Content>
+        </DropdownMenu.Root>
       </Sidebar.MenuItem>
     </Sidebar.Menu>
   </Sidebar.Footer>
