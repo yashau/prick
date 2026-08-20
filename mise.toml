@@ -373,6 +373,15 @@ description = "Run a signed-in, seeded copy of the app for browsing (PRICK_DEMO_
 run = "pnpm --dir e2e run serve"
 wait_for = ["bootstrap:js"]
 
+# Pictures of every screen, for the README and for reviewing a visual change
+# without needing a browser. Reads the demo server rather than starting one:
+# `demo` is long-lived and interactive, and a task that owned both would have to
+# race its own server's readiness. The script says so if nothing is listening.
+[tasks.screenshots]
+description = "Capture screenshots/ from a running `mise run demo` (--only=, --light)"
+run = "node scripts/screenshots.mjs"
+wait_for = ["bootstrap:js"]
+
 [tasks."e2e:install"]
 description = "Download the Playwright browsers (CI runs this only on a cache miss)"
 # Browser binaries ONLY. This used to be `playwright install --with-deps`, and
