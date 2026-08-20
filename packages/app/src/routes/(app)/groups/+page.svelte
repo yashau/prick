@@ -83,7 +83,14 @@
       </Table.Caption>
       <Table.Header>
         <Table.Row>
-          <Table.Head>Group</Table.Head>
+          <!--
+            `w-full` here and `max-w-0` on the matching cell: the pair that
+            makes `truncate` work in an auto-layout table. Every other column is
+            a fixed width, so this one absorbs the remainder, and the zero
+            max-width gives its contents a definite box to be clipped against
+            instead of widening the table.
+          -->
+          <Table.Head class="w-full max-w-0">Group</Table.Head>
           <Table.Head class="w-28">Members</Table.Head>
           <Table.Head class="w-28">Grants</Table.Head>
           <Table.Head class="w-44">Updated</Table.Head>
@@ -91,17 +98,44 @@
       </Table.Header>
       <Table.Body>
         {#each data.groups as group (group.id)}
-          <Table.Row>
-            <Table.Cell>
-              <div class="min-w-0">
-                <div class="font-medium">
-                  <a class="underline-offset-4 hover:underline" href="/groups/{group.id}">
-                    {group.name}
-                  </a>
-                </div>
-                <div class="text-muted-foreground font-mono text-xs break-all">{group.slug}</div>
+          <!--
+            THE WHOLE ROW IS THE LINK, and it is still one anchor.
+
+            A pseudo-element on the name's own `<a>`, stretched over the row,
+            rather than a handler on the `<tr>`: middle-click, ctrl-click, "copy
+            link address" and Enter all keep working, and a screen reader still
+            sees one link per row. `relative` is what the overlay is positioned
+            against. No cell here carries a control, so nothing needs lifting
+            above it.
+
+            The cost is that row text is no longer selectable. The slug is the
+            only thing anyone would copy, and it is selectable on the group's
+            own page.
+          -->
+          <Table.Row class="relative h-16 has-[a:focus-visible]:bg-muted/50">
+            <Table.Cell class="max-w-0">
+              <!--
+                No underline and no ring: the row's tint is the whole
+                affordance, for hover and for keyboard focus alike, and
+                decorating one word inside a target the size of the row points
+                at the wrong thing.
+              -->
+              <a
+                class="font-medium after:absolute after:inset-0 after:content-[''] focus-visible:outline-none"
+                href="/groups/{group.id}"
+              >
+                <span class="block truncate">{group.name}</span>
+              </a>
+              <!--
+                Slug and description share one line so a row is two lines
+                whether or not a description exists. A third line that only some
+                rows have is what made the heights differ.
+              -->
+              <div class="text-muted-foreground truncate text-xs">
+                <span class="font-mono">{group.slug}</span>
                 {#if group.description}
-                  <p class="text-muted-foreground mt-1 text-sm">{group.description}</p>
+                  <span aria-hidden="true">·</span>
+                  {group.description}
                 {/if}
               </div>
             </Table.Cell>
