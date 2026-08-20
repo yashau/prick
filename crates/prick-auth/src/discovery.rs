@@ -324,7 +324,13 @@ pub async fn fetch_protected_resource(
     url: &str,
 ) -> Result<ProtectedResource, AuthError> {
     let metadata: ProtectedResource = client.get_json(url).await.map_err(|err| {
-        AuthError::Discovery { reason: format!("{url} could not be read: {err}") }
+        // Flattening a mitigation into `Discovery` here is what made a challenged
+        // probe indistinguishable from a spelling this deployment does not serve.
+        if stopped_at_the_edge(&err) {
+            AuthError::Api(err)
+        } else {
+            AuthError::Discovery { reason: format!("{url} could not be read: {err}") }
+        }
     })?;
 
     if metadata.authorization_servers.is_empty() {
@@ -377,12 +383,32 @@ pub async fn resolve_protected_resource(
 
     // `fetch_protected_resource` is the one definition of "usable metadata" --
     // fetched, parsed, and naming at least one authorization server. Reusing it
-    // per candidate keeps that rule in one place; the error is discarded because
-    // a candidate that does not answer is the expected case here, not a failure.
+    // per candidate keeps that rule in one place. A candidate that does not
+    // answer is the expected case here rather than a failure, so its error is
+    // dropped -- with one exception, kept below.
+    let mut mitigated: Option<AuthError> = None;
+
     for url in &candidates {
-        if let Ok(metadata) = fetch_protected_resource(client, url).await {
-            return Ok(metadata);
+        match fetch_protected_resource(client, url).await {
+            Ok(metadata) => return Ok(metadata),
+            Err(err) => {
+                // The FIRST mitigation, and the walk continues. A narrower edge
+                // exception can cover one candidate and not another -- `/api` is
+                // commonly skipped while `/.well-known` is not -- and a document
+                // that answers is still the better outcome than any error.
+                if mitigated.is_none()
+                    && matches!(&err, AuthError::Api(api) if stopped_at_the_edge(api))
+                {
+                    mitigated = Some(err);
+                }
+            }
         }
+    }
+
+    // Reported in preference to the summary below, which would name every URL
+    // tried and imply the deployment serves none of them.
+    if let Some(err) = mitigated {
+        return Err(err);
     }
 
     Err(AuthError::Discovery {
@@ -391,6 +417,23 @@ pub async fn resolve_protected_resource(
             candidates.join(", ")
         ),
     })
+}
+
+/// Whether a failed candidate was stopped at the edge rather than simply not
+/// existing.
+///
+/// The candidate loops below tolerate failures on purpose: deployments answer
+/// protected-resource metadata at different spellings, and walking the list is
+/// how the one that works is found. A 404 is therefore expected input, not an
+/// error worth reporting.
+///
+/// A mitigation is not that. The request never reached the server, so "no
+/// document at any of these URLs" states a fact about Cloudflare while
+/// describing it as a fact about the deployment -- and the reader is sent to
+/// check `--api-url`, which is already correct. Told apart here so the loops can
+/// report the mitigation instead of their own summary.
+fn stopped_at_the_edge(err: &prick_api::ApiError) -> bool {
+    err.kind() == prick_core::classify::ErrorKind::Mitigated
 }
 
 /// Fetches RFC 8414 authorization server metadata, trying each well-known URL.
@@ -405,6 +448,7 @@ pub async fn fetch_authorization_server(
 ) -> Result<AuthorizationServer, AuthError> {
     let candidates = well_known_urls(issuer);
     let mut last: Option<String> = None;
+    let mut mitigated: Option<prick_api::ApiError> = None;
 
     for url in &candidates {
         match client.get_json::<AuthorizationServer>(url).await {
@@ -426,8 +470,18 @@ pub async fn fetch_authorization_server(
                 }
                 return Ok(metadata);
             }
-            Err(err) => last = Some(format!("{url}: {err}")),
+            Err(err) => {
+                if mitigated.is_none() && stopped_at_the_edge(&err) {
+                    mitigated = Some(err);
+                } else {
+                    last = Some(format!("{url}: {err}"));
+                }
+            }
         }
+    }
+
+    if let Some(err) = mitigated {
+        return Err(AuthError::Api(err));
     }
 
     Err(AuthError::Discovery {

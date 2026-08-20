@@ -57,6 +57,14 @@ Check **Security → Settings**, filtered to bot traffic, before writing any rul
 The two products have the same name to within one word and behave completely
 differently.
 
+:::note[You do not need to buy anything to write a rule]
+Zone-level custom rules are on every plan, Free included — five of them on Free,
+twenty on Pro. The dashboard also offers an **account-level WAF** add-on, which
+is a different product: it applies one ruleset across every domain in the
+account and requires Enterprise. It is not what any of this needs. Work inside
+the zone for the hostname, not at the account level.
+:::
+
 ### Super Bot Fight Mode (Pro and above)
 
 This one runs on the Ruleset Engine, and custom rules are evaluated before it, so
@@ -64,21 +72,38 @@ a rule with the **Skip** action works. In **Security → WAF → Custom rules**,
 create a rule, set the action to _Skip_, and select Super Bot Fight Mode as what
 to skip.
 
-For a single known server, match the address — the narrowest thing that solves
-the problem:
+Match the hostname. prick owns the whole host, and every path on it is behind
+Access:
+
+```
+http.host eq "prick.example.com"
+```
+
+Tighter still, when the client is a server with a fixed address:
 
 ```
 ip.src eq 203.0.113.10 and http.host eq "prick.example.com"
 ```
 
-For CI, or anywhere the source address is not stable, match the API path instead:
-
-```
-http.host eq "prick.example.com" and starts_with(http.request.uri.path, "/api")
-```
-
 Order matters. The skip has to sit above any rule that would challenge the same
 request.
+
+:::caution[A rule scoped to `/api` is not enough]
+`prk login` does not start at `/api`. It fetches RFC 9728 discovery documents
+first, and those live under `/.well-known/` — the resource path is **appended**
+to the well-known prefix, so
+`/.well-known/oauth-protected-resource/api/v1/health` contains `/api` without
+starting with it. A rule matching `starts_with(http.request.uri.path, "/api")`
+lets the health probe through and leaves every discovery probe challenged, which
+fails the login somewhere less obvious than where it started.
+
+If you must scope by path rather than by host, cover both:
+
+```
+http.host eq "prick.example.com" and (starts_with(http.request.uri.path, "/api") or starts_with(http.request.uri.path, "/.well-known/"))
+```
+
+:::
 
 ### Bot Fight Mode (free)
 

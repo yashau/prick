@@ -17,6 +17,8 @@ use url::Url;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
+use prick_core::classify::ErrorKind;
+
 use prick_auth::discovery::{self, Probe};
 use prick_auth::store::{StorageBackend, StoredSession, TokenStore, Tokens};
 use prick_auth::{AuthError, LoginOptions};
@@ -539,6 +541,45 @@ async fn something_that_is_not_this_service_is_refused_before_any_credential_is_
 
     let err = discovery::probe(&client_for(&server)).await.expect_err("not this service");
     assert!(err.to_string().contains("vault"), "{err}");
+}
+
+/// The exact shape of a real deployment behind Cloudflare's bot products: a WAF
+/// exception covering `/api` and not `/.well-known`, so the probe gets through
+/// and every discovery candidate is challenged.
+///
+/// The failure this pins is a diagnosis, not a crash. Before, each challenged
+/// candidate was filed under "this spelling does not exist", the loop ran out,
+/// and the reader was told the URL is not a prick server and to check
+/// `--api-url` -- which was correct all along.
+#[tokio::test]
+async fn a_challenged_metadata_probe_reports_the_mitigation_rather_than_a_missing_document() {
+    let server = MockServer::start().await;
+
+    // No path matcher: every candidate spelling is stopped at the edge, which is
+    // what a bot rule that does not know about `/.well-known` does.
+    Mock::given(method("GET"))
+        .respond_with(
+            ResponseTemplate::new(403).insert_header("cf-mitigated", "challenge").set_body_raw(
+                b"<html><title>Just a moment...</title></html>".to_vec(),
+                "text/html",
+            ),
+        )
+        .mount(&server)
+        .await;
+
+    let health = format!("{}{HEALTH}", server.uri());
+    let err = discovery::resolve_protected_resource(&client_for(&server), None, &health)
+        .await
+        .expect_err("a challenged probe cannot yield metadata");
+
+    assert!(
+        matches!(&err, AuthError::Api(api) if api.kind() == ErrorKind::Mitigated),
+        "a challenge must stay classified as one, got: {err}"
+    );
+    assert!(
+        !err.to_string().contains("no protected resource metadata"),
+        "the summary naming every URL tried describes the deployment, not the edge: {err}"
+    );
 }
 
 #[tokio::test]

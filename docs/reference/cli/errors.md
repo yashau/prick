@@ -204,6 +204,11 @@ It is common on a server or a CI runner and rare on a laptop, because bot scorin
 reacts to datacenter IP ranges and non-browser clients — which is exactly what
 `prk` on a VPS looks like.
 
+A partial exception produces this too, and later than you would expect.
+`prk login` probes `/.well-known/` discovery paths before it uses `/api`, so a
+rule that skips only `/api` lets the health probe through and leaves discovery
+challenged — the login then fails on a path nobody scoped.
+
 See [Cloudflare protections](/guides/cloudflare-protections) for the fix.
 
 ### `RESPONSE_TOO_LARGE` (exit 12)
