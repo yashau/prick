@@ -49,6 +49,7 @@ jobs:
       rust: ${{ steps.filter.outputs.rust }}
       core: ${{ steps.filter.outputs.core }}
       js: ${{ steps.filter.outputs.js }}
+      docs: ${{ steps.filter.outputs.docs }}
       e2e: ${{ steps.filter.outputs.e2e }}
       version: ${{ steps.filter.outputs.version }}
     steps:
@@ -113,6 +114,27 @@ jobs:
               # dev` alive under the e2e suite. Editing it must run the suite
               # that proves it still works.
               - 'patches/**'
+              # `docs/openapi.json` lives under `docs/` and is NOT documentation
+              # for this purpose. It is generated from the Hono router, and both
+              # things that compare it to the router -- `openapi:check` and
+              # `packages/app/test/http/openapi.test.ts` inside `test:js` -- run
+              # in js-check. A change to the file on its own (the hand-edit the
+              # docs forbid, or a bad merge resolving it) therefore reached main
+              # with nothing checking it against the surface it claims to
+              # describe.
+              - 'docs/openapi.json'
+            # The documentation CONTENT, which `packages/docs` renders rather
+            # than contains: DOCS_BASE points its loader at `../../docs`. So
+            # `astro check` has to see a change here, and before this filter
+            # existed it did not -- `docs/**` matched nothing at all, and a page
+            # with unparseable frontmatter would first fail on a `docs-v*` tag,
+            # at the moment the intent is to publish rather than to fix.
+            #
+            # Deliberately NOT folded into `js`. `e2e` splices `*js`, so a
+            # markdown typo would have queued the browser suite behind it.
+            docs:
+              - *common
+              - 'docs/**'
             e2e:
               - *js
               - 'e2e/**'
@@ -294,6 +316,42 @@ jobs:
       - run: mise run openapi:check
 
       - run: mise run build:js
+
+  # ---------------------------------------------------------------------------
+  # Docs
+  # ---------------------------------------------------------------------------
+  docs-check:
+    name: docs-check
+    needs: changes
+    if: needs.changes.outputs.docs == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: jdx/mise-action@3c2e0cf82a5b2e5249f0d3635a4d83d0ae861518 # v4.2.5
+
+      # Same reasoning as js-check: Node and pnpm come from mise, so the pnpm
+      # content-addressable store is cached directly.
+      - id: pnpm-store
+        run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ steps.pnpm-store.outputs.path }}
+          key: pnpm-store-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            pnpm-store-${{ runner.os }}-
+
+      - run: pnpm install --frozen-lockfile
+
+      # One task rather than the whole of js-check: a markdown change cannot
+      # break the app's types or the Rust suites, and this job exists so that
+      # documentation is gated without paying for the jobs that cannot fail
+      # because of it.
+      - run: mise run lint:docs
 
   # ---------------------------------------------------------------------------
   # End-to-end
@@ -571,6 +629,7 @@ jobs:
       - rust-deny
       - rust-miri
       - js-check
+      - docs-check
       - e2e
       - workflows
       - version-sync

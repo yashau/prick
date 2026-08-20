@@ -178,11 +178,12 @@ wait_for = ["bootstrap:js"]
 # LINT — pure fan-out, every leaf individually runnable
 # ---------------------------------------------------------------------------
 [tasks.lint]
-description = "Every linter: clippy, vp lint, svelte-check, actionlint, zizmor, pinact, typos, file size"
+description = "Every linter: clippy, vp lint, svelte-check, astro check, actionlint, zizmor, pinact, typos, file size"
 depends = [
   "lint:rust",
   "lint:js",
   "lint:svelte",
+  "lint:docs",
   "lint:actions",
   "lint:zizmor",
   "lint:pinact",
@@ -231,6 +232,23 @@ description = "svelte-check — neither vp lint nor tsc typechecks .svelte files
 # through pnpm -r): the app's Svelte types are worth checking under `lint` on
 # their own, and svelte-check on this app costs a few seconds.
 run = "pnpm --dir packages/app run typecheck"
+wait_for = ["bootstrap:js"]
+
+[tasks."lint:docs"]
+description = "astro check — the docs site renders docs/, so it must build with it"
+# Delegated to the package script for the same reason as lint:svelte: it is the
+# one definition of what checking this package means.
+#
+# `packages/docs` is a RENDERER. `DOCS_BASE = "../../docs"` in its
+# docs-source.ts points the Astro loader at the repository's own `docs/`
+# directory, so the markdown outside this package is an input to this build --
+# which is why CI gates this task on `docs/**` and not merely on
+# `packages/docs/**`.
+#
+# Deliberately overlaps with `typecheck`, which reaches the same script through
+# `pnpm -r`. Same trade lint:svelte makes: worth a few seconds under `lint` on
+# its own.
+run = "pnpm --dir packages/docs run typecheck"
 wait_for = ["bootstrap:js"]
 
 [tasks."lint:loc"]
