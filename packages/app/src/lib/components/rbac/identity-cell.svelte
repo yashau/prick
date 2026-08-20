@@ -25,13 +25,27 @@
     displayName,
     disabled = false,
     /** Renders the name as a link to the identity's permissions screen. */
-    href = null
+    href = null,
+    /**
+     * Stretch that link over the whole table row.
+     *
+     * OPT-IN, because it is a claim about the container rather than about this
+     * cell: the overlay is positioned against the nearest positioned ancestor,
+     * so a caller passing this must also make its row `relative` and lift any
+     * control in a later cell above the overlay. A caller that does neither
+     * would get a link stretched over the wrong box.
+     *
+     * It also swaps the hover underline for nothing, since the row's own tint
+     * is the affordance once the row is the target.
+     */
+    rowLink = false
   }: {
     kind: IdentityKind;
     subject: string;
     displayName: string | null;
     disabled?: boolean;
     href?: string | null;
+    rowLink?: boolean;
   } = $props();
 </script>
 
@@ -47,7 +61,14 @@
   <div class="min-w-0">
     <div class="font-medium">
       {#if href}
-        <a class="underline-offset-4 hover:underline" {href}>{displayName ?? subject}</a>
+        <a
+          class={rowLink
+            ? "after:absolute after:inset-0 after:content-[''] focus-visible:outline-none"
+            : 'underline-offset-4 hover:underline'}
+          {href}
+        >
+          {displayName ?? subject}
+        </a>
       {:else}
         {displayName ?? subject}
       {/if}

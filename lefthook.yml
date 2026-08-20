@@ -76,8 +76,14 @@ pre-commit:
         - "packages/app/**"
       run: vp lint {staged_files}
 
+    # `--force-exclude` because this job names paths EXPLICITLY. Without it,
+    # typos honours `_typos.toml`'s `extend-exclude` only for files it
+    # discovers by walking, so anything excluded there is still checked the
+    # moment it is staged -- which is every excluded file's whole purpose
+    # defeated at the one point it matters. It also means a staged PNG is read
+    # as text and every letter run in the compressed bytes is a "misspelling".
     - name: typos
-      run: typos {staged_files}
+      run: typos --force-exclude {staged_files}
 
     # Workflow files are the one thing in this repository with no local test:
     # a syntax error is discovered by pushing it. Both of these are sub-second.

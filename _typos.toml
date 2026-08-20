@@ -15,6 +15,14 @@ extend-exclude = [
   # license header with an upstream misspelling of MERCHANTABILITY and two of
   # "fulfilled". Not ours to correct, and it is regenerated wholesale.
   "packages/app/worker-configuration.d.ts",
+
+  # The UI screenshots. `typos` skips binary files it discovers itself, but the
+  # pre-commit hook hands it an explicit list of staged paths, which bypasses
+  # that detection -- so a PNG gets read as text and every accidental letter
+  # run in the compressed bytes is reported as a misspelling. Excluded by
+  # extension rather than by directory, so the generated
+  # `screenshots/README.md` is still spell-checked like any other prose.
+  "screenshots/*.png",
 ]
 
 [default]
