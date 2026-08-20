@@ -231,8 +231,12 @@ description = "svelte-check — neither vp lint nor tsc typechecks .svelte files
 # Deliberately overlaps with `typecheck` (which fans out to the same script
 # through pnpm -r): the app's Svelte types are worth checking under `lint` on
 # their own, and svelte-check on this app costs a few seconds.
+#
+# Sequenced after it for the same reason lint:docs is: the script's first step is
+# `svelte-kit sync`, which generates into `.svelte-kit/`, and two copies of one
+# generator writing one directory is a race whether or not it has surfaced yet.
 run = "pnpm --dir packages/app run typecheck"
-wait_for = ["bootstrap:js"]
+wait_for = ["bootstrap:js", "typecheck"]
 
 [tasks."lint:docs"]
 description = "astro check — the docs site renders docs/, so it must build with it"
@@ -248,8 +252,15 @@ description = "astro check — the docs site renders docs/, so it must build wit
 # Deliberately overlaps with `typecheck`, which reaches the same script through
 # `pnpm -r`. Same trade lint:svelte makes: worth a few seconds under `lint` on
 # its own.
+#
+# The overlap has to be sequenced, not merely tolerated. `astro check` syncs its
+# content layer through `packages/docs/node_modules/.astro/data-store.json`,
+# written as a temporary file and renamed over the target. Two of these running
+# at once race on that rename, and the loser fails with an ENOENT from
+# `MutableDataStore` naming a `.tmp` path the other process already moved --
+# which reads as a broken docs build rather than as two copies of one check.
 run = "pnpm --dir packages/docs run typecheck"
-wait_for = ["bootstrap:js"]
+wait_for = ["bootstrap:js", "typecheck"]
 
 [tasks."lint:loc"]
 description = "Fail if any source file exceeds 1000 lines"
@@ -264,7 +275,12 @@ run = "node scripts/check-loc.mjs"
 
 [tasks.openapi]
 description = "Regenerate docs/openapi.json from the Hono router"
+# Needs the pnpm workspace installed even though the script imports nothing from
+# it directly: it loads the Hono router, and the router imports the app's own
+# dependencies. Without this the task fails on a fresh clone with a missing npm
+# package rather than a missing bootstrap.
 run = "node scripts/openapi.mjs write"
+wait_for = ["bootstrap:js"]
 
 [tasks."openapi:check"]
 description = "Fail if docs/openapi.json is stale"
@@ -272,6 +288,7 @@ description = "Fail if docs/openapi.json is stale"
 # document against what the router actually serves. Kept as its own task so a
 # stale document fails with one obvious message rather than inside a suite.
 run = "node scripts/openapi.mjs check"
+wait_for = ["bootstrap:js"]
 
 [tasks."lint:actions"]
 description = "actionlint over .github/workflows"
@@ -358,10 +375,12 @@ description = "node:test suite for the MCP server package"
 # fails. Reaching past a package's script to its underlying command silently
 # drops flags the package considers part of running its tests.
 run = "pnpm --dir packages/mcp run test"
+wait_for = ["bootstrap:js"]
 
 [tasks."build:mcp"]
 description = "tsc build of the MCP server package"
 run = "pnpm --dir packages/mcp run build"
+wait_for = ["bootstrap:js"]
 
 [tasks.miri]
 description = "Machine-checked proof that prick-core is pure (no I/O, no unsafe)"
