@@ -164,7 +164,7 @@ async fn a_full_login_produces_a_storable_session() {
     let outcome = prick_auth::login(
         &client,
         &server.uri(),
-        &LoginOptions { timeout: Duration::from_secs(20) },
+        &LoginOptions { timeout: Duration::from_secs(20), accept_pasted_redirect: false },
         browser_answering(successful_redirect),
     )
     .await
@@ -201,7 +201,7 @@ async fn the_client_is_registered_for_the_loopback_port_that_was_just_bound() {
     prick_auth::login(
         &client,
         &server.uri(),
-        &LoginOptions { timeout: Duration::from_secs(20) },
+        &LoginOptions { timeout: Duration::from_secs(20), accept_pasted_redirect: false },
         browser_answering(successful_redirect),
     )
     .await
@@ -241,7 +241,7 @@ async fn the_token_request_carries_the_verifier_and_never_the_challenge() {
     prick_auth::login(
         &client,
         &server.uri(),
-        &LoginOptions { timeout: Duration::from_secs(20) },
+        &LoginOptions { timeout: Duration::from_secs(20), accept_pasted_redirect: false },
         browser_answering(successful_redirect),
     )
     .await
@@ -285,7 +285,7 @@ async fn every_request_names_the_resource_the_metadata_declared() {
     let outcome = prick_auth::login(
         &client,
         &server.uri(),
-        &LoginOptions { timeout: Duration::from_secs(20) },
+        &LoginOptions { timeout: Duration::from_secs(20), accept_pasted_redirect: false },
         browser_answering(move |authorize| {
             recorder.lock().expect("not poisoned").clone_from(&authorize.to_string());
             successful_redirect(authorize)
@@ -332,7 +332,7 @@ async fn the_authorization_request_uses_s256_with_an_acceptable_challenge() {
     prick_auth::login(
         &client,
         &server.uri(),
-        &LoginOptions { timeout: Duration::from_secs(20) },
+        &LoginOptions { timeout: Duration::from_secs(20), accept_pasted_redirect: false },
         browser_answering(move |authorize| {
             recorder.lock().expect("not poisoned").clone_from(&authorize.to_string());
             successful_redirect(authorize)
@@ -366,7 +366,7 @@ async fn a_redirect_carrying_the_wrong_state_is_discarded() {
     let err = prick_auth::login(
         &client,
         &server.uri(),
-        &LoginOptions { timeout: Duration::from_secs(20) },
+        &LoginOptions { timeout: Duration::from_secs(20), accept_pasted_redirect: false },
         browser_answering(|_| "code=forged&state=not-the-one-we-sent".to_owned()),
     )
     .await
@@ -391,7 +391,7 @@ async fn a_redirect_with_no_state_at_all_is_discarded() {
     let err = prick_auth::login(
         &client,
         &server.uri(),
-        &LoginOptions { timeout: Duration::from_secs(20) },
+        &LoginOptions { timeout: Duration::from_secs(20), accept_pasted_redirect: false },
         browser_answering(|_| "code=forged".to_owned()),
     )
     .await
@@ -409,7 +409,7 @@ async fn a_state_repeated_twice_is_discarded_rather_than_disambiguated() {
     let err = prick_auth::login(
         &client,
         &server.uri(),
-        &LoginOptions { timeout: Duration::from_secs(20) },
+        &LoginOptions { timeout: Duration::from_secs(20), accept_pasted_redirect: false },
         browser_answering(|authorize| {
             let real = successful_redirect(authorize);
             // The real state plus an attacker-chosen one. Picking whichever
@@ -432,7 +432,7 @@ async fn a_denial_redirect_is_reported_as_a_denial() {
     let err = prick_auth::login(
         &client,
         &server.uri(),
-        &LoginOptions { timeout: Duration::from_secs(20) },
+        &LoginOptions { timeout: Duration::from_secs(20), accept_pasted_redirect: false },
         browser_answering(|authorize| {
             let state = authorize
                 .query_pairs()
@@ -460,7 +460,7 @@ async fn a_browser_that_never_answers_times_out_rather_than_hanging() {
     let err = prick_auth::login(
         &client,
         &server.uri(),
-        &LoginOptions { timeout: Duration::from_millis(250) },
+        &LoginOptions { timeout: Duration::from_millis(250), accept_pasted_redirect: false },
         |_url: &str| Ok(()),
     )
     .await

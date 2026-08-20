@@ -71,6 +71,13 @@ pub enum AuthError {
     #[error("the login response did not match this login attempt and was discarded")]
     StateMismatch,
 
+    /// What was pasted in place of a redirect held no authorization response.
+    ///
+    /// Distinct from [`Self::StateMismatch`]: that one is a redirect belonging
+    /// to a different login, this one is not a redirect at all.
+    #[error("that does not carry an authorization response: no `code` or `error` in it")]
+    RedirectUnreadable,
+
     /// The authorization server redirected back with an error.
     #[error("the authorization server refused the login: {error}")]
     Denied {
@@ -150,6 +157,9 @@ impl AuthError {
             }
             Self::Discovery { .. } | Self::Registration { .. } => ErrorKind::NotPrick,
             Self::StateMismatch => ErrorKind::Forbidden,
+            // The operator pasted the wrong thing. A bad request from here, not a
+            // rejection from anywhere.
+            Self::RedirectUnreadable => ErrorKind::Validation,
             Self::LoginTimeout { .. } => ErrorKind::Timeout,
             Self::Api(err) => err.kind(),
             Self::Browser { .. } | Self::Store { .. } | Self::Io(_) => ErrorKind::Unknown,
@@ -172,6 +182,7 @@ impl AuthError {
             Self::Discovery { .. } => "DISCOVERY_FAILED",
             Self::Registration { .. } => "REGISTRATION_FAILED",
             Self::StateMismatch => "STATE_MISMATCH",
+            Self::RedirectUnreadable => "REDIRECT_UNREADABLE",
             Self::Denied { .. } => "LOGIN_DENIED",
             Self::AuthExpired => "AUTH_EXPIRED",
             Self::NoCredential { .. } => "NO_CREDENTIAL",
@@ -207,11 +218,18 @@ impl AuthError {
                  previous attempt cannot be used.",
             ),
             Self::LoginTimeout { .. } => Some(
-                "Run `prk login <url>` again and complete the sign-in in the browser window it \
-                 opens.",
+                "Run `prk login <url>` again. Complete the sign-in in the browser, and if the \
+                 browser cannot reach this machine, paste the address it was redirected to when \
+                 asked.",
+            ),
+            Self::RedirectUnreadable => Some(
+                "Copy the whole address the browser was redirected to, including everything after \
+                 `?`, and paste that. The code on its own cannot be used: the `state` beside it is \
+                 what proves the redirect belongs to this login.",
             ),
             Self::Browser { .. } => Some(
-                "Open the printed URL manually. On a headless machine, use a service token \
+                "Open the printed URL manually, in a browser anywhere, and paste the address it \
+                 is redirected to when asked. For an unattended machine use a service token \
                  instead: PRK_ACCESS_CLIENT_ID and PRK_ACCESS_CLIENT_SECRET.",
             ),
             Self::StorageUnavailable { .. } => {

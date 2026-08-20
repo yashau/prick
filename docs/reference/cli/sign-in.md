@@ -40,7 +40,14 @@ Your browser opens, you complete the Cloudflare Access sign-in, and the token
 lands on disk. `prk login` also records **which server** it signed in to, so no
 later command needs `--api-url` or `PRK_API_URL`.
 
-### Sign in on a machine with no browser
+### Sign in on a machine your browser cannot reach
+
+This is the remote-shell and container case: you open the URL on your own
+machine, and the redirect goes to a `127.0.0.1` address that means something
+different there than it does on the machine you ran `prk login` on.
+
+You do not have to tell `prk` which situation you are in. Both routes are open
+at once and the first one to produce the redirect completes the login.
 
 ```bash
 prk login https://prick.example.com --no-browser
@@ -50,12 +57,56 @@ prk login https://prick.example.com --no-browser
 Signing in to https://prick.example.com
 Open this URL to continue:
   https://example.cloudflareaccess.com/cdn-cgi/access/sso/oidc/…
+If the browser cannot reach this machine, it will fail to load a 127.0.0.1 address.
+That is expected. Paste that whole address here and press Enter:
 ```
 
-Open the URL on a machine that has a browser. The loopback listener on the
-remote machine still receives the redirect, provided the port is reachable —
-which it is over an SSH session that forwards it. `--no-browser` is also applied
-automatically when no browser is available.
+Open the URL in a browser anywhere. Then either:
+
+- **The browser reaches this machine** — over an SSH session forwarding the
+  port, or under WSL, which shares loopback with Windows. The login finishes on
+  its own and there is nothing to paste.
+- **It does not** — the browser shows a connection error. That is the expected
+  outcome, and the address bar now holds the authorization response. Copy the
+  whole address and paste it at the prompt.
+
+```
+http://127.0.0.1:54321/callback?code=…&state=…
+```
+
+Paste the **whole** address, including everything after the `?`. The
+authorization code on its own is refused: the `state` next to it is what proves
+the redirect belongs to the login you just started, and a code without it cannot
+be checked. Getting this wrong reports
+[`REDIRECT_UNREADABLE`](/reference/cli/errors#redirect_unreadable-exit-11).
+
+The paste prompt appears whenever there is a terminal to answer it. With
+`--no-input`, or with stdin coming from somewhere other than a terminal, only
+the loopback route is used — so a scripted login behaves exactly as it did.
+
+`--json` reports which route completed it:
+
+```bash
+prk login https://prick.example.com --json
+```
+
+```json
+{ "api_url": "https://prick.example.com", "redirect": "pasted", "…": "…" }
+```
+
+`--no-browser` only controls whether a browser is launched here; it is applied
+automatically when there is no display to launch one on.
+
+#### Why it is not detected for you
+
+Whether a browser can reach this machine's loopback is not knowable before it
+tries. An `ssh -L` tunnel is built entirely on the client side, so a forwarded
+port and an unforwarded one are the same `bind` and the same `accept` from
+inside `prk` — there is no environment variable or probe that separates them.
+The signals that look promising are wrong in both directions: `SSH_CONNECTION`
+is unset inside `tmux` and stripped by `sudo`, and WSL looks remote while its
+loopback is shared with the browser's. Racing the two routes is correct in every
+one of those cases without asking.
 
 ### Where the token is stored
 

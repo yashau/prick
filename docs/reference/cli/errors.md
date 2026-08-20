@@ -106,6 +106,7 @@ Codes the client raises itself, rather than reading off a response:
 | `UNREPRESENTABLE_OUTPUT` | 9           | A value contains a control character the chosen format cannot encode                                                 |
 | `TRUNCATED_OUTPUT`       | 13          | stdout would not take the whole answer, and what it took carried secret material                                     |
 | `INVALID_SCOPE`          | 11          | A scope string could not be parsed                                                                                   |
+| `REDIRECT_UNREADABLE`    | 11          | What was pasted to complete a login carried no authorization response                                                |
 | `UNSAFE_ENVIRONMENT`     | 11          | A secret's name is one the loader interprets, and `--allow-unsafe-env` was not given                                 |
 | `LAUNCH_FAILED`          | 1, 126, 127 | `prk run` could not start the command — **127** not found, **126** found but not executable, **1** for anything else |
 
@@ -287,6 +288,31 @@ Nothing else in the taxonomy changes number when a pipe breaks. Its two
 neighbours are both about something else: exit 9 is a value that cannot be
 encoded, and exit 12 is a response too large to read — a size problem at the
 other end of the run, on the way in rather than on the way out.
+
+### `REDIRECT_UNREADABLE` (exit 11)
+
+What was pasted to complete a [login your browser could not reach](/reference/cli/sign-in)
+holds no authorization response — no `code` and no `error` in it.
+
+```
+error: that does not carry an authorization response: no `code` or `error` in it
+  help: Copy the whole address the browser was redirected to, including everything after `?`, and paste that. The code on its own cannot be used: the `state` beside it is what proves the redirect belongs to this login.
+```
+
+Usually the address was copied without its query string, or the code was copied
+on its own. Paste the whole thing:
+
+```
+http://127.0.0.1:54321/callback?code=…&state=…
+```
+
+The authorization code alone is refused deliberately, and no flag relaxes it.
+`state` is the only thing binding a redirect to the login that started it, so
+accepting a bare code would be accepting a redirect nothing can check.
+
+Distinct from `STATE_MISMATCH`, which is a redirect that **is** an authorization
+response but belongs to a different login — a stale browser tab, or a forgery.
+Run `prk login` again for either.
 
 ## Next steps
 

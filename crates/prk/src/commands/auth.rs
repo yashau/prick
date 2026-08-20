@@ -1,8 +1,10 @@
 //! `prk login`, `prk logout`, `prk whoami`.
 
+use std::io::IsTerminal as _;
+
 use clap::Args;
 
-use prick_auth::{AuthError, Probe, StorageBackend, TokenStore, discovery};
+use prick_auth::{AuthError, Probe, RedirectSource, StorageBackend, TokenStore, discovery};
 
 use crate::cli::GlobalArgs;
 use crate::commands::Context;
@@ -27,10 +29,13 @@ pub struct LoginArgs {
 
     /// Print the authorization URL instead of opening a browser.
     ///
-    /// For a machine with no display: run this over SSH, open the URL on a
-    /// local browser, and the loopback listener still receives the redirect --
-    /// provided the port is reachable, which it is when the SSH session
-    /// forwards it.
+    /// For a machine with no display. The login then completes by whichever
+    /// route works: the loopback listener, when the port is reachable from the
+    /// browser -- an SSH session forwarding it, or WSL sharing loopback with
+    /// Windows -- or by pasting the address the browser was redirected to.
+    ///
+    /// Detected already when there is no display to open a browser on, so this
+    /// flag is for the case where there is one and you want the URL anyway.
     #[arg(long)]
     pub no_browser: bool,
 }
@@ -58,6 +63,16 @@ impl From<StorageBackendArg> for StorageBackend {
     }
 }
 
+/// What to tell an operator whose browser cannot reach this machine.
+///
+/// Printed for every interactive login rather than behind a flag, because
+/// whether the browser can reach this machine's loopback is not knowable before
+/// it tries -- see [`prick_auth::callback::await_redirect`]. Both channels are
+/// open, so this is an offer, not an instruction: a login that completes in the
+/// browser needs nothing from here.
+const PASTE_PROMPT: &str = "If the browser cannot reach this machine, it will fail to load a 127.0.0.1 address.\n\
+     That is expected. Paste that whole address here and press Enter:";
+
 /// Runs the interactive login.
 ///
 /// # Errors
@@ -75,30 +90,40 @@ pub fn login(args: &LoginArgs, global: &GlobalArgs, out: Output) -> Result<(), C
     out.note(&format!("Signing in to {}", context.api_url()));
 
     let no_browser = args.no_browser || !prick_auth::browser::is_available();
+
+    // Whether there is anyone to paste. `--no-input` is a promise not to ask,
+    // and a stdin that is not a terminal is either a pipe carrying something
+    // else or a job with no operator -- reading either would consume input that
+    // was not an answer.
+    let accept_pasted = !global.no_input && std::io::stdin().is_terminal();
+
+    let options = prick_auth::LoginOptions {
+        accept_pasted_redirect: accept_pasted,
+        ..prick_auth::LoginOptions::default()
+    };
+
     let outcome = context.block_on(prick_auth::login(
         context.client(),
         context.api_url(),
-        &prick_auth::LoginOptions::default(),
+        &options,
         |authorize_url: &str| {
             if no_browser {
                 // Not `data`: this is a diagnostic, and stdout belongs to the
                 // answer. A login has no answer to print.
                 out.note(&format!("Open this URL to continue:\n  {authorize_url}"));
-                return Ok(());
-            }
-            match prick_auth::browser::open(authorize_url) {
-                Ok(()) => {
-                    out.note("Waiting for the browser to complete the sign-in...");
-                    Ok(())
-                }
+            } else if let Err(err) = prick_auth::browser::open(authorize_url) {
                 // Recoverable: the listener is already waiting, so printing the
                 // URL is enough to finish the login by hand.
-                Err(err) => {
-                    out.warn(&format!("{err}"));
-                    out.note(&format!("Open this URL to continue:\n  {authorize_url}"));
-                    Ok(())
-                }
+                out.warn(&format!("{err}"));
+                out.note(&format!("Open this URL to continue:\n  {authorize_url}"));
+            } else {
+                out.note("Waiting for the browser to complete the sign-in...");
             }
+
+            if accept_pasted {
+                out.note(PASTE_PROMPT);
+            }
+            Ok(())
         },
     ))?;
 
@@ -114,12 +139,25 @@ pub fn login(args: &LoginArgs, global: &GlobalArgs, out: Output) -> Result<(), C
             "issuer": outcome.session.issuer,
             "storage": StorageBackend::from(args.storage).as_str(),
             "expires_at": outcome.session.tokens.expires_at,
+            "redirect": redirect_label(outcome.redirect_source),
         }));
     } else {
         out.data(&format!("Signed in to {}", outcome.session.api_url));
     }
 
     Ok(())
+}
+
+/// Names the channel a redirect arrived on, for `--json`.
+///
+/// Reported because it is the one part of a login an operator cannot otherwise
+/// see, and it is what tells them whether loopback works from wherever they run
+/// this -- which decides whether the next login needs a person at the terminal.
+fn redirect_label(source: RedirectSource) -> &'static str {
+    match source {
+        RedirectSource::Loopback => "loopback",
+        RedirectSource::Pasted => "pasted",
+    }
 }
 
 /// Emits the warning for a server nothing is protecting.
