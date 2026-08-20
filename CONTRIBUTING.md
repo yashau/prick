@@ -2,8 +2,17 @@
 
 ## TL;DR
 
+Install [mise](https://mise.jdx.dev/installing-mise.html), whichever way suits your machine:
+
 ```bash
-winget install jdx.mise          # or: brew install mise / curl https://mise.run | sh
+curl https://mise.run | sh       # macOS, Linux
+brew install mise                # macOS, Linux, via Homebrew
+winget install jdx.mise          # Windows
+```
+
+The rest is identical on every platform:
+
+```bash
 git clone https://github.com/yashau/prick && cd prick
 mise trust
 mise run bootstrap
@@ -12,9 +21,9 @@ mise run dev
 
 ## 1. Prerequisites
 
-**Install mise and nothing else.** `mise.toml` pins exact versions of Rust, Node, pnpm and every dev
-tool; a system-wide install of any of them will shadow the pinned one and you will debug a problem
-nobody else has.
+**Install [mise](https://mise.jdx.dev/installing-mise.html) and nothing else.** `mise.toml` pins
+exact versions of Rust, Node, pnpm and every dev tool; a system-wide install of any of them will
+shadow the pinned one and you will debug a problem nobody else has.
 
 `mise trust` is required once per clone before `mise.toml`'s environment is applied.
 

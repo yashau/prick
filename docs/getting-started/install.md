@@ -119,6 +119,9 @@ tar xzf prk-x86_64-unknown-linux-gnu.tar.gz
 sudo mv prk /usr/local/bin/prk
 ```
 
+The Windows assets are `.zip` rather than `.tar.gz` — unpack one and put
+`prk.exe` in a directory that is already on `PATH`.
+
 ```bash
 prk version
 ```
@@ -150,6 +153,9 @@ The binary lands at `target/release/prk`. Put it somewhere on your `PATH`:
 ```bash
 sudo install -m 755 target/release/prk /usr/local/bin/prk
 ```
+
+On Windows the binary is `target\release\prk.exe`; copy it into a directory that
+is already on `PATH`.
 
 An in-repository build reports `0.0.0-dev` rather than a real version — the git
 tag is the source of truth, and a release stamps it in at build time.
