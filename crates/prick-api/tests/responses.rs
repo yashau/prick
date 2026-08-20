@@ -254,7 +254,9 @@ async fn a_managed_challenge_is_named_as_such() {
     .await;
 
     let err = client_for(&server).health().await.expect_err("a challenge is a failure");
-    assert_eq!(err.kind(), ErrorKind::Forbidden);
+    // Not Forbidden. Both arrive as a 403, and Forbidden's hint tells the reader
+    // to go and get a grant -- advice that cannot fix a bot rule.
+    assert_eq!(err.kind(), ErrorKind::Mitigated);
     assert!(err.to_string().contains("challenge"), "{err}");
 }
 

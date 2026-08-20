@@ -134,6 +134,14 @@ prk access grant e367826f93b8d71185e03fe518aff3b4.access --role reader --scope a
 Give CI the **narrowest** role that works. A deploy job that only reads secrets
 is a `reader` on one environment, not a global admin.
 
+:::note[A different 403 looks the same from here]
+The denial above is `FORBIDDEN`, and a grant fixes it. If the error is
+`MITIGATED` instead, the request never reached prick at all: Cloudflare's bot
+products challenge datacenter IPs, and GitHub-hosted runners are datacenter IPs.
+No grant will fix that one — see
+[Cloudflare protections](/guides/cloudflare-protections).
+:::
+
 ## Masking
 
 If you must put a value into the workflow environment rather than into a child
