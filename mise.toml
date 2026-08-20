@@ -206,6 +206,10 @@ description = "vp lint over everything outside packages/app"
 # bare invocation at the root rediscovers packages/app/vite.config.ts and dies.
 # Naming the directories also means a new top-level package is linted only once
 # somebody adds it here, which is a visible decision rather than a silent gap.
+# The same two commands are duplicated in the root package.json `lint` script,
+# which exists so a clone that has not run `mise install` still has a working
+# gate (see the catalog note in pnpm-workspace.yaml). A new package has to be
+# added in BOTH places, or one of the two entry points silently skips it.
 run = "vp lint --deny-warnings scripts action packages/mcp packages/shared packages/docs e2e"
 wait_for = ["bootstrap:js"]
 
