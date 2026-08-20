@@ -224,6 +224,75 @@ fn now() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |elapsed| elapsed.as_secs())
 }
 
+/// The RFC 7009 hint for a refresh token.
+pub const HINT_REFRESH_TOKEN: &str = "refresh_token";
+
+/// The RFC 7009 hint for an access token.
+pub const HINT_ACCESS_TOKEN: &str = "access_token";
+
+/// Asks the authorization server to forget a token (RFC 7009).
+///
+/// # Which token to hand over
+///
+/// The refresh token, when there is one. RFC 7009 section 2.1 says a server
+/// SHOULD invalidate the access tokens issued from a refresh token it revokes,
+/// so revoking the renewable half is what actually ends the session -- and it
+/// is the half worth ending, because an access token expires on its own within
+/// minutes while a refresh token is what keeps a stolen credential alive.
+///
+/// # Why an unknown token is success
+///
+/// Section 2.2 requires a `200` both when the token was revoked and when the
+/// client submitted an invalid one, because the two are indistinguishable to a
+/// client and telling them apart would turn this endpoint into an oracle for
+/// whether a token is live. So a token the server has already forgotten is not
+/// an error here either: the desired state is "this token does not work", and
+/// it already holds.
+///
+/// # Errors
+///
+/// [`AuthError::Denied`] for an RFC 6749 error body, or a transport failure.
+/// Callers are expected to treat any of them as advisory: see
+/// `prk logout`, which discards the local credential either way.
+pub async fn revoke(
+    client: &Client,
+    revocation_endpoint: &str,
+    client_id: &str,
+    token: &SecretString,
+    token_type_hint: &str,
+) -> Result<(), AuthError> {
+    let form = [
+        ("token", token.expose_secret()),
+        ("token_type_hint", token_type_hint),
+        // A public client authenticates with nothing but its identity: the
+        // registration used `token_endpoint_auth_method: none`, and there is no
+        // secret to present here.
+        ("client_id", client_id),
+    ];
+
+    let received =
+        client.fetch(reqwest::Method::POST, revocation_endpoint, Body::Form(&form)).await?;
+    let facts = &received.facts;
+
+    if facts.status < 400 {
+        return Ok(());
+    }
+
+    if let Ok(body) = serde_json::from_slice::<OAuthErrorBody>(received.body()) {
+        return Err(AuthError::Denied { error: body.error });
+    }
+
+    Err(match prick_api::response::classify(facts) {
+        Some(classified) => {
+            AuthError::Api(prick_api::ApiError::from_response(facts.clone(), classified))
+        }
+        None => AuthError::Api(prick_api::ApiError::from_server(
+            facts.clone(),
+            format!("the revocation endpoint returned HTTP {}", facts.status),
+        )),
+    })
+}
+
 /// Posts to the token endpoint and interprets the result.
 ///
 /// The one place `invalid_grant` is turned into [`AuthError::AuthExpired`], so
@@ -521,6 +590,7 @@ where
             client_id: registration.client_id,
             token_endpoint: server.token_endpoint,
             resource,
+            revocation_endpoint: server.revocation_endpoint,
             tokens,
         },
         probe,
@@ -538,6 +608,7 @@ mod tests {
             authorization_endpoint: "https://example.cloudflareaccess.com/authorize".to_owned(),
             token_endpoint: "https://example.cloudflareaccess.com/token".to_owned(),
             registration_endpoint: Some("https://example.cloudflareaccess.com/register".to_owned()),
+            revocation_endpoint: Some("https://example.cloudflareaccess.com/revoke".to_owned()),
             code_challenge_methods_supported: Some(vec!["S256".to_owned()]),
             scopes_supported: None,
         }

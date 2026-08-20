@@ -125,6 +125,18 @@ pub struct StoredSession {
     /// every login did until Access started refusing it, so an old session
     /// refreshes as well as it ever did rather than failing to load.
     pub resource: Option<String>,
+    /// The RFC 7009 revocation endpoint, so `prk logout` can hand the token
+    /// back without repeating discovery.
+    ///
+    /// Stored rather than rediscovered because logout is the one command that
+    /// must work when the network is worse than usual -- a laptop being handed
+    /// on, a machine being decommissioned -- and a discovery round trip is one
+    /// more thing between the operator and a revoked token.
+    ///
+    /// `None` for a server that advertises no revocation endpoint, and for a
+    /// session written before this field existed. Both mean the same thing at
+    /// logout: fall back to discovery, and say so if that finds nothing.
+    pub revocation_endpoint: Option<String>,
     /// The tokens themselves.
     pub tokens: Tokens,
 }
@@ -161,6 +173,8 @@ struct Wire {
     token_endpoint: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     resource: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    revocation_endpoint: Option<String>,
     access_token: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     refresh_token: Option<String>,
@@ -183,6 +197,7 @@ impl Wire {
             client_id: session.client_id.clone(),
             token_endpoint: session.token_endpoint.clone(),
             resource: session.resource.clone(),
+            revocation_endpoint: session.revocation_endpoint.clone(),
             access_token: session.tokens.access_token.expose_secret().to_owned(),
             refresh_token: session
                 .tokens
@@ -200,6 +215,7 @@ impl Wire {
             client_id: std::mem::take(&mut self.client_id),
             token_endpoint: std::mem::take(&mut self.token_endpoint),
             resource: self.resource.take(),
+            revocation_endpoint: self.revocation_endpoint.take(),
             tokens: Tokens {
                 access_token: SecretString::from(std::mem::take(&mut self.access_token)),
                 refresh_token: self.refresh_token.take().map(SecretString::from),
@@ -621,6 +637,7 @@ mod tests {
             client_id: "client-123".to_owned(),
             token_endpoint: "https://example.cloudflareaccess.com/token".to_owned(),
             resource: Some("https://prick.example.com".to_owned()),
+            revocation_endpoint: Some("https://example.cloudflareaccess.com/revoke".to_owned()),
             tokens: Tokens {
                 access_token: SecretString::from("access-abc"),
                 refresh_token: Some(SecretString::from("refresh-xyz")),
@@ -780,6 +797,53 @@ mod tests {
         assert!(loaded.tokens.refresh_token.is_none());
         assert!(loaded.tokens.expires_at.is_none());
         assert!(!loaded.is_refreshable());
+    }
+
+    #[test]
+    fn the_revocation_endpoint_survives_a_round_trip() {
+        let (_dir, store) = store();
+        store.save(&session()).expect("save");
+
+        let loaded = store.load().expect("load").expect("a session");
+        assert_eq!(
+            loaded.revocation_endpoint.as_deref(),
+            Some("https://example.cloudflareaccess.com/revoke")
+        );
+    }
+
+    #[test]
+    fn a_credential_written_before_revocation_existed_still_loads() {
+        // The compatibility case that matters: everyone signed in today has a
+        // file with no `revocation_endpoint` in it, and a logout that refused to
+        // read it would leave them unable to sign out at all.
+        let (_dir, store) = store();
+        store.save(&session()).expect("save");
+
+        let raw = std::fs::read_to_string(store.path()).expect("read");
+        let older: serde_json::Value = serde_json::from_str(&raw).expect("JSON");
+        let mut older = older.as_object().expect("an object").clone();
+        older.remove("revocation_endpoint");
+        std::fs::write(store.path(), serde_json::to_string(&older).expect("JSON"))
+            .expect("write the older shape back");
+
+        let loaded = store.load().expect("an older file still loads").expect("a session");
+        assert!(loaded.revocation_endpoint.is_none());
+        // And the rest of it is intact, so the fallback is the only difference.
+        assert_eq!(loaded.client_id, session().client_id);
+        assert!(loaded.is_refreshable());
+    }
+
+    #[test]
+    fn a_session_with_nowhere_to_revoke_writes_no_such_field() {
+        // `skip_serializing_if`, so a server that advertises no revocation
+        // endpoint does not get a null recorded for one.
+        let (_dir, store) = store();
+        let mut without = session();
+        without.revocation_endpoint = None;
+        store.save(&without).expect("save");
+
+        let raw = std::fs::read_to_string(store.path()).expect("read");
+        assert!(!raw.contains("revocation_endpoint"), "{raw}");
     }
 
     #[test]

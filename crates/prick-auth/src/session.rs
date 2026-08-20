@@ -157,6 +157,7 @@ mod tests {
             client_id: "client-1".to_owned(),
             token_endpoint: "https://example.cloudflareaccess.com/token".to_owned(),
             resource: Some("https://prick.example.com".to_owned()),
+            revocation_endpoint: Some("https://example.cloudflareaccess.com/revoke".to_owned()),
             tokens: Tokens {
                 access_token: SecretString::from("access-abc"),
                 refresh_token: refreshable.then(|| SecretString::from("refresh-xyz")),

@@ -174,8 +174,8 @@ pub enum Command {
     /// Authenticate against a prick server.
     Login(commands::auth::LoginArgs),
 
-    /// Discard stored credentials.
-    Logout,
+    /// Revoke the session and discard stored credentials.
+    Logout(commands::auth::LogoutArgs),
 
     /// Show the identity the server sees.
     Whoami,
@@ -218,7 +218,7 @@ impl Command {
     pub fn path(&self) -> &'static str {
         match self {
             Self::Login(_) => "login",
-            Self::Logout => "logout",
+            Self::Logout(_) => "logout",
             Self::Whoami => "whoami",
             Self::Doctor => "doctor",
             Self::Projects(sub) => sub.path(),

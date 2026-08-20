@@ -163,10 +163,14 @@ store anything. See [Quickstart step 9](/getting-started/quickstart).
 ## `prk logout`
 
 ```
-prk logout
+prk logout [--no-revoke]
 ```
 
-Discard stored credentials.
+Revoke the session and discard stored credentials.
+
+| Flag          | Default | Meaning                                                 |
+| ------------- | ------- | ------------------------------------------------------- |
+| `--no-revoke` | off     | Discard the local credential without telling the server |
 
 ```bash
 prk logout
@@ -184,6 +188,57 @@ No stored credentials.
 
 Running it twice is harmless — it establishes the state "no credentials", and
 that is idempotent.
+
+### Deleting the file is not signing out
+
+A refresh token stays valid at the authorization server until it expires on its
+own or someone revokes it. Removing the local copy makes it unreachable from
+_this machine_ and does nothing about the copy the server will still honour — so
+`prk logout` hands the token back first, then deletes the file.
+
+The refresh token is the one revoked, when there is one. RFC 7009 says a server
+should invalidate the access tokens issued from a refresh token it revokes, and
+the refresh token is the half worth ending: an access token expires on its own
+within minutes, while a refresh token is what keeps a stolen credential alive.
+
+### The local credential goes either way
+
+Revocation needs the network. Deleting the file does not. If a failed request
+could fail the command, a laptop with no connectivity could not be signed out at
+all — and that is a worse outcome than signing out locally and telling the server
+later, because the local credential is the part this machine controls.
+
+So the credential is discarded whatever the server said, and a revocation that
+did not happen is a warning naming what is still live rather than a silent
+omission:
+
+```
+Signed out.
+warning: The credential is gone from this machine, but the server was not told. It keeps working until it expires -- revoke the session in Zero Trust > Access if that matters.
+```
+
+The same warning, with its own wording, covers an authorization server that
+advertises no revocation endpoint at all — there is nothing to ask, and the token
+lives out its lifetime.
+
+`--no-revoke` skips the request deliberately, for a machine with no route to the
+authorization server where it would only stall. It trades a live credential for
+not waiting.
+
+Under `--json`, `revoked` distinguishes the three outcomes — `true` revoked,
+`false` attempted and not done, `null` not attempted:
+
+```bash
+prk logout --json
+```
+
+```json
+{ "logged_out": true, "revoked": true }
+```
+
+The warnings are printed even under `--json`, which otherwise leaves stderr
+byte-empty on success. A credential that still works somewhere is worth breaking
+that rule for, the same way an unprotected server is.
 
 ## `prk whoami`
 

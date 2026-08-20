@@ -235,6 +235,13 @@ pub struct AuthorizationServer {
     /// Where a client registers itself, when the server supports RFC 7591.
     #[serde(default)]
     pub registration_endpoint: Option<String>,
+    /// Where a token is revoked, when the server supports RFC 7009.
+    ///
+    /// Optional in the metadata and optional here. A server that advertises
+    /// none cannot be asked to forget a token, and `prk logout` says so rather
+    /// than implying it revoked something.
+    #[serde(default)]
+    pub revocation_endpoint: Option<String>,
     /// The PKCE methods on offer.
     #[serde(default)]
     pub code_challenge_methods_supported: Option<Vec<String>>,
@@ -695,6 +702,7 @@ mod tests {
             authorization_endpoint: "https://x/authorize".to_owned(),
             token_endpoint: "https://x/token".to_owned(),
             registration_endpoint: Some("https://x/register".to_owned()),
+            revocation_endpoint: Some("https://x/revoke".to_owned()),
             code_challenge_methods_supported: Some(vec!["S256".to_owned()]),
             scopes_supported: None,
         };
