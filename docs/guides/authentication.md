@@ -122,6 +122,16 @@ prk logout
 Signed out.
 ```
 
+This revokes the session at the authorization server and then deletes the local
+credential. Both halves matter: a refresh token stays valid until it expires or
+is revoked, so deleting the file alone would leave a working credential behind
+on a machine you thought you had signed out of.
+
+The file is deleted whether or not the revocation succeeded, and a revocation
+that did not happen is warned about rather than passed over silently. See
+[`prk logout`](/reference/cli/sign-in#prk-logout) for the failure cases and for
+`--no-revoke`.
+
 ## Authenticate a machine
 
 CI uses an Access **service token**, not `prk login`.

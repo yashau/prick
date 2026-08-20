@@ -277,7 +277,7 @@ pub fn dispatch(cli: &Cli, out: Output) -> Result<(), CliError> {
         Command::Version => version::run(out),
 
         Command::Login(args) => auth::login(args, &cli.global, out),
-        Command::Logout => auth::logout(&cli.global, out),
+        Command::Logout(args) => auth::logout(args, &cli.global, out),
         Command::Whoami => auth::whoami(&cli.global, out),
         Command::Doctor => doctor::run(&cli.global, out),
 
@@ -421,6 +421,7 @@ mod tests {
                 client_id: "client-123".to_owned(),
                 token_endpoint: "https://example.cloudflareaccess.com/token".to_owned(),
                 resource: None,
+                revocation_endpoint: None,
                 tokens: prick_auth::Tokens {
                     access_token: SecretString::from("access-abc"),
                     refresh_token: None,

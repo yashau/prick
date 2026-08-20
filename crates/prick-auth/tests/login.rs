@@ -79,6 +79,7 @@ async fn mount_discovery(server: &MockServer) {
             "authorization_endpoint": format!("{}/authorize", server.uri()),
             "token_endpoint": format!("{}/token", server.uri()),
             "registration_endpoint": format!("{}/register", server.uri()),
+            "revocation_endpoint": format!("{}/revoke", server.uri()),
             "code_challenge_methods_supported": ["S256"],
             "scopes_supported": ["openid", "email", "profile", "offline_access"],
         })))
@@ -176,6 +177,13 @@ async fn a_full_login_produces_a_storable_session() {
     assert_eq!(
         outcome.session.tokens.refresh_token.as_ref().map(SecretString::expose_secret),
         Some("refresh-1")
+    );
+    // Recorded at login so that logout can revoke without repeating discovery,
+    // on the one command most likely to run somewhere with a worse network than
+    // the login had.
+    assert_eq!(
+        outcome.session.revocation_endpoint.as_deref(),
+        Some(format!("{}/revoke", server.uri()).as_str())
     );
     assert!(
         outcome.session.tokens.expires_at.is_some(),
@@ -779,6 +787,7 @@ async fn a_stale_session_is_renewed_before_the_request_that_needs_it() {
             client_id: "client-1".to_owned(),
             token_endpoint: format!("{}/token", server.uri()),
             resource: Some(server.uri()),
+            revocation_endpoint: Some(format!("{}/revoke", server.uri())),
             tokens: Tokens {
                 access_token: SecretString::from("access-stale"),
                 refresh_token: Some(SecretString::from("refresh-1")),
@@ -832,6 +841,7 @@ async fn a_revoked_session_surfaces_as_expired_rather_than_as_a_server_error() {
             client_id: "client-1".to_owned(),
             token_endpoint: format!("{}/token", server.uri()),
             resource: None,
+            revocation_endpoint: None,
             tokens: Tokens {
                 access_token: SecretString::from("stale"),
                 refresh_token: Some(SecretString::from("revoked")),
@@ -846,6 +856,101 @@ async fn a_revoked_session_surfaces_as_expired_rather_than_as_a_server_error() {
 
     assert!(matches!(err, AuthError::AuthExpired), "{err}");
     assert_eq!(err.exit_code(), 3);
+}
+
+#[tokio::test]
+async fn a_revocation_hands_back_the_refresh_token_as_a_form_post() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/revoke"))
+        .respond_with(ResponseTemplate::new(200))
+        .mount(&server)
+        .await;
+
+    prick_auth::oauth::revoke(
+        &client_for(&server),
+        &format!("{}/revoke", server.uri()),
+        "client-1",
+        &SecretString::from("refresh-xyz"),
+        prick_auth::oauth::HINT_REFRESH_TOKEN,
+    )
+    .await
+    .expect("a 200 means the server has forgotten it");
+
+    let requests = server.received_requests().await.expect("the server recorded requests");
+    let revocation = requests
+        .iter()
+        .find(|request| request.url.path() == "/revoke")
+        .expect("the revocation was sent");
+
+    let body = String::from_utf8_lossy(&revocation.body);
+    let sent: std::collections::HashMap<String, String> =
+        url::form_urlencoded::parse(body.as_bytes())
+            .map(|(key, value)| (key.into_owned(), value.into_owned()))
+            .collect();
+
+    assert_eq!(sent.get("token").map(String::as_str), Some("refresh-xyz"));
+    assert_eq!(sent.get("token_type_hint").map(String::as_str), Some("refresh_token"));
+    // A public client authenticates with its identity alone, so the id has to be
+    // in the body -- without it the server cannot tell whose token this is.
+    assert_eq!(sent.get("client_id").map(String::as_str), Some("client-1"));
+
+    let content_type = revocation
+        .headers
+        .get("content-type")
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or_default();
+    assert!(content_type.starts_with("application/x-www-form-urlencoded"), "{content_type}");
+}
+
+#[tokio::test]
+async fn a_token_the_server_never_knew_is_not_a_failure() {
+    // RFC 7009 section 2.2: a `200` covers both "revoked" and "that was not a
+    // token I recognise", because distinguishing them would make this endpoint
+    // an oracle for whether a token is live. The desired state already holds.
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/revoke"))
+        .respond_with(ResponseTemplate::new(200))
+        .mount(&server)
+        .await;
+
+    prick_auth::oauth::revoke(
+        &client_for(&server),
+        &format!("{}/revoke", server.uri()),
+        "client-1",
+        &SecretString::from("never-existed"),
+        prick_auth::oauth::HINT_ACCESS_TOKEN,
+    )
+    .await
+    .expect("an unknown token leaves nothing to do");
+}
+
+#[tokio::test]
+async fn a_refused_revocation_reports_the_servers_own_reason() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/revoke"))
+        .respond_with(ResponseTemplate::new(400).set_body_json(serde_json::json!({
+            "error": "unsupported_token_type"
+        })))
+        .mount(&server)
+        .await;
+
+    let err = prick_auth::oauth::revoke(
+        &client_for(&server),
+        &format!("{}/revoke", server.uri()),
+        "client-1",
+        &SecretString::from("refresh-xyz"),
+        prick_auth::oauth::HINT_REFRESH_TOKEN,
+    )
+    .await
+    .expect_err("a 400 is a refusal");
+
+    match err {
+        AuthError::Denied { error } => assert_eq!(error, "unsupported_token_type"),
+        other => panic!("expected the server's own error code, got {other:?}"),
+    }
 }
 
 fn now() -> u64 {

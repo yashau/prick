@@ -4,7 +4,9 @@ use std::io::IsTerminal as _;
 
 use clap::Args;
 
-use prick_auth::{AuthError, Probe, RedirectSource, StorageBackend, TokenStore, discovery};
+use prick_auth::{
+    AuthError, Probe, RedirectSource, StorageBackend, StoredSession, TokenStore, discovery,
+};
 
 use crate::cli::GlobalArgs;
 use crate::commands::Context;
@@ -38,6 +40,18 @@ pub struct LoginArgs {
     /// flag is for the case where there is one and you want the URL anyway.
     #[arg(long)]
     pub no_browser: bool,
+}
+
+/// Arguments to `prk logout`.
+#[derive(Debug, Clone, Args)]
+pub struct LogoutArgs {
+    /// Discard the local credential without asking the server to forget it.
+    ///
+    /// For a machine with no route to the authorization server, where the
+    /// request would only stall. The token keeps working until it expires, so
+    /// this trades a live credential for not waiting.
+    #[arg(long)]
+    pub no_revoke: bool,
 }
 
 /// Command-line spelling of [`StorageBackend`].
@@ -171,28 +185,164 @@ fn warn_unprotected(out: Output) {
     out.warn("Put the application behind Cloudflare Access before storing anything in it.");
 }
 
-/// Discards stored credentials.
+/// Discards stored credentials, and asks the server to forget them.
+///
+/// # Deleting the file is not signing out
+///
+/// A refresh token stays valid at the authorization server until it expires on
+/// its own or someone revokes it. Removing the local copy makes it unreachable
+/// from this machine and does nothing about the copy the server will still
+/// honour, so a logout that only deleted the file would leave a live credential
+/// behind while reporting success.
+///
+/// So the token is handed back first, then the file goes.
+///
+/// # Revocation is advisory, deletion is not
+///
+/// Revocation needs the network; deletion does not. If asking the server were
+/// allowed to fail the command, a laptop with no connectivity could not be
+/// signed out at all -- and "could not sign out" is a worse outcome than "signed
+/// out here, tell the server later", because the operator wanted the local
+/// credential gone and it is the one thing this machine controls.
+///
+/// So the credential is discarded whatever the server said, and a revocation
+/// that did not happen is a warning naming what is still live rather than a
+/// silent omission.
 ///
 /// Idempotent: the state it establishes is "no credentials", and running it
 /// twice does not make that less true.
 ///
 /// # Errors
 ///
-/// [`CliError::Auth`] if the token file exists and cannot be removed.
-pub fn logout(global: &GlobalArgs, out: Output) -> Result<(), CliError> {
+/// [`CliError::Auth`] if the token file exists and cannot be removed. A failed
+/// revocation is reported, not returned.
+pub fn logout(args: &LogoutArgs, global: &GlobalArgs, out: Output) -> Result<(), CliError> {
     let store = TokenStore::new(StorageBackend::File)?;
-    let had_session = store.load().unwrap_or(None).is_some();
+    let session = store.load().unwrap_or(None);
+
+    let revocation = match &session {
+        Some(session) if !args.no_revoke => Some(revoke_session(session, global, out)),
+        // Nothing to revoke, or the operator asked for the local half only.
+        _ => None,
+    };
+
+    // Unconditional, and after the attempt: the token is needed to revoke it,
+    // and the file must go even when the attempt failed.
     store.clear()?;
 
+    report_logout(session.is_some(), revocation, global, out);
+    Ok(())
+}
+
+/// What became of the attempt to have the server forget the token.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Revocation {
+    /// The server accepted it.
+    Revoked,
+    /// The server advertises no revocation endpoint, so there is nothing to ask.
+    Unsupported,
+    /// The attempt failed. The token is still live until it expires.
+    Failed,
+}
+
+/// Hands the session's token back to the authorization server.
+///
+/// The refresh token when there is one, because revoking it is what ends the
+/// session; otherwise the access token, which is all there is to give back.
+fn revoke_session(session: &StoredSession, global: &GlobalArgs, out: Output) -> Revocation {
+    let (token, hint) = match session.tokens.refresh_token.clone() {
+        Some(refresh) => (refresh, prick_auth::oauth::HINT_REFRESH_TOKEN),
+        None => (session.tokens.access_token.clone(), prick_auth::oauth::HINT_ACCESS_TOKEN),
+    };
+
+    let mut with_url = global.clone();
+    with_url.api_url = Some(session.api_url.clone());
+    let context = match Context::new(&with_url) {
+        Ok(context) => context,
+        Err(err) => {
+            out.warn(&format!("could not prepare the revocation request: {err}"));
+            return Revocation::Failed;
+        }
+    };
+
+    context.block_on(async {
+        let endpoint = match session.revocation_endpoint.clone() {
+            Some(endpoint) => endpoint,
+            // A credential stored before the endpoint was recorded -- which is
+            // every credential that exists at the moment this ships. The issuer
+            // is in the file, so ask it once rather than declining to revoke the
+            // very sessions most likely to be signed out first.
+            None => {
+                match discovery::fetch_authorization_server(context.client(), &session.issuer).await
+                {
+                    Ok(server) => match server.revocation_endpoint {
+                        Some(endpoint) => endpoint,
+                        None => return Revocation::Unsupported,
+                    },
+                    Err(err) => {
+                        out.warn(&format!("could not find where to revoke the token: {err}"));
+                        return Revocation::Failed;
+                    }
+                }
+            }
+        };
+
+        match prick_auth::oauth::revoke(
+            context.client(),
+            &endpoint,
+            &session.client_id,
+            &token,
+            hint,
+        )
+        .await
+        {
+            Ok(()) => Revocation::Revoked,
+            Err(err) => {
+                out.warn(&format!("the token could not be revoked: {err}"));
+                Revocation::Failed
+            }
+        }
+    })
+}
+
+/// Reports what happened, and what is still live if anything.
+///
+/// The warning for a token left behind goes through [`Output::warn`], which
+/// `--json` does not suppress, for the same reason the unprotected-server
+/// warning does: a credential that still works somewhere is worth breaking the
+/// byte-empty-stderr rule for.
+fn report_logout(
+    had_session: bool,
+    revocation: Option<Revocation>,
+    global: &GlobalArgs,
+    out: Output,
+) {
     if global.json {
-        out.json(&serde_json::json!({ "logged_out": had_session }));
+        out.json(&serde_json::json!({
+            "logged_out": had_session,
+            "revoked": match revocation {
+                Some(Revocation::Revoked) => Some(true),
+                Some(Revocation::Unsupported | Revocation::Failed) => Some(false),
+                None => None,
+            },
+        }));
     } else if had_session {
         out.data("Signed out.");
     } else {
         out.data("No stored credentials.");
     }
 
-    Ok(())
+    match revocation {
+        Some(Revocation::Failed) => out.warn(
+            "The credential is gone from this machine, but the server was not told. It keeps \
+             working until it expires -- revoke the session in Zero Trust > Access if that matters.",
+        ),
+        Some(Revocation::Unsupported) => out.warn(
+            "This authorization server advertises no revocation endpoint, so the token could only \
+             be discarded locally. It keeps working until it expires.",
+        ),
+        Some(Revocation::Revoked) | None => (),
+    }
 }
 
 /// Shows the identity the server resolved for this caller.
