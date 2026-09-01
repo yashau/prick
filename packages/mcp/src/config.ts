@@ -1,3 +1,6 @@
+import { realpathSync, statSync } from "node:fs";
+import { resolve as resolvePath } from "node:path";
+
 import { ToolError } from "./errors.ts";
 import { isLogLevel, type LogLevel } from "./logger.ts";
 import { SERVER_NAME, SERVER_VERSION } from "./version.ts";
@@ -30,6 +33,15 @@ export interface ServerConfig {
    * revealing a value is something this server can do.
    */
   allowReveal: boolean;
+  /**
+   * The ONE directory `secrets_diff` may read a local file from.
+   *
+   * Absolute, and already through `realpath`, so that the per-call check can
+   * compare canonical paths. Like `allowReveal` this is settled by the operator
+   * before the transport is connected: nothing arriving over the wire widens
+   * it, because there is no argument that could.
+   */
+  workspaceRoot: string;
   requestTimeoutMs: number;
   logLevel: LogLevel;
 }
@@ -50,6 +62,7 @@ export const ENV_NAMES = {
   clientId: ["PRICK_MCP_CLIENT_ID", "PRK_ACCESS_CLIENT_ID", "CF_ACCESS_CLIENT_ID"],
   clientSecret: ["PRICK_MCP_CLIENT_SECRET", "PRK_ACCESS_CLIENT_SECRET", "CF_ACCESS_CLIENT_SECRET"],
   allowReveal: ["PRICK_MCP_ALLOW_REVEAL"],
+  workspace: ["PRICK_MCP_WORKSPACE"],
   timeoutMs: ["PRICK_MCP_TIMEOUT_MS"],
   logLevel: ["PRICK_MCP_LOG_LEVEL"],
 } as const;
@@ -71,13 +84,14 @@ function pick(env: Environmentish, names: readonly string[]): string | undefined
 /**
  * Parse the accepted flags.
  *
- * Hand-rolled rather than pulled from a library: the surface is four flags, and
+ * Hand-rolled rather than pulled from a library: the surface is five flags, and
  * a dependency here would be a dependency in the published artefact of a
  * secrets tool. `--` terminates parsing.
  */
 export interface ParsedArgs {
   allowReveal: boolean;
   apiUrl?: string;
+  workspace?: string;
   logLevel?: string;
   help: boolean;
   version: boolean;
@@ -114,6 +128,18 @@ export function parseArgs(argv: readonly string[]): ParsedArgs {
         index += 1;
         break;
       }
+      case "--workspace": {
+        const next = argv[index + 1];
+        if (next === undefined) {
+          throw new ConfigError(
+            "--workspace needs a value.",
+            "Example: --workspace /home/you/projects/my-app",
+          );
+        }
+        parsed.workspace = next;
+        index += 1;
+        break;
+      }
       case "--log-level": {
         const next = argv[index + 1];
         if (next === undefined) {
@@ -129,6 +155,10 @@ export function parseArgs(argv: readonly string[]): ParsedArgs {
       default: {
         if (arg.startsWith("--api-url=")) {
           parsed.apiUrl = arg.slice("--api-url=".length);
+          break;
+        }
+        if (arg.startsWith("--workspace=")) {
+          parsed.workspace = arg.slice("--workspace=".length);
           break;
         }
         if (arg.startsWith("--log-level=")) {
@@ -232,7 +262,55 @@ export function parseAllowReveal(raw: string | undefined): boolean {
   return raw === "true";
 }
 
-export function loadConfig(env: Environmentish, argv: readonly string[]): ServerConfig {
+const WORKSPACE_HINT = [
+  "`secrets_diff` reads a local .env, and it may only read one from inside this directory.",
+  `Set ${ENV_NAMES.workspace[0]} or pass --workspace <dir>, or start the server with the project as its working directory.`,
+].join("\n");
+
+/**
+ * Resolve the directory `secrets_diff` is confined to.
+ *
+ * Defaults to the working directory the server was started in. An MCP client
+ * starts its servers in the project it has open, so the ordinary case needs no
+ * configuration at all and is still bounded -- which is the point: a guard an
+ * operator has to switch on is a guard that is off.
+ *
+ * A directory path is not a credential, so unlike the client secret it is
+ * allowed to be a flag.
+ *
+ * Resolved through `realpath` HERE, once, at startup. The per-call check
+ * compares canonical paths, and a root that still contained a symbolic link --
+ * `/tmp` on macOS, a junction on Windows -- would match nothing under it.
+ */
+export function resolveWorkspaceRoot(raw: string | undefined, cwd: string): string {
+  const requested = raw === undefined ? cwd : resolvePath(cwd, raw);
+  const named =
+    raw === undefined
+      ? "The working directory this server was started in"
+      : `The directory named by ${ENV_NAMES.workspace[0]} / --workspace`;
+
+  let real: string;
+  let directory: boolean;
+
+  try {
+    real = realpathSync(requested);
+    directory = statSync(real).isDirectory();
+  } catch {
+    throw new ConfigError(`${named} does not exist, or cannot be read.`, WORKSPACE_HINT);
+  }
+
+  if (!directory) {
+    throw new ConfigError(`${named} is not a directory.`, WORKSPACE_HINT);
+  }
+
+  return real;
+}
+
+export function loadConfig(
+  env: Environmentish,
+  argv: readonly string[],
+  cwd: string = process.cwd(),
+): ServerConfig {
   const args = parseArgs(argv);
 
   const apiUrlRaw = args.apiUrl ?? pick(env, ENV_NAMES.apiUrl);
@@ -276,6 +354,7 @@ export function loadConfig(env: Environmentish, argv: readonly string[]): Server
     accessClientId: clientId,
     accessClientSecret: clientSecret,
     allowReveal: args.allowReveal || parseAllowReveal(pick(env, ENV_NAMES.allowReveal)),
+    workspaceRoot: resolveWorkspaceRoot(args.workspace ?? pick(env, ENV_NAMES.workspace), cwd),
     requestTimeoutMs: parseTimeout(pick(env, ENV_NAMES.timeoutMs)),
     logLevel: logLevelRaw,
   };
@@ -288,12 +367,14 @@ export function helpText(): string {
     "A Model Context Protocol server over stdio for a self-hosted secrets manager.",
     "",
     "USAGE",
-    `  ${SERVER_NAME} [--api-url <url>] [--allow-reveal] [--log-level <level>]`,
+    `  ${SERVER_NAME} [--api-url <url>] [--allow-reveal] [--workspace <dir>] [--log-level <level>]`,
     "",
     "FLAGS",
     "  --api-url <url>     Base URL of the deployed Worker. Overrides PRICK_MCP_API_URL.",
     "  --allow-reveal      Register `secrets_get`, which returns PLAINTEXT SECRET VALUES.",
     "                      Off by default. Equivalent to PRICK_MCP_ALLOW_REVEAL=true.",
+    "  --workspace <dir>   The only directory secrets_diff may read a .env from.",
+    "                      Default: the working directory the server was started in.",
     "  --log-level <level> debug | info | warn | error | silent. Default: info.",
     "  -h, --help          Print this and exit.",
     "  -V, --version       Print the version and exit.",
@@ -303,6 +384,7 @@ export function helpText(): string {
     `  ${ENV_NAMES.clientId.join(" | ")}`,
     `  ${ENV_NAMES.clientSecret.join(" | ")}`,
     `  ${ENV_NAMES.allowReveal[0]}    "true" enables secrets_get. Any other value leaves it off.`,
+    `  ${ENV_NAMES.workspace[0]}       as --workspace.`,
     `  ${ENV_NAMES.timeoutMs[0]}       per-request timeout in ms. Default ${String(DEFAULT_TIMEOUT_MS)}.`,
     `  ${ENV_NAMES.logLevel[0]}        as --log-level.`,
     "",
@@ -310,6 +392,10 @@ export function helpText(): string {
     "  The Access service token secret is read from the environment only. There is",
     "  no flag for it: process arguments are readable by every other process on the",
     "  machine and are recorded in shell history.",
+    "",
+    "  secrets_diff reads a local file only from inside the workspace directory. A",
+    "  path that leaves it -- `..`, an absolute path elsewhere, or a symbolic link",
+    "  pointing out -- is refused, because the path comes from a language model.",
     "",
     "  All logging goes to stderr. stdout carries the MCP transport and nothing else.",
   ].join("\n");

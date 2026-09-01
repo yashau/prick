@@ -1,5 +1,4 @@
-import { readFile, stat } from "node:fs/promises";
-import { isAbsolute, resolve as resolvePath } from "node:path";
+import { readFile, realpath, stat } from "node:fs/promises";
 
 import type { EnvironmentSummary, PrickApiClient, ProjectSummary, SecretListEntry } from "./api.ts";
 import type { ServerConfig } from "./config.ts";
@@ -7,6 +6,12 @@ import { scanDotenvKeys } from "./dotenv-keys.ts";
 import { scrubEchoedValue, ToolError } from "./errors.ts";
 import type { Logger } from "./logger.ts";
 import { DOTENV_MAX_BYTES } from "./schemas.ts";
+import {
+  isWithinRoot,
+  outsideWorkspace,
+  resolveWithinRoot,
+  type WorkspacePath,
+} from "./workspace.ts";
 
 /**
  * The tool handlers, as plain functions.
@@ -21,7 +26,14 @@ export interface ToolContext {
   client: PrickApiClient;
   config: ServerConfig;
   logger: Logger;
-  /** Injectable so the diff tool can be tested without touching the disk. */
+  /**
+   * Injectable so the diff tool can be tested without touching the disk.
+   *
+   * It receives a path that has ALREADY been resolved against the workspace
+   * root and found to be inside it. A double cannot be handed a path the real
+   * reader would have refused, so a test using one is not testing a weaker
+   * server than the one that ships.
+   */
   readLocalFile?: (path: string) => Promise<string>;
 }
 
@@ -247,6 +259,7 @@ export interface SecretsDiffArgs {
 export interface SecretsDiffResult {
   project: string;
   environment: string;
+  /** The file that was read, RELATIVE to the workspace root. See `secretsDiff`. */
   env_file: string;
   only_in_file: string[];
   only_in_environment: string[];
@@ -265,16 +278,29 @@ const DIFF_NOTE =
   'so "in_both" means the key exists on both sides -- NOT that the two values agree. There is no way to ' +
   "compare values without revealing them, and this tool does not reveal.";
 
+/**
+ * Diff KEY NAMES against a local file.
+ *
+ * The path is resolved against `config.workspaceRoot` and refused if it lands
+ * outside, BEFORE anything is opened -- see `workspace.ts` for why that check
+ * exists and why the reader repeats it after `realpath`. The argument comes
+ * from a language model, and a model is downstream of whatever it has been
+ * reading.
+ *
+ * Everything that leaves this function names the file relative to the root. The
+ * absolute path would say where the operator keeps their projects and under
+ * what user name, and the caller supplied the rest of it already.
+ */
 export async function secretsDiff(
   ctx: ToolContext,
   args: SecretsDiffArgs,
 ): Promise<SecretsDiffResult> {
-  const path = isAbsolute(args.env_file)
-    ? args.env_file
-    : resolvePath(process.cwd(), args.env_file);
+  const root = ctx.config.workspaceRoot;
+  const file = resolveWithinRoot(root, args.env_file);
 
-  const read = ctx.readLocalFile ?? readLocalDotenv;
-  const source = await read(path);
+  const source = ctx.readLocalFile
+    ? await ctx.readLocalFile(file.absolute)
+    : await readLocalDotenv(root, file);
 
   const local = scanDotenvKeys(source);
   const remote = await ctx.client.listSecrets(args.project, args.environment);
@@ -285,7 +311,7 @@ export async function secretsDiff(
   const result: SecretsDiffResult = {
     project: args.project,
     environment: args.environment,
-    env_file: path,
+    env_file: file.display,
     only_in_file: local.keys.filter((key) => !remoteKeys.has(key)),
     only_in_environment: remote.map((entry) => entry.key).filter((key) => !localKeys.has(key)),
     in_both: local.keys.filter((key) => remoteKeys.has(key)),
@@ -308,39 +334,69 @@ export async function secretsDiff(
 }
 
 /**
- * Read a local `.env`.
+ * Read a local `.env` from inside the workspace.
+ *
+ * The containment check runs a SECOND time here, on the path with every
+ * symbolic link resolved. `resolveWithinRoot` works on strings, and a string
+ * cannot show that `<root>/.env` is a link to `~/.aws/credentials`; only
+ * `realpath` can. The canonical path is then the one that is opened, so the
+ * bytes read are the bytes that were checked.
  *
  * Bounded, and refuses anything that is not a regular file. The size cap is not
  * about memory: a caller who points this at a 4 GB file has made a mistake, and
  * the useful response is to say so rather than to read it.
  */
-async function readLocalDotenv(path: string): Promise<string> {
+async function readLocalDotenv(root: string, file: WorkspacePath): Promise<string> {
+  let path: string;
+
+  try {
+    path = await realpath(file.absolute);
+  } catch {
+    throw unreadable(file);
+  }
+
+  // Between `realpath` and `stat`, so that a link leading out of the workspace
+  // is refused before its target is inspected at all.
+  if (!isWithinRoot(root, path)) throw outsideWorkspace(file.display);
+
   let info: Awaited<ReturnType<typeof stat>>;
 
   try {
     info = await stat(path);
   } catch {
-    // The errno message embeds the path, which is fine, but it also varies by
-    // platform. Say the useful thing directly.
-    throw new ToolError("LOCAL_FILE", "No such file, or it cannot be read.", {
-      path,
-      hint: "Give a path relative to the working directory this server was started in, or an absolute path.",
-    });
+    throw unreadable(file);
   }
 
   if (!info.isFile()) {
-    throw new ToolError("LOCAL_FILE", "That path is not a regular file.", { path });
+    throw new ToolError("LOCAL_FILE", "That path is not a regular file.", { path: file.display });
   }
 
   if (info.size > DOTENV_MAX_BYTES) {
     throw new ToolError(
       "LOCAL_FILE",
       `That file is larger than the ${String(DOTENV_MAX_BYTES)} byte limit for a .env.`,
-      { path, hint: "Point at the .env itself rather than at a directory listing or an archive." },
+      {
+        path: file.display,
+        hint: "Point at the .env itself rather than at a directory listing or an archive.",
+      },
     );
   }
 
   return await readFile(path, "utf8");
+}
+
+/**
+ * The one "it did not open" failure.
+ *
+ * An errno message embeds the ABSOLUTE path, which is more than the caller
+ * handed us, and its wording varies by platform. This says the useful thing and
+ * quotes back only the caller's own argument.
+ */
+function unreadable(file: WorkspacePath): ToolError {
+  return new ToolError("LOCAL_FILE", "No such file, or it cannot be read.", {
+    path: file.display,
+    hint: "Give a path to a file inside the directory this server was started in.",
+  });
 }
 
 // ---------------------------------------------------------------------------

@@ -79,6 +79,15 @@ over the wire can change it.
   values without ever accumulating one, so there is no value in its return type to leak. The cost is
   that it compares presence, not contents: "in both" means the key exists on both sides, not that the
   values agree. Checking that would require revealing, and it does not reveal.
+- **`secrets_diff` can only read inside one directory.** It is the only tool that touches the local
+  disk, and the path it is given comes from a language model — which is downstream of whatever
+  document that model has been reading. Every path is resolved against a workspace root fixed at
+  startup (the working directory, or `PRICK_MCP_WORKSPACE` / `--workspace`) and refused if it lands
+  outside: `..`, an absolute path elsewhere and a symbolic link leading out are one case, decided by
+  comparing resolved paths rather than by recognising a shape of string. The check runs before
+  anything is opened and again after `realpath`, and the refusal quotes back only the caller's own
+  argument — never the root, whose absolute path would say where the operator keeps their projects
+  and under what user name.
 - **No error path can carry a value.** The error type has no field a value could be assigned to — no
   `value`, no `body`, no `input`, no serialised `cause`. An unclassified throwable is reduced to a
   constant message rather than having its own text appended. A non-2xx response body is only quoted
@@ -131,6 +140,7 @@ edge before the request reaches the Worker. There is no login flow and no token 
 | `PRICK_MCP_CLIENT_ID`     | yes      | Access service token Client ID                                      |
 | `PRICK_MCP_CLIENT_SECRET` | yes      | Access service token Client Secret                                  |
 | `PRICK_MCP_ALLOW_REVEAL`  | no       | `true` — and only the exact string `true` — registers `secrets_get` |
+| `PRICK_MCP_WORKSPACE`     | no       | The only directory `secrets_diff` may read from. Default: the cwd   |
 | `PRICK_MCP_TIMEOUT_MS`    | no       | Per-request timeout, 1000–120000. Default `15000`                   |
 | `PRICK_MCP_LOG_LEVEL`     | no       | `debug` \| `info` \| `warn` \| `error` \| `silent`. Default `info`  |
 
@@ -138,7 +148,13 @@ Aliases are accepted so an environment already set up for `cloudflared` or for t
 unchanged: `PRK_URL` for the base URL, and `PRK_ACCESS_CLIENT_ID` / `CF_ACCESS_CLIENT_ID` and
 `PRK_ACCESS_CLIENT_SECRET` / `CF_ACCESS_CLIENT_SECRET` for the credential pair.
 
-Flags: `--api-url <url>`, `--allow-reveal`, `--log-level <level>`, `--help`, `--version`.
+Flags: `--api-url <url>`, `--allow-reveal`, `--workspace <dir>`, `--log-level <level>`, `--help`,
+`--version`.
+
+A missing or non-directory `PRICK_MCP_WORKSPACE` is a startup failure, like any other
+misconfiguration. The default — the working directory the client started the server in, which is the
+project the client has open — is what makes the confinement real: a bound an operator has to switch
+on is a bound that is off.
 
 Misconfiguration is fatal at startup, not at the first tool call — a server that starts anyway
 reports its problem to a language model instead of to the person who can fix it. Exit codes follow
@@ -243,6 +259,10 @@ a key a running service depends on is an outage, not a tidy-up.
 Compares key names in a local `.env` against the keys in an environment: `only_in_file`,
 `only_in_environment`, `in_both`, plus duplicates, invalid names and malformed lines in the local
 file. Reads no value from the server and retains none from the file.
+
+`env_file` must resolve to a file inside the workspace root — the working directory the server was
+started in, or whatever `PRICK_MCP_WORKSPACE` names. A path that leaves it is refused, and the
+result reports `env_file` relative to that root rather than as an absolute path.
 
 ### `secrets_get` — disabled by default
 

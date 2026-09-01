@@ -28,6 +28,7 @@ export {
   normaliseBaseUrl,
   parseAllowReveal,
   parseArgs,
+  resolveWorkspaceRoot,
   type Environmentish,
   type ParsedArgs,
   type ServerConfig,
@@ -68,3 +69,10 @@ export {
 } from "./tools.ts";
 
 export { SERVER_NAME, SERVER_VERSION, USER_AGENT } from "./version.ts";
+
+export {
+  isWithinRoot,
+  outsideWorkspace,
+  resolveWithinRoot,
+  type WorkspacePath,
+} from "./workspace.ts";

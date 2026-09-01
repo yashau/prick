@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
-import test, { describe } from "node:test";
+import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import test, { after, describe } from "node:test";
 
 import {
   ConfigError,
@@ -8,6 +11,7 @@ import {
   normaliseBaseUrl,
   parseAllowReveal,
   parseArgs,
+  resolveWorkspaceRoot,
 } from "../src/config.ts";
 
 /** `assert.throws` returns void, and these tests need the error itself. */
@@ -82,6 +86,48 @@ describe("loadConfig", () => {
       () => loadConfig({ ...COMPLETE, PRICK_MCP_LOG_LEVEL: "verbose" }, []),
       ConfigError,
     );
+  });
+});
+
+describe("resolveWorkspaceRoot", () => {
+  const sandbox = realpathSync(mkdtempSync(join(tmpdir(), "prick-mcp-config-")));
+  const notADirectory = join(sandbox, "file.txt");
+  writeFileSync(notADirectory, "");
+
+  after(() => {
+    rmSync(sandbox, { recursive: true, force: true });
+  });
+
+  test("defaults to the working directory the server was started in", () => {
+    // The default is what makes the confinement real: a bound that has to be
+    // switched on is a bound that is off.
+    assert.equal(loadConfig(COMPLETE, [], sandbox).workspaceRoot, sandbox);
+  });
+
+  test("the env var and the flag both override it, relative to the cwd", () => {
+    assert.equal(
+      loadConfig({ ...COMPLETE, PRICK_MCP_WORKSPACE: "." }, [], sandbox).workspaceRoot,
+      sandbox,
+    );
+    assert.equal(loadConfig(COMPLETE, ["--workspace", sandbox], sandbox).workspaceRoot, sandbox);
+    assert.equal(loadConfig(COMPLETE, [`--workspace=${sandbox}`], sandbox).workspaceRoot, sandbox);
+  });
+
+  test("a missing directory is fatal at startup, not at the first tool call", () => {
+    const error = caught(() => resolveWorkspaceRoot(join(sandbox, "nope"), sandbox));
+
+    assert.match(error.message, /does not exist/);
+    assert.match(error.hint, /PRICK_MCP_WORKSPACE/);
+  });
+
+  test("a file is not a workspace", () => {
+    assert.match(caught(() => resolveWorkspaceRoot(notADirectory, sandbox)).message, /directory/);
+  });
+
+  test("the root is canonical, so a symlinked temp dir still matches its own contents", () => {
+    // macOS hands out /var/... which is a link to /private/var/..., and every
+    // per-call containment check compares canonical paths.
+    assert.equal(resolveWorkspaceRoot(undefined, sandbox), realpathSync(sandbox));
   });
 });
 
