@@ -122,6 +122,42 @@ browser enforces it for free. The UI is same-origin, so it needs nothing. A
 client that wants cross-origin access wants a service token and a server-side
 call, which is what the CLI and the MCP package do.
 
+## Writes are same-origin and JSON
+
+That covers reads. Writes need their own guard, because a cross-site
+`<form method=post>` never reads the response and is exempt from preflight — and
+the `CF_Authorization` fallback above means the browser would attach the victim's
+credential to it. So every request whose method is not `GET`, `HEAD` or `OPTIONS`
+must satisfy both of:
+
+- **Origin.** If the request carries an `Origin` header it must be this
+  deployment's own. A browser sets the header on every cross-origin request and
+  on every same-origin one that is not a `GET` or a `HEAD`; the CLI, the MCP
+  server and the composite action set it on none. A mismatch — `null` included —
+  is `403 FORBIDDEN`.
+- **Media type.** If a request declares a `Content-Type` it must be
+  `application/json` (parameters such as `; charset=utf-8` are fine). Anything
+  else is `415 UNSUPPORTED_MEDIA_TYPE`. This is not only a CSRF control: Hono's
+  validator hands the schema an empty object on a media-type mismatch rather than
+  failing, so a mislabelled body would otherwise be read as `{}` and write
+  whatever the schema's defaults imply.
+
+A request that declares no `Content-Type` is a request asserting it has no
+content, and is not refused — every `DELETE` in this API is that request, and the
+guard reads only the method and the headers, never whether a body is present.
+Those are not the same question in the two places the Worker runs: for a bodiless
+`DELETE`, an in-process request has no body while one that crossed a socket
+arrives with an empty stream.
+
+Consequently a body sent with no `Content-Type` at all reaches the schema, which
+sees `{}` and answers `422` wherever a field is required. The Origin check is
+what makes that safe: a browser sets `Origin` on every request whose method is
+not `GET` or `HEAD`, with no way for the initiating page to suppress it, so no
+cross-site write reaches a schema at all.
+
+Neither check depends on the Access application's cookie `SameSite` setting,
+which lives in the Cloudflare dashboard and cannot be asserted from here.
+
 ## Request ids
 
 Every response carries `X-Request-Id`. A client-supplied value is echoed back if
@@ -557,6 +593,7 @@ nothing has established what it contains.
 | `LAST_ADMIN`                    | 409    | Refusing to revoke the last global administrator                      |
 | `PRECONDITION_FAILED`           | 412    | `If-Match`/`expected_rev` did not match. The environment is unchanged |
 | `PAYLOAD_TOO_LARGE`             | 413    | Over a configured byte or count limit                                 |
+| `UNSUPPORTED_MEDIA_TYPE`        | 415    | A body declared a media type other than `application/json`            |
 | `VALIDATION_FAILED`             | 422    | Schema rejection, including an unknown field                          |
 | `RATE_LIMITED`                  | 429    | Slow down                                                             |
 | `INTERNAL`                      | 500    | Unclassified failure                                                  |

@@ -175,7 +175,25 @@ export async function apiHarness(options: HarnessOptions = {}): Promise<ApiHarne
     if (token !== null && token !== undefined) {
       headers.set("Cf-Access-Jwt-Assertion", token);
     }
-    if (rest.body !== undefined && !headers.has("Content-Type")) {
+    /*
+     * A body implies `application/json`, unless the caller asked for silence.
+     *
+     * `Content-Type: ""` is the escape hatch, and `csrf.test.ts` is what needs
+     * it: a request with a body and NO media type is the shape workerd hands the
+     * Worker for a bodiless `DELETE` that crossed a socket, and reproducing it
+     * in-process is the only way this directory can see the class of bug that
+     * shipped once already. The default below would put the header back on.
+     *
+     * An empty string is not a media type any client can send, so it is free to
+     * mean "send none" rather than being a value some other test might rely on.
+     *
+     * NOTE that the header must be suppressed AND the body must imply nothing:
+     * the `Request` constructor supplies `text/plain;charset=UTF-8` for a STRING
+     * body regardless of what is deleted here. See `undeclaredBody`.
+     */
+    if (headers.get("Content-Type") === "") {
+      headers.delete("Content-Type");
+    } else if (rest.body !== undefined && !headers.has("Content-Type")) {
       headers.set("Content-Type", "application/json");
     }
 

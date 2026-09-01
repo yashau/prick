@@ -137,6 +137,191 @@ export const bodyLimit: MiddlewareHandler<{
 };
 
 // ---------------------------------------------------------------------------
+// Cross-site writes
+// ---------------------------------------------------------------------------
+
+/**
+ * Methods that cannot change anything, and are therefore not guarded.
+ *
+ * `OPTIONS` is in the list because nothing answers it: there is no CORS
+ * middleware, so a preflight falls through to `notFound` and a cross-origin
+ * request that needed one never happens. Guarding it would only turn that 404
+ * into a 403 and say more than the 404 does.
+ */
+const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
+
+/** The one media type a request body may declare. */
+const JSON_MEDIA_TYPE = "application/json";
+
+/** The media type with its parameters (`; charset=utf-8`) stripped. */
+function mediaTypeOf(header: string): string {
+  const [type = ""] = header.split(";");
+  return type.trim().toLowerCase();
+}
+
+/**
+ * REFUSE A CROSS-SITE WRITE, WITHOUT TRUSTING THE DEPLOYMENT'S COOKIE SETTINGS.
+ *
+ * ---------------------------------------------------------------------------
+ * WHAT THIS CLOSES
+ * ---------------------------------------------------------------------------
+ * `extractAssertion` falls back to the ambient `CF_Authorization` cookie, which
+ * is what makes the admin UI work without the browser ever handling a token. A
+ * browser attaches that cookie to a CROSS-SITE form post too, if the Access
+ * application's cookie is `SameSite=None` -- a setting that lives in the
+ * Cloudflare dashboard, not in this repository, so nothing here can assert it.
+ *
+ * The absence of CORS (see `app.ts`) stops another site READING a response. It
+ * does nothing about a write: an auto-submitting `<form method=post>` needs no
+ * response at all, and it is exempt from preflight because its media type is
+ * one of the three a form can produce.
+ *
+ * And such a body is not even rejected on its way in. Hono's `json` validator
+ * checks `Content-Type` and, on a mismatch, hands the schema `{}` rather than
+ * failing -- so any schema whose every field is optional or defaulted validates
+ * a form post as a legitimate call and the handler runs. `RekeyBody` is one:
+ * `{}` becomes `{ limit: REKEY_MAX_PAGE }`, and a global admin's browser
+ * re-encrypts a page of rows and writes an audit row attributed to them.
+ * (`BatchBody` happens to be refused, by a refine that requires `set` or
+ * `delete` on a merge -- "happens to be" being exactly the problem: the
+ * transport is where that has to be settled, not one schema's invariant.)
+ *
+ * ---------------------------------------------------------------------------
+ * TWO CHECKS, AND WHY BOTH
+ * ---------------------------------------------------------------------------
+ * ORIGIN. A browser sets `Origin` on every cross-origin request AND on every
+ * same-origin request whose method is not GET or HEAD; a non-browser client
+ * sets it on none. So "present and not ours" is precisely "a page somewhere
+ * else initiated this", and "absent" is precisely "not a browser" -- which is
+ * the CLI, the MCP server and the composite action, none of which send the
+ * header. This is the same bet `svelte.config.js` makes for the SvelteKit half
+ * with `csrf.trustedOrigins: []`, and it is made here rather than inherited
+ * because the two halves are different servers behind one hostname.
+ *
+ * `URL.origin` is the right thing to compare against and not an approximation
+ * of one: it keeps a non-default port and drops a default one, which is exactly
+ * how a browser spells `Origin`. That is what makes the check hold on
+ * `http://localhost:8787` under `wrangler dev` as well as on production https,
+ * and the e2e suite exercises the former through a real browser.
+ *
+ * MEDIA TYPE. Belt to the origin check's braces, and independently a bug fix:
+ * `application/json` is not a type a cross-site form can produce and not one a
+ * `no-cors` fetch is allowed to set, so requiring it refuses the same attack
+ * through a second mechanism -- and it stops a WRONGLY LABELLED body from
+ * silently validating as `{}` for any caller, browser or not.
+ *
+ * ORDER: origin first. A cross-site request fails both checks, and answering
+ * 415 would imply that correcting the media type is what it takes to be
+ * accepted. It is not.
+ *
+ * ---------------------------------------------------------------------------
+ * THIS FUNCTION READS THE METHOD AND TWO HEADERS. NOTHING ELSE. EVER.
+ * ---------------------------------------------------------------------------
+ * In particular it does NOT ask whether a body is present, and that is a
+ * correction rather than an omission. An earlier version refused a body that
+ * declared no media type at all, framing "is there a body" on
+ * `c.req.raw.body !== null`. That expression is not the same fact in the two
+ * places this Worker runs:
+ *
+ *   in-process   `vitest-pool-workers`, and any `SELF.fetch` -- a bodiless
+ *                DELETE has `body === null`, so the check passed.
+ *   over the wire workerd hands the Worker a non-null, empty body stream for
+ *                the SAME bodiless DELETE, so the check answered 415.
+ *
+ * So it 415'd every `DELETE` that actually crossed a socket -- `prk access
+ * revoke`, group deletion, group member removal -- in the SHIPPED product,
+ * while every in-process test went green. `Content-Length` is no better a
+ * signal: a string-bodied `Request` built in-process carries none at all, so
+ * framing on it inverts the test instead of the behaviour.
+ *
+ * The rule that follows is absolute: this guard may only read facts that are
+ * byte-identical in both runtimes, which means the request line and the
+ * headers. `test/http/csrf.test.ts` reproduces the wire shape in-process (a
+ * `ReadableStream` body declares no media type, exactly as workerd's empty
+ * stream does) and asserts `raw.body` is never named in this tree.
+ *
+ * WHAT DROPPING THAT CHECK COSTS, precisely. A request with no `Content-Type`
+ * is, per RFC 9110, a request asserting it has no content -- and that is
+ * already how Hono's validator reads it, so guard and validator now agree
+ * instead of disagreeing. The CSRF defence is untouched: a browser sets
+ * `Origin` on EVERY request whose method is not GET or HEAD, with no exception
+ * and no way for the initiating page to suppress it, so a cross-site write is
+ * refused on the origin whatever it declares -- including the one shape that
+ * could omit a media type, a `no-cors` fetch of a `Blob` whose `type` is empty.
+ * What is given up is one belt-and-braces case for CREDENTIALED NON-BROWSER
+ * callers: a client that sends a body and labels it with nothing now reaches
+ * the schema, which sees `{}` and answers 422 wherever a field is required. On
+ * a route whose every field is defaulted it would run -- `RekeyBody` is the
+ * only one -- which is a broken client holding a valid credential, not a
+ * stranger's page. Pinned as such in the test file rather than left implicit.
+ *
+ * ---------------------------------------------------------------------------
+ * WHAT IT COSTS A LEGITIMATE CLIENT
+ * ---------------------------------------------------------------------------
+ * Nothing, and that was checked against each of them rather than assumed:
+ * `prick-api`'s Rust client builds every API body with reqwest's `.json()`
+ * (`Body::Form` reaches Access's OAuth token endpoint only, never `/api`), the
+ * MCP server sets `Content-Type: application/json` whenever it has a body, the
+ * composite action spawns the CLI, and `lib/client/api.ts` sets the header in
+ * the browser. None of the three non-browser clients sends `Origin` at all.
+ *
+ * A bodiless request -- every `DELETE` in this API -- declares no media type
+ * and is not required to. There is nothing to parse, so there is no wrong way
+ * to have labelled it; the origin check is what covers those, and it covers
+ * them completely, because a `<form>` can only issue GET and POST.
+ */
+export const crossSiteGuard: MiddlewareHandler = async (c, next) => {
+  if (!SAFE_METHODS.has(c.req.method)) {
+    const origin = c.req.header("Origin");
+
+    // `Origin: null` -- a sandboxed frame, or a cross-origin redirect -- is a
+    // browser telling us it will not name the initiator. It is not ours.
+    if (origin !== undefined && origin !== new URL(c.req.url).origin) {
+      throw new PrickError(
+        "FORBIDDEN",
+        "A state-changing request may not come from another origin.",
+        {
+          hint: "This API is same-origin for browsers and credential-bearing for everything else. A cross-origin caller wants an Access service token and a server-side request, which is what the CLI and the MCP server use.",
+        },
+      );
+    }
+
+    const declared = c.req.header("Content-Type");
+
+    if (declared !== undefined && mediaTypeOf(declared) !== JSON_MEDIA_TYPE) {
+      throw unsupportedMediaType(mediaTypeOf(declared));
+    }
+  }
+
+  await next();
+};
+
+/**
+ * `type/subtype` in RFC 9110's token grammar, and short.
+ *
+ * Anything else is not echoed. A media type is a fixed vocabulary chosen by the
+ * client's HTTP stack rather than caller data, so naming it is what makes the
+ * failure fixable -- but the header is still a string an attacker controls, and
+ * it reaches a response body and a log line. Same reasoning as `requestId`
+ * above: pattern-check, bound, and replace what does not match.
+ */
+const MEDIA_TYPE_PATTERN = /^[a-z0-9!#$&^_.+-]{1,64}\/[a-z0-9!#$&^_.+-]{1,64}$/;
+
+/** The 415, with the offending type named when it is safe to name. */
+function unsupportedMediaType(found: string): PrickError {
+  const described = MEDIA_TYPE_PATTERN.test(found) ? found : "something else";
+
+  return new PrickError(
+    "UNSUPPORTED_MEDIA_TYPE",
+    `A request body must be ${JSON_MEDIA_TYPE}; this one declared ${described}.`,
+    {
+      hint: `Send Content-Type: ${JSON_MEDIA_TYPE}, or send no body and no Content-Type at all. A body in any other encoding is not read -- it would reach the schema as an empty object and write something nobody asked for.`,
+      detail: { expected: JSON_MEDIA_TYPE },
+    },
+  );
+}
+
+// ---------------------------------------------------------------------------
 // The reference viewer
 // ---------------------------------------------------------------------------
 
