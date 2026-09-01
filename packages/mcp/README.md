@@ -7,6 +7,9 @@ It exists so that an AI coding assistant can **manage** secrets — see what exi
 just generated, remove one that is obsolete, tell you what your local `.env` is missing — without a
 human pasting a credential into a chat window, and without the assistant reading one.
 
+Full documentation: **[docs.getprick.dev](https://docs.getprick.dev)** — start with the
+[MCP server guide](https://docs.getprick.dev/guides/mcp-server).
+
 ---
 
 ## The security posture

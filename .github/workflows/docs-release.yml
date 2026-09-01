@@ -55,11 +55,11 @@ jobs:
     timeout-minutes: 15
     environment:
       name: docs
-      url: ${{ steps.deploy.outputs.deployment-url }}
+      url: ${{ steps.deploy.outputs.deployment-url || steps.site.outputs.url }}
     outputs:
       version: ${{ steps.version.outputs.version }}
       pages: ${{ steps.verify.outputs.pages }}
-      url: ${{ steps.deploy.outputs.deployment-url }}
+      url: ${{ steps.deploy.outputs.deployment-url || steps.site.outputs.url }}
     steps:
       # The trigger is a tag push, so the default ref IS the tagged commit.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -97,6 +97,32 @@ jobs:
           fi
           echo "releasing docs ${version}"
           echo "version=${version}" >> "$GITHUB_OUTPUT"
+
+      # DERIVED, not restated. scripts/docs.mjs exports the one constant, and
+      # scripts/docs.test.mjs ties it to the `routes` block in
+      # packages/docs/wrangler.jsonc and to `site` in its astro.config.ts, so
+      # reading it here does not add a fourth place to keep in step.
+      #
+      # This is a FALLBACK for what the deploy reports, never a replacement:
+      # wrangler-action's deployment-url is the truth about where the Worker
+      # actually landed, and is preferred wherever it is non-empty. It is only
+      # here because that output is derived by scraping the deploy log, and the
+      # site no longer has a *.workers.dev hostname in it -- a release whose
+      # notes read "url:" and then nothing would be worse than a static answer.
+      #
+      # No dependencies are involved: scripts/docs.mjs imports scripts/version.mjs
+      # and nothing else, so this runs before the install below would matter.
+      - name: Read the configured hostname
+        id: site
+        run: |
+          set -euo pipefail
+          url="$(node -e 'import("./scripts/docs.mjs").then((m) => process.stdout.write(m.DOCS_URL))')"
+          if [ -z "$url" ]; then
+            echo "::error::scripts/docs.mjs exported no DOCS_URL."
+            exit 1
+          fi
+          echo "the site is configured to serve ${url}"
+          echo "url=${url}" >> "$GITHUB_OUTPUT"
 
       - run: pnpm install --frozen-lockfile
 
@@ -143,7 +169,7 @@ jobs:
           # Through the environment, never interpolated into the script body:
           # DEPLOY_URL is an action output and so is not ours to trust.
           COMMIT: ${{ github.sha }}
-          DEPLOY_URL: ${{ steps.deploy.outputs.deployment-url }}
+          DEPLOY_URL: ${{ steps.deploy.outputs.deployment-url || steps.site.outputs.url }}
           PAGES: ${{ steps.verify.outputs.pages }}
           VERSION: ${{ steps.version.outputs.version }}
         run: |

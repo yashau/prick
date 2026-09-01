@@ -9,12 +9,11 @@
   "compatibility_date": "2026-08-01",
 
   // ===========================================================================
-  // THIS WORKER IS PUBLIC, AND THAT IS CORRECT. DO NOT COPY THE APP'S SETTINGS
-  // HERE, AND DO NOT COPY THESE TO THE APP.
+  // THE SAME TWO LINES AS THE APP, FOR A COMPLETELY DIFFERENT REASON. DO NOT
+  // COPY EITHER FILE'S REASONING ONTO THE OTHER.
   //
-  // packages/app/wrangler.jsonc sets `workers_dev: false` and
-  // `preview_urls: false`, and CI greps for both. That is not general hygiene
-  // -- it is specific to that Worker. Cloudflare Access attaches to a
+  // packages/app/wrangler.jsonc sets these because there they are a SECURITY
+  // control, and CI greps that file for both. Cloudflare Access attaches to a
   // HOSTNAME, not to a Worker, so a *.workers.dev hostname or a per-version
   // preview URL serves the application with no authentication whatsoever:
   // every project, every environment, every reveal endpoint, open to the
@@ -23,14 +22,21 @@
   // None of that reasoning applies here. This Worker serves pre-rendered
   // Markdown that is already public on GitHub. It has no bindings, no secrets,
   // no database and no authenticated surface, so there is nothing for an
-  // unprotected hostname to expose. A workers.dev URL is a convenience for
-  // checking a build, and preview URLs per pull request are useful for
-  // reviewing documentation changes before they merge.
+  // unprotected hostname to expose, and nothing in this file is a security
+  // control.
   //
-  // Both settings are therefore left at their defaults, ON PURPOSE. If you
-  // arrived here from the app's config intending to make the two match: they
-  // must not match. The asymmetry is the point.
+  // They are off because the site has a real hostname now.
+  // `docs.getprick.dev` is what every built page advertises as canonical (see
+  // `site` in astro.config.ts). A workers.dev subdomain, and a preview URL per
+  // version, would serve byte-identical pages from further addresses -- a
+  // duplicate of every canonical URL on the site, and one more place a stale
+  // copy can be linked from and indexed. One site, one address.
+  //
+  // So: same values, opposite arguments. Turning these back on here endangers
+  // nothing; it just gives the site aliases it has no use for.
   // ===========================================================================
+  "workers_dev": false,
+  "preview_urls": false,
 
   // ---------------------------------------------------------------------------
   // Static assets, and nothing else.
@@ -49,18 +55,19 @@
     "not_found_handling": "404-page",
   },
 
-  // The custom hostname. Commented out because there is no zone for
-  // `docs.prick.dev`; until there is, the deploy lands on the workers.dev
-  // subdomain, which for this Worker is harmless (see above).
+  // The custom hostname -- and, with workers.dev and preview URLs off above,
+  // the ONLY one. Delete this route and `wrangler deploy` has nowhere to put
+  // the Worker; it fails rather than quietly publishing somewhere else.
   //
-  // Uncommenting this is half a change. `site` in `astro.config.ts` is what
-  // the built pages advertise as canonical, and the two pointing at different
-  // hostnames is worse than either one being provisional -- do both in the
-  // same commit.
+  // `custom_domain` (not a plain route pattern) is what makes Cloudflare own
+  // the DNS record and the certificate for `docs.getprick.dev` on the
+  // `getprick.dev` zone, so there is no CNAME to keep in step by hand.
   //
-  // "routes": [
-  //   { "pattern": "docs.prick.dev", "custom_domain": true }
-  // ],
+  // Changing it is half a change. `site` in `astro.config.ts` is what the built
+  // pages advertise as canonical, and the two naming different hostnames is
+  // worse than either one being provisional -- do both in the same commit.
+  // scripts/docs.test.mjs asserts they agree.
+  "routes": [{ "pattern": "docs.getprick.dev", "custom_domain": true }],
 
   "observability": {
     "enabled": true,

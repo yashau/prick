@@ -9,17 +9,17 @@ export default defineConfig({
   // The public docs hostname. Used for canonical URLs, the sitemap and Open
   // Graph tags.
   //
-  // This MUST be the hostname that actually serves the site, and today that is
-  // the workers.dev subdomain: the `routes` block in `wrangler.jsonc` is still
-  // commented out because there is no zone for `docs.prick.dev`. Advertising a
-  // canonical URL on a hostname that answers nothing tells every crawler the
-  // real page is a duplicate of one that does not exist, and keeps the site out
-  // of the index entirely -- so this is a correctness setting, not a cosmetic
-  // one.
+  // This MUST be the hostname that actually serves the site: the `routes` block
+  // in `wrangler.jsonc` puts the Worker on `docs.getprick.dev` as a custom
+  // domain, and with workers.dev and preview URLs switched off there, that is
+  // the only hostname which answers. Advertising a canonical URL on a hostname
+  // that answers nothing tells every crawler the real page is a duplicate of one
+  // that does not exist, and keeps the site out of the index entirely -- so this
+  // is a correctness setting, not a cosmetic one.
   //
   // Change it and the `routes` block in `wrangler.jsonc` in the same commit,
-  // never one without the other.
-  site: "https://prick-docs.ibrahim-yashau.workers.dev",
+  // never one without the other. scripts/docs.test.mjs asserts they agree.
+  site: "https://docs.getprick.dev",
 
   // ---------------------------------------------------------------------------
   // Fully static. There is no server.
