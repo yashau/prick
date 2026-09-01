@@ -195,7 +195,7 @@ Stated plainly, because a security section that only lists wins is not useful:
   machine reading your environment.
 - The token has whatever grants an administrator gave it. Scope it.
 
-`packages/mcp/README.md` carries the rest: the allow-list projection on
+[`packages/mcp/README.md`](https://github.com/yashau/prick/blob/main/packages/mcp/README.md) carries the rest: the allow-list projection on
 `secrets_list`, the tripwire on `secrets_set`, and why no error path can carry a
 value.
 

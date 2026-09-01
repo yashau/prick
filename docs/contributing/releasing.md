@@ -9,10 +9,10 @@ sidebar:
 
 There are two things to release, and they work identically:
 
-| Line          | Tasks    | Tag prefix | Workflow           | Ships                              |
-| ------------- | -------- | ---------- | ------------------ | ---------------------------------- |
-| The `prk` CLI | `cli:*`  | `v`        | `cli-release.yml`  | Eight binaries, ten npm packages   |
-| The docs site | `docs:*` | `docs-v`   | `docs-release.yml` | The `prick-docs` Cloudflare Worker |
+| Line          | Tasks    | Tag prefix | Workflow           | Ships                                                                      |
+| ------------- | -------- | ---------- | ------------------ | -------------------------------------------------------------------------- |
+| The `prk` CLI | `cli:*`  | `v`        | `cli-release.yml`  | Eight binaries, ten npm packages                                           |
+| The docs site | `docs:*` | `docs-v`   | `docs-release.yml` | The `prick-docs` Worker, at [docs.getprick.dev](https://docs.getprick.dev) |
 
 **Cutting the version is what releases it.** `cli:cut` and `docs:cut` compute the
 next version, take a typed confirmation, then create an annotated tag and push
@@ -425,6 +425,20 @@ so an empty build has to fail here rather than be discovered by a reader.
 Docs releases are created with `--latest=false`. They are not pre-releases —
 nothing later supersedes them — but the repository's "Latest" badge belongs to the
 newest `v*` release, which is what people come here to download.
+
+### One hostname
+
+The site is served from `docs.getprick.dev` and from nowhere else.
+`packages/docs/wrangler.jsonc` routes that hostname as a Cloudflare custom
+domain and switches `workers_dev` and `preview_urls` off, so a deploy has
+exactly one place to land.
+
+That is **not** the security control the same two settings are on the
+application Worker — this one holds nothing. It is so that the canonical URL
+`astro.config.ts` stamps on every built page is the only address those pages
+exist at. Three files have to name the same hostname — `astro.config.ts`,
+`wrangler.jsonc` and `scripts/docs.mjs` — and `scripts/docs.test.mjs` fails if
+they drift.
 
 ## Why not a single npm package with a postinstall
 

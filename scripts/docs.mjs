@@ -58,6 +58,20 @@ export const TAG_PREFIX = DOCS_TAG_PREFIX;
 export const TAG_GLOB = tagGlob(TAG_PREFIX);
 
 /**
+ * Where the site is served from.
+ *
+ * Three files have to agree on this, and each states it in a different
+ * language: the `routes` block in packages/docs/wrangler.jsonc is what puts
+ * the Worker on the hostname, `site` in packages/docs/astro.config.ts is what
+ * the built pages advertise as canonical, and this is what a cut prints and
+ * writes into the tag annotation.
+ *
+ * scripts/docs.test.mjs asserts all three, so a hostname change that misses
+ * one fails the suite rather than shipping half done.
+ */
+export const DOCS_URL = 'https://docs.getprick.dev';
+
+/**
  * The exact string a human must type to confirm a cut.
  *
  * @param {{ tag: string }} plan
@@ -102,7 +116,14 @@ export function runListArgs(limit = 1) {
  * @returns {string}
  */
 export function tagMessage(plan) {
-  return `${plan.tag}\n\nDocumentation site ${plan.calver} — release ${plan.patch} of ${plan.date} (UTC).`;
+  return [
+    plan.tag,
+    '',
+    `Documentation site ${plan.calver} — release ${plan.patch} of ${plan.date} (UTC).`,
+    `Serving ${DOCS_URL} from this commit.`,
+    '',
+    `Pushing this tag is what deployed it; ${WORKFLOW} computes no version.`,
+  ].join('\n');
 }
 
 /**
@@ -133,6 +154,7 @@ export function formatCutSummary(plan) {
     '',
     '  builds    packages/docs (Astro + Starlight) from the docs/ Markdown',
     '  deploys   the prick-docs Worker — public, no secrets, no access control',
+    `  serves    ${DOCS_URL}`,
     `  releases  a GitHub Release for ${plan.tag}`,
     '',
     `Confirming pushes the tag ${plan.tag}, and that push is what starts`,

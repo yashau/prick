@@ -10,6 +10,7 @@ import path from 'node:path';
 import test, { describe } from 'node:test';
 
 import {
+  DOCS_URL,
   TAG_GLOB,
   TAG_PREFIX,
   WORKFLOW,
@@ -26,8 +27,9 @@ import { DOCS_TAG_PREFIX, planVersion, tagCreateArgs, tagPushArgs } from './vers
 const AUG15 = new Date('2026-08-15T12:00:00Z');
 const PLAN = planVersion({ tags: [], now: AUG15, tagPrefix: DOCS_TAG_PREFIX });
 
-const workflowText = () =>
-  readFileSync(path.join(import.meta.dirname, '..', '.github', 'workflows', WORKFLOW), 'utf8');
+const repoFile = (...parts) => readFileSync(path.join(import.meta.dirname, '..', ...parts), 'utf8');
+
+const workflowText = () => repoFile('.github', 'workflows', WORKFLOW);
 
 /**
  * An in-memory git, plus recorders for every other effect.
@@ -124,6 +126,42 @@ describe('the release line', () => {
   });
 });
 
+describe('the hostname', () => {
+  /** A hostname as a regex fragment: only its dots need escaping. */
+  const literal = (value) => value.replaceAll('.', '\\.');
+
+  // Three files state where the site lives, in three different languages, and
+  // each is useless if it disagrees with the others: a canonical URL nothing
+  // serves keeps the site out of the index, and a route nothing advertises is
+  // a hostname no reader is sent to. The comments in both config files say
+  // "do both in the same commit"; this is what makes that mechanical.
+  test('is stated identically by the script, Astro and wrangler', () => {
+    const { host } = new URL(DOCS_URL);
+
+    assert.match(
+      repoFile('packages', 'docs', 'astro.config.ts'),
+      new RegExp(`site: "${literal(DOCS_URL)}"`),
+      `astro.config.ts must advertise ${DOCS_URL} as canonical`,
+    );
+
+    assert.match(
+      repoFile('packages', 'docs', 'wrangler.jsonc'),
+      new RegExp(`"pattern": "${literal(host)}", "custom_domain": true`),
+      `wrangler.jsonc must route ${host} as a custom domain`,
+    );
+  });
+
+  // NOT the app's security argument -- this Worker has nothing to expose. A
+  // second hostname serving byte-identical pages is a duplicate of every
+  // canonical URL on the site, and one more address a stale copy is linked
+  // from. With these off, the route above is the only place a deploy can land.
+  test('is the only hostname: workers.dev and preview URLs are off', () => {
+    const config = repoFile('packages', 'docs', 'wrangler.jsonc');
+    assert.match(config, /^\s*"workers_dev": false,$/m);
+    assert.match(config, /^\s*"preview_urls": false,$/m);
+  });
+});
+
 describe('confirmation', () => {
   test('the token is the docs tag, matching cli:cut rather than a plain y/N', () => {
     assert.equal(confirmationToken(PLAN), 'docs-v2026.815.0');
@@ -175,11 +213,19 @@ describe('summaries', () => {
     assert.match(text, /not a push to main, not a docs edit/);
     assert.match(text, /prick-docs Worker/);
     assert.match(text, /GitHub Release/);
+    assert.match(text, /https:\/\/docs\.getprick\.dev/);
   });
 
   test('the tag message names the docs site, not the CLI', () => {
     assert.match(tagMessage(PLAN), /^docs-v2026\.815\.0\n/);
     assert.match(tagMessage(PLAN), /Documentation site 2026\.08\.15\.0/);
+  });
+
+  // `git show docs-v2026.815.0` is the record of what shipped. A message that
+  // carries only a version leaves the reader to work out where it went.
+  test('the tag message says which site the release is serving', () => {
+    assert.match(tagMessage(PLAN), /Serving https:\/\/docs\.getprick\.dev/);
+    assert.match(tagMessage(PLAN), /Pushing this tag is what deployed it/);
   });
 });
 

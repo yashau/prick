@@ -12,10 +12,11 @@ One Worker, one D1 database, and nothing else to operate.
 [![License: MIT](https://img.shields.io/badge/license-MIT-C8F93A?labelColor=238112&logo=opensourceinitiative&logoColor=white)](LICENSE)
 [![crates.io](https://img.shields.io/crates/v/prk?label=crates.io&labelColor=238112&color=C8F93A&logo=rust&logoColor=white)](https://crates.io/crates/prk)
 [![npm](https://img.shields.io/npm/v/%40yashau%2Fprick?label=npm&labelColor=238112&color=C8F93A&logo=npm&logoColor=white)](https://www.npmjs.com/package/@yashau/prick)
+[![Docs](https://img.shields.io/badge/docs-docs.getprick.dev-C8F93A?labelColor=238112&logo=astro&logoColor=white)](https://docs.getprick.dev)
 
 **[Install](#-install)** · **[Examples](#-examples)** · **[Access control](#-access-control)** ·
-**[Getting started](#-getting-started)** · **[Quickstart](docs/getting-started/quickstart.md)** ·
-**[CLI reference](docs/reference/cli/index.md)** · **[Docs](docs/index.md)**
+**[Getting started](#-getting-started)** · **[Quickstart](https://docs.getprick.dev/getting-started/quickstart)** ·
+**[CLI reference](https://docs.getprick.dev/reference/cli/)** · **[Docs](https://docs.getprick.dev)**
 
 </div>
 
@@ -32,13 +33,13 @@ process at runtime — portably, and without ever touching disk.
 
 ## 🧩 What it is
 
-|             |                                                                                                            |
-| :---------- | :--------------------------------------------------------------------------------------------------------- |
-| **`prk`**   | The command-line client: one static Rust binary, talking HTTP to your Worker.                              |
-| **Web UI**  | A SvelteKit admin console served from the same Worker.                                                     |
-| **Auth**    | Cloudflare Access — SSO for people, service tokens for CI. Identity comes from the signed JWT.             |
-| **Storage** | D1. Values are AES-256-GCM, and each ciphertext is cryptographically bound to the row that holds it.       |
-| **MCP**     | An [MCP server](docs/guides/mcp-server.md), so a coding assistant can manage secrets without reading them. |
+|             |                                                                                                                              |
+| :---------- | :--------------------------------------------------------------------------------------------------------------------------- |
+| **`prk`**   | The command-line client: one static Rust binary, talking HTTP to your Worker.                                                |
+| **Web UI**  | A SvelteKit admin console served from the same Worker.                                                                       |
+| **Auth**    | Cloudflare Access — SSO for people, service tokens for CI. Identity comes from the signed JWT.                               |
+| **Storage** | D1. Values are AES-256-GCM, and each ciphertext is cryptographically bound to the row that holds it.                         |
+| **MCP**     | An [MCP server](https://docs.getprick.dev/guides/mcp-server), so a coding assistant can manage secrets without reading them. |
 
 ## ⚙️ How it works
 
@@ -92,7 +93,7 @@ mise's own npm backend puts a `prk` shim in the shims directory that is already 
 keeps it there across Node upgrades.
 
 The npm route adds a Node process to every invocation, which `prk doctor` reports; the direct
-installs above avoid it. See **[Install the CLI](docs/getting-started/install.md)** for the whole
+installs above avoid it. See **[Install the CLI](https://docs.getprick.dev/getting-started/install)** for the whole
 picture, shell completions included.
 
 ## 💻 Examples
@@ -422,8 +423,8 @@ diff <(prk secrets list --json -E staging    | jq -r '.[].key' | sort) \
 
 <br>
 
-Complete walkthroughs live in **[docs/examples](docs/examples/index.md)**; every command, flag and
-exit code is in the **[CLI reference](docs/reference/cli/index.md)**.
+Complete walkthroughs live in **[Examples](https://docs.getprick.dev/examples/)**; every command, flag and
+exit code is in the **[CLI reference](https://docs.getprick.dev/reference/cli/)**.
 
 ## 🏛️ Design decisions worth knowing
 
@@ -507,10 +508,10 @@ pnpm --filter @prick/app exec wrangler deploy
 > with `workers_dev` and `preview_urls` disabled and CI asserts both on every push, because an
 > unprotected hostname serves the entire application without a JWT.
 
-**[Quickstart](docs/getting-started/quickstart.md)** ·
-**[Authentication](docs/guides/authentication.md)** ·
-**[Access control](docs/guides/access-control.md)** ·
-**[Threat model](docs/architecture/threat-model.md)**
+**[Quickstart](https://docs.getprick.dev/getting-started/quickstart)** ·
+**[Authentication](https://docs.getprick.dev/guides/authentication)** ·
+**[Access control](https://docs.getprick.dev/guides/access-control)** ·
+**[Threat model](https://docs.getprick.dev/architecture/threat-model)**
 
 ## 🔑 `MASTER_KEY` is the whole ballgame
 
@@ -526,8 +527,8 @@ safe to drop the retired key — counted live, every time you ask.
 prk keyring rekey --until-done
 ```
 
-See **[Backup and recovery](docs/guides/backup-and-recovery.md)** and
-**[Key rotation](docs/guides/key-rotation.md)**.
+See **[Backup and recovery](https://docs.getprick.dev/guides/backup-and-recovery)** and
+**[Key rotation](https://docs.getprick.dev/guides/key-rotation)**.
 
 ## 📊 Status
 
