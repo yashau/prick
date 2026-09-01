@@ -120,12 +120,18 @@ action to a release tag, or set `version:` explicitly, if you need that nailed d
 `version` accepts an exact version, a `^`/`~` range or a dist-tag. Paths, git remotes and tarball
 URLs are refused.
 
+Whichever of those resolves, the version that is actually installed has had its provenance
+attestation verified first — see Security below. A range or a dist-tag is therefore not a hole, but a
+release tag still says in the workflow file which CLI a job ran.
+
 ## Requirements
 
 Any runner with `node` and `npm` on `PATH` — every GitHub-hosted runner, on Linux, macOS and
-Windows. Nothing is compiled and no build artefact is committed to this repository: the action
-installs the published, provenance-attested CLI and adds the handful of readable `.mjs` files next
-to this README.
+Windows. npm 9.5 or newer, because the install step verifies the CLI's provenance with
+`npm audit signatures`; every supported runner image ships one far newer.
+
+Nothing is compiled and no build artefact is committed to this repository: the action installs the
+published, provenance-attested CLI and adds the handful of readable `.mjs` files next to this README.
 
 ## Security
 
@@ -138,6 +144,22 @@ shows `***`.
 
 Masking is a safety net, not a boundary: it only redacts _exact_ matches. A step that base64-encodes
 a secret, or prints half of it, defeats it. Do not treat a masked log as a public one.
+
+**The CLI's provenance is verified before it is installed, and the action fails if it is not.** This
+action hands the CLI a service token and every secret in an environment, so which tarball runs is the
+whole question — and a consumer on a floating ref resolves the `latest` dist-tag, which an npm
+account takeover moves. Every `@yashau/prick*` package is published by GitHub Actions under npm
+trusted publishing and therefore carries a provenance attestation, so the install step fetches the
+resolved version into a throwaway directory, has `npm audit signatures` verify that attestation and
+the registry signature cryptographically, and only then installs — by exact version, so a dist-tag
+that moves in between cannot slip an unaudited tarball past the check. Nothing is executed during
+either fetch (`--ignore-scripts`).
+
+It **fails closed**, on every path that is not an affirmative verification: a missing attestation, an
+attestation that does not verify, a failure anywhere else in the tree, and a registry that cannot be
+reached — a check that could not run is not a check that passed. The practical consequence: a
+registry mirror that does not serve npm attestations is not supported, and says so rather than
+quietly skipping the step.
 
 **`http` is refused.** The service token is a bearer credential in a request header. Over plaintext
 it is readable by anything on the path, and a token that reads production secrets is not something

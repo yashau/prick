@@ -48,6 +48,28 @@ concurrency:
   cancel-in-progress: false
 
 env:
+  # THE MISE BINARY ITSELF, PINNED, and in this workflow that is the load-bearing
+  # one.
+  #
+  # `jdx/mise-action` is pinned to a SHA, but the action's job is to DOWNLOAD
+  # mise -- and with no `version:` it downloads whatever release is newest at run
+  # time. `mise run build:auditable` and `mise run publish:crates` then execute
+  # through that binary, inside jobs that hold `id-token: write` for npm and
+  # crates.io. A hijacked mise release would therefore publish malicious packages
+  # to both registries WITH valid provenance attestations, which is the one
+  # outcome trusted publishing is supposed to make impossible. Disabling the mise
+  # cache (below, on every job) closes the cache-poisoning route into these jobs;
+  # this closes the download route.
+  #
+  # Read by every mise-action call site below, so there is one string to bump
+  # rather than six to keep in step. ci.yml and docs-release.yml carry the same
+  # pin, and the three move together.
+  #
+  # NOT the newest release, deliberately -- see the longer note in ci.yml.
+  # 2026.8.14 is the newest that has cleared the 72-hour cooldown
+  # `pnpm-workspace.yaml` applies to every npm dependency.
+  PINNED_MISE_VERSION: "2026.8.14"
+
   CARGO_INCREMENTAL: "0"
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: "1"
@@ -91,6 +113,7 @@ jobs:
 
       - uses: jdx/mise-action@3c2e0cf82a5b2e5249f0d3635a4d83d0ae861518 # v4.2.5
         with:
+          version: ${{ env.PINNED_MISE_VERSION }}
           # Caching is off in BOTH directions. This workflow is reachable only
           # by a tag push, and it publishes to npm and creates a GitHub Release
           # -- so it is a publishing workflow in exactly the sense that makes a
@@ -213,6 +236,7 @@ jobs:
 
       - uses: jdx/mise-action@3c2e0cf82a5b2e5249f0d3635a4d83d0ae861518 # v4.2.5
         with:
+          version: ${{ env.PINNED_MISE_VERSION }}
           # Caching is off in BOTH directions. This workflow is reachable only
           # by a tag push, and it publishes to npm and creates a GitHub Release
           # -- so it is a publishing workflow in exactly the sense that makes a
@@ -326,6 +350,7 @@ jobs:
 
       - uses: jdx/mise-action@3c2e0cf82a5b2e5249f0d3635a4d83d0ae861518 # v4.2.5
         with:
+          version: ${{ env.PINNED_MISE_VERSION }}
           # Caching is off in BOTH directions. This workflow is reachable only
           # by a tag push, and it publishes to npm and creates a GitHub Release
           # -- so it is a publishing workflow in exactly the sense that makes a
@@ -574,6 +599,7 @@ jobs:
 
       - uses: jdx/mise-action@3c2e0cf82a5b2e5249f0d3635a4d83d0ae861518 # v4.2.5
         with:
+          version: ${{ env.PINNED_MISE_VERSION }}
           # Caching is off in BOTH directions. This workflow is reachable only
           # by a tag push, and it publishes to npm and creates a GitHub Release
           # -- so it is a publishing workflow in exactly the sense that makes a
@@ -665,7 +691,16 @@ jobs:
           # own OIDC path regressed in 11.0.8.
           # The publishing client itself cannot come from the workspace
           # lockfile; it is what consumes the lockfile's output.
-          npm install --global npm@^11.5.1
+          #
+          # EXACT, not `^11.5.1`. This is the client that performs
+          # `npm publish` under trusted publishing, and the 72-hour
+          # `minimumReleaseAge` cooldown in pnpm-workspace.yaml does not reach
+          # it -- so a range resolved whatever npm 11.x happened to be newest
+          # at the moment a release was cut, including one published an hour
+          # earlier. 11.19.1 is the newest on the 11 line that has cleared that
+          # same three days; the 11 line rather than 12 because of the pnpm
+          # note above. Bump both this and the mise pin the same way.
+          npm install --global npm@11.19.1
           npm --version
 
       - name: Publish under the `next` tag
@@ -984,10 +1019,6 @@ jobs:
       # when the job ends. So -- as with npm above -- there is no standing
       # credential in this repository to leak.
       id-token: write
-    env:
-      # Read at job level because the `secrets` context is not available in a
-      # step `if:`. Empty except during the one-time bootstrap described below.
-      BOOTSTRAP_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -996,6 +1027,7 @@ jobs:
 
       - uses: jdx/mise-action@3c2e0cf82a5b2e5249f0d3635a4d83d0ae861518 # v4.2.5
         with:
+          version: ${{ env.PINNED_MISE_VERSION }}
           # Caching is off in BOTH directions, for the reason given on every
           # other job here: this workflow publishes to a registry, so a restored
           # cache entry written by a lower-privilege workflow is a supply-chain
@@ -1009,6 +1041,45 @@ jobs:
         env:
           VERSION: ${{ needs.version.outputs.version || '0.0.0-dev' }}
         run: node scripts/version.mjs set "$VERSION"
+
+      # Is the one-time bootstrap secret still set? The `secrets` context is not
+      # readable from a step `if:`, so the answer has to be reduced to a boolean
+      # by a step -- and it is reduced by THIS step, whose whole body is the
+      # test, so the credential is in the environment of one step instead of all
+      # of them.
+      #
+      # It used to be a job-level `env:`, which put the raw token into the
+      # environment of checkout, mise-action, the version stamp and -- the one
+      # that matters -- `cargo publish`, whose verification build runs the build
+      # scripts and proc-macros of every dependency in the graph. That is
+      # third-party crates.io code, and a job-level `env:` handed all of it a
+      # crates.io publishing token. The Publish step below already took the
+      # trouble to evaluate its own credential to `''` on a dispatch precisely so
+      # that "a credential should not be present in a job that has no use for
+      # it"; this is the other half of that sentence.
+      #
+      # Gated on the tag push for the same reason the Publish step's own env is:
+      # this job runs on a dispatch too, and a rehearsal has no use for a
+      # publishing credential. Skipped, the output is empty rather than `false`,
+      # which the `if:` below reads as "do not mint a token" -- correct, because
+      # a dry run never authenticates. So on a rehearsal the secret is now in NO
+      # step's environment at all, where before it was in every step's.
+      #
+      # Only the emptiness is exported. The value never leaves this step.
+      - name: Is the bootstrap credential set
+        id: bootstrap
+        if: github.event_name == 'push'
+        env:
+          BOOTSTRAP_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -n "${BOOTSTRAP_TOKEN:-}" ]; then
+            echo "set=true" >> "$GITHUB_OUTPUT"
+            echo "CARGO_REGISTRY_TOKEN is set: this is a bootstrap publish."
+          else
+            echo "set=false" >> "$GITHUB_OUTPUT"
+            echo "No CARGO_REGISTRY_TOKEN: publishing on a minted OIDC token."
+          fi
 
       # Only a tag push gets a credential. On a dispatch this step is skipped,
       # `steps.auth.outputs.token` is empty, and the publish below is a dry run
@@ -1025,7 +1096,7 @@ jobs:
       # already did, and to the same end.
       - name: Exchange OIDC for a crates.io token
         id: auth
-        if: github.event_name == 'push' && env.BOOTSTRAP_TOKEN == ''
+        if: github.event_name == 'push' && steps.bootstrap.outputs.set == 'false'
         uses: rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18 # v1.0.5
 
       - name: Publish
@@ -1204,6 +1275,7 @@ jobs:
 
       - uses: jdx/mise-action@3c2e0cf82a5b2e5249f0d3635a4d83d0ae861518 # v4.2.5
         with:
+          version: ${{ env.PINNED_MISE_VERSION }}
           # Caching is off in BOTH directions, for the reason given on every
           # other job here.
           cache: false
@@ -1373,13 +1445,29 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions: {}
-    env:
-      # Same reason as publish-manifests: `secrets` is not readable from a
-      # step `if:`.
-      WINGET_TOKEN: ${{ secrets.WINGET_TOKEN }}
     steps:
+      # `secrets` is not readable from a step `if:`, so the presence of the token
+      # is reduced to a boolean here rather than by a job-level `env:`. A
+      # job-level one would have put a classic PAT -- the one standing credential
+      # in this pipeline -- into the environment of the handover step below too,
+      # which exists precisely for the case where there is no credential to hold.
+      #
+      # Only the emptiness is exported. The value never leaves this step, and the
+      # submission step below takes it from `secrets` directly.
+      - name: Is the WinGet credential set
+        id: winget
+        env:
+          WINGET_TOKEN: ${{ secrets.WINGET_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -n "${WINGET_TOKEN:-}" ]; then
+            echo "set=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "set=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Submit to microsoft/winget-pkgs
-        if: env.WINGET_TOKEN != ''
+        if: steps.winget.outputs.set == 'true'
         uses: vedantmgoyal9/winget-releaser@4ffc7888bffd451b357355dc214d43bb9f23917e # v2
         with:
           identifier: yashau.prick
@@ -1391,7 +1479,7 @@ jobs:
           token: ${{ secrets.WINGET_TOKEN }}
 
       - name: Hand the submission over
-        if: env.WINGET_TOKEN == ''
+        if: steps.winget.outputs.set == 'false'
         env:
           VERSION: ${{ needs.version.outputs.version }}
           TAG: ${{ needs.version.outputs.tag }}

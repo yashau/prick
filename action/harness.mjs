@@ -53,6 +53,87 @@ export function fakeSpawn(result = {}, calls = []) {
   };
 }
 
+/** The version the canned attestation report below verifies. */
+export const VERIFIED_VERSION = "2026.815.0";
+
+/**
+ * An `npm audit signatures --json --include-attestations` document, shaped like
+ * the real one. Recorded from npm 11 against the published package rather than
+ * invented: `verified` carries the parent AND its platform package, and the
+ * provenance predicate is the SLSA one npm reports.
+ *
+ * @param {object} [options]
+ * @param {string} [options.version]
+ * @param {boolean} [options.provenance]  drop the attestation, keep the signature
+ * @param {object[]} [options.invalid]
+ * @param {object[]} [options.missing]
+ * @param {boolean} [options.present]  drop the parent package from the report
+ */
+export function auditReport({
+  version = VERIFIED_VERSION,
+  provenance = true,
+  invalid = [],
+  missing = [],
+  present = true,
+} = {}) {
+  const attestations = {
+    url: `https://registry.npmjs.org/-/npm/v1/attestations/@yashau%2fprick@${version}`,
+    provenance: { predicateType: "https://slsa.dev/provenance/v1" },
+  };
+  const parent = {
+    name: "@yashau/prick",
+    version,
+    registry: "https://registry.npmjs.org/",
+    ...(provenance ? { attestations } : {}),
+  };
+  return JSON.stringify({
+    invalid,
+    missing,
+    verified: [
+      ...(present ? [parent] : []),
+      {
+        name: "@yashau/prick-linux-x64-gnu",
+        version,
+        registry: "https://registry.npmjs.org/",
+        attestations,
+      },
+    ],
+  });
+}
+
+/**
+ * A spawn that answers the install command's three npm invocations separately:
+ * the staging fetch, the attestation audit, and the global install. Dispatches
+ * on the argument vector rather than on call order, so a test that overrides one
+ * of them does not have to know where it sits in the sequence.
+ *
+ * @param {{ staged?: object, audited?: object, installed?: object }} [results]
+ * @param {object[]} [calls]
+ */
+export function fakeNpm({ staged = {}, audited = {}, installed = {} } = {}, calls = []) {
+  return (file, args, options) => {
+    calls.push({ file, args, options });
+    const ok = { status: 0, stdout: "", stderr: "" };
+    if (args[0] === "audit") {
+      return { ...ok, stdout: auditReport(), ...audited };
+    }
+    if (args.includes("--global")) {
+      return { ...ok, ...installed };
+    }
+    return { ...ok, ...staged };
+  };
+}
+
+/**
+ * A staging directory that is never created on disk. A path with a space and an
+ * ampersand in it, because the reason `stagingArgs` says `--prefix .` and passes
+ * the directory as a cwd is that a runner's temporary path may contain both.
+ */
+export const STAGING = "/tmp/runner temp & more/prick-verify-abc123";
+
+/** @returns {string} */
+export const fakeStaging = () => STAGING;
+
 /**
  * Deterministic bytes. Each call returns a different constant, so delimiters
  * are predictable and a collision can be forced.

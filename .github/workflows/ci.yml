@@ -17,6 +17,27 @@ concurrency:
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 env:
+  # THE MISE BINARY ITSELF, PINNED.
+  #
+  # `jdx/mise-action` is pinned to a SHA, but the action's job is to DOWNLOAD
+  # mise -- and with no `version:` it downloads whatever release is newest at
+  # run time. Every `mise run` in this file then executes through that binary,
+  # so an unpinned mise is an unpinned interpreter for the entire pipeline. This
+  # matters most in cli-release.yml, where the same binary runs inside jobs
+  # holding `id-token: write` for npm and crates.io; the pin lives in all three
+  # workflows and they move together.
+  #
+  # Read by every mise-action call site below, so there is one string to bump
+  # rather than ten to keep in step.
+  #
+  # NOT the newest release, deliberately. 2026.8.14 is the newest that has
+  # cleared the same 72-hour cooldown `pnpm-workspace.yaml` applies to every npm
+  # dependency (`minimumReleaseAge: 4320`), and the argument recorded there is
+  # the argument here: a malicious release is almost always spotted and pulled
+  # inside three days, so declining to run one younger than that turns most of
+  # those incidents into a non-event. Bump this to whatever is three days old.
+  PINNED_MISE_VERSION: "2026.8.14"
+
   # Incremental artefacts are large, never reused across CI runs, and poison the
   # cache with several hundred MB of dead weight.
   CARGO_INCREMENTAL: "0"
@@ -160,6 +181,8 @@ jobs:
         with:
           persist-credentials: false
       - uses: jdx/mise-action@3c2e0cf82a5b2e5249f0d3635a4d83d0ae861518 # v4.2.5
+        with:
+          version: ${{ env.PINNED_MISE_VERSION }}
       - run: mise run fmt:check:rust
 
   rust-lint:
@@ -173,6 +196,8 @@ jobs:
         with:
           persist-credentials: false
       - uses: jdx/mise-action@3c2e0cf82a5b2e5249f0d3635a4d83d0ae861518 # v4.2.5
+        with:
+          version: ${{ env.PINNED_MISE_VERSION }}
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           # clippy and rustc emit different artefact sets for the same crate;
@@ -198,6 +223,8 @@ jobs:
         with:
           persist-credentials: false
       - uses: jdx/mise-action@3c2e0cf82a5b2e5249f0d3635a4d83d0ae861518 # v4.2.5
+        with:
+          version: ${{ env.PINNED_MISE_VERSION }}
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           shared-key: test-${{ matrix.os }}
@@ -219,6 +246,8 @@ jobs:
         with:
           persist-credentials: false
       - uses: jdx/mise-action@3c2e0cf82a5b2e5249f0d3635a4d83d0ae861518 # v4.2.5
+        with:
+          version: ${{ env.PINNED_MISE_VERSION }}
       # No rust-cache: cargo-deny reads Cargo.lock and never touches target/.
       - run: mise run deny
 
@@ -239,6 +268,8 @@ jobs:
         with:
           persist-credentials: false
       - uses: jdx/mise-action@3c2e0cf82a5b2e5249f0d3635a4d83d0ae861518 # v4.2.5
+        with:
+          version: ${{ env.PINNED_MISE_VERSION }}
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           shared-key: miri
@@ -260,6 +291,8 @@ jobs:
           persist-credentials: false
 
       - uses: jdx/mise-action@3c2e0cf82a5b2e5249f0d3635a4d83d0ae861518 # v4.2.5
+        with:
+          version: ${{ env.PINNED_MISE_VERSION }}
 
       # Node and pnpm come from mise, so setup-node's built-in cache is not
       # available to us -- it keys off its own installation. Cache the pnpm
@@ -332,6 +365,8 @@ jobs:
           persist-credentials: false
 
       - uses: jdx/mise-action@3c2e0cf82a5b2e5249f0d3635a4d83d0ae861518 # v4.2.5
+        with:
+          version: ${{ env.PINNED_MISE_VERSION }}
 
       # Same reasoning as js-check: Node and pnpm come from mise, so the pnpm
       # content-addressable store is cached directly.
@@ -368,6 +403,8 @@ jobs:
           persist-credentials: false
 
       - uses: jdx/mise-action@3c2e0cf82a5b2e5249f0d3635a4d83d0ae861518 # v4.2.5
+        with:
+          version: ${{ env.PINNED_MISE_VERSION }}
 
       - id: pnpm-store
         run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
@@ -490,6 +527,8 @@ jobs:
           persist-credentials: false
 
       - uses: jdx/mise-action@3c2e0cf82a5b2e5249f0d3635a4d83d0ae861518 # v4.2.5
+        with:
+          version: ${{ env.PINNED_MISE_VERSION }}
 
       - name: Lint workflows
         run: mise run lint:actions
@@ -604,6 +643,8 @@ jobs:
         with:
           persist-credentials: false
       - uses: jdx/mise-action@3c2e0cf82a5b2e5249f0d3635a4d83d0ae861518 # v4.2.5
+        with:
+          version: ${{ env.PINNED_MISE_VERSION }}
       - run: mise run version:check
 
   # ---------------------------------------------------------------------------
