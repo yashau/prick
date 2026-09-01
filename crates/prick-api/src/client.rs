@@ -20,6 +20,7 @@ use std::time::Duration;
 
 use prick_core::classify::ErrorKind;
 use serde::de::DeserializeOwned;
+use zeroize::Zeroize as _;
 
 use crate::config::Config;
 use crate::credential::{Credential, HEADER_REQUEST_ID};
@@ -66,7 +67,8 @@ pub struct Received {
     /// The body, capped at whatever [`body_cap`] allowed this response.
     ///
     /// Held only long enough to deserialise or to pull a `<title>` out of. It
-    /// never reaches an error, a log line or a diagnostic.
+    /// never reaches an error, a log line or a diagnostic, and it is zeroized
+    /// when this value drops.
     body: Vec<u8>,
 }
 
@@ -74,6 +76,24 @@ impl Received {
     /// The body bytes, capped at whatever [`body_cap`] allowed this response.
     pub fn body(&self) -> &[u8] {
         &self.body
+    }
+}
+
+/// Wipes the body on the way out.
+///
+/// The transport cannot tell a response carrying secrets from one that does
+/// not: a token endpoint returns an access token and a refresh token as
+/// plaintext JSON, and a reveal returns a secret value. Zeroizing every body
+/// rather than the ones a caller remembers to wipe is what makes that
+/// distinction unnecessary, and it matches what the credential store already
+/// does with the buffers it reads and writes.
+///
+/// This is hygiene, not a boundary — it shortens how long plaintext sits in a
+/// page that could be swapped or dumped. It cannot reach copies `serde` made
+/// while deserialising.
+impl Drop for Received {
+    fn drop(&mut self) {
+        self.body.zeroize();
     }
 }
 
@@ -252,7 +272,7 @@ impl Client {
         body: Body<'_>,
     ) -> Result<T, ApiError> {
         let received = self.fetch(method, url, body).await?;
-        decode(received)
+        decode(&received)
     }
 
     /// Sends a request that is not expected to answer with a document.
@@ -280,7 +300,7 @@ impl Client {
         // Not empty, so it is either a real error or a document nobody asked
         // for. Either way the ordinary path decides, and a stray document is
         // discarded rather than treated as a failure.
-        decode::<serde::de::IgnoredAny>(received).map(|_| ())
+        decode::<serde::de::IgnoredAny>(&received).map(|_| ())
     }
 
     /// `DELETE` a resource.
@@ -387,9 +407,12 @@ fn response_kind(facts: &ResponseFacts) -> Option<ErrorKind> {
 }
 
 /// Turns a received response into a value, or into the best available error.
-fn decode<T: DeserializeOwned>(received: Received) -> Result<T, ApiError> {
+///
+/// Borrows rather than consumes so that the caller's [`Received`] lives to the
+/// end of its own scope, where [`Received::drop`] wipes the body.
+fn decode<T: DeserializeOwned>(received: &Received) -> Result<T, ApiError> {
     if let Some(classified) = classify(&received.facts) {
-        return Err(ApiError::from_response(received.facts, classified));
+        return Err(ApiError::from_response(received.facts.clone(), classified));
     }
 
     // A JSON error status: the server's own envelope is more specific than
@@ -409,7 +432,7 @@ fn decode<T: DeserializeOwned>(received: Received) -> Result<T, ApiError> {
         // same value the `X-Request-Id` header carries, the header is set by
         // middleware mounted ahead of every route, and taking it from one place
         // means there is no case where the two could be reported differently.
-        let err = ApiError::from_server(received.facts, message);
+        let err = ApiError::from_server(received.facts.clone(), message);
         return Err(match hint {
             Some(hint) => err.with_server_hint(hint),
             None => err,
@@ -421,7 +444,7 @@ fn decode<T: DeserializeOwned>(received: Received) -> Result<T, ApiError> {
         // response body from a secrets manager may contain a secret, and this
         // code cannot tell which fields do.
         ApiError::from_response(
-            received.facts,
+            received.facts.clone(),
             Classified {
                 kind: ErrorKind::NotPrick,
                 message: format!(
