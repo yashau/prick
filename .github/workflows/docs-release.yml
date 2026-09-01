@@ -55,11 +55,11 @@ jobs:
     timeout-minutes: 15
     environment:
       name: docs
-      url: ${{ steps.deploy.outputs.deployment-url || steps.site.outputs.url }}
+      url: ${{ steps.site.outputs.url }}
     outputs:
       version: ${{ steps.version.outputs.version }}
       pages: ${{ steps.verify.outputs.pages }}
-      url: ${{ steps.deploy.outputs.deployment-url || steps.site.outputs.url }}
+      url: ${{ steps.site.outputs.url }}
     steps:
       # The trigger is a tag push, so the default ref IS the tagged commit.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -98,17 +98,24 @@ jobs:
           echo "releasing docs ${version}"
           echo "version=${version}" >> "$GITHUB_OUTPUT"
 
-      # DERIVED, not restated. scripts/docs.mjs exports the one constant, and
-      # scripts/docs.test.mjs ties it to the `routes` block in
-      # packages/docs/wrangler.jsonc and to `site` in its astro.config.ts, so
-      # reading it here does not add a fourth place to keep in step.
+      # Where this release is served, DERIVED rather than restated:
+      # scripts/docs.mjs exports the one constant, and scripts/docs.test.mjs ties
+      # it to the `routes` block in packages/docs/wrangler.jsonc and to `site` in
+      # its astro.config.ts. So this is not a fourth place to keep in step -- it
+      # is the same statement, read.
       #
-      # This is a FALLBACK for what the deploy reports, never a replacement:
-      # wrangler-action's deployment-url is the truth about where the Worker
-      # actually landed, and is preferred wherever it is non-empty. It is only
-      # here because that output is derived by scraping the deploy log, and the
-      # site no longer has a *.workers.dev hostname in it -- a release whose
-      # notes read "url:" and then nothing would be worse than a static answer.
+      # It is used INSTEAD OF wrangler-action's `deployment-url`, not as a
+      # fallback for it. That output is scraped out of the deploy log, and for a
+      # Worker on a custom domain the line it finds is a trigger DESCRIPTION
+      # rather than a URL: docs-v2026.901.0 reported
+      #
+      #   docs.getprick.dev (custom domain)
+      #
+      # which GitHub then refused as an environment URL, and which landed in that
+      # release's notes verbatim. Preferring it whenever it is non-empty was
+      # therefore worse than not consulting it at all: it is non-empty and wrong.
+      # The route in wrangler.jsonc is the only place a deploy can land, so the
+      # configured hostname is a fact about this release, not a guess at one.
       #
       # No dependencies are involved: scripts/docs.mjs imports scripts/version.mjs
       # and nothing else, so this runs before the install below would matter.
@@ -166,10 +173,11 @@ jobs:
 
       - name: Summary
         env:
-          # Through the environment, never interpolated into the script body:
-          # DEPLOY_URL is an action output and so is not ours to trust.
+          # Through the environment, never interpolated into the script body.
+          # COMMIT is a ref-derived value; SITE_URL is read out of the repository
+          # at run time. Neither is worth special-casing into a safe one.
           COMMIT: ${{ github.sha }}
-          DEPLOY_URL: ${{ steps.deploy.outputs.deployment-url || steps.site.outputs.url }}
+          SITE_URL: ${{ steps.site.outputs.url }}
           PAGES: ${{ steps.verify.outputs.pages }}
           VERSION: ${{ steps.version.outputs.version }}
         run: |
@@ -178,7 +186,7 @@ jobs:
             echo
             echo "- commit: \`${COMMIT}\`"
             echo "- pages: ${PAGES}"
-            echo "- url: ${DEPLOY_URL}"
+            echo "- url: ${SITE_URL}"
           } >> "$GITHUB_STEP_SUMMARY"
 
   # ---------------------------------------------------------------------------
@@ -210,7 +218,7 @@ jobs:
           TAG: ${{ github.ref_name }}
           VERSION: ${{ needs.deploy.outputs.version }}
           PAGES: ${{ needs.deploy.outputs.pages }}
-          DEPLOY_URL: ${{ needs.deploy.outputs.url }}
+          SITE_URL: ${{ needs.deploy.outputs.url }}
           COMMIT: ${{ github.sha }}
         run: |
           set -euo pipefail
@@ -225,7 +233,7 @@ jobs:
               "Documentation site \`${VERSION}\`, built from \`${COMMIT}\`." \
               "" \
               "- pages: ${PAGES}" \
-              "- url: ${DEPLOY_URL}" \
+              "- url: ${SITE_URL}" \
               "" \
               "Cut with \`mise run docs:cut\`; the tag push is what deployed it."
           )"
