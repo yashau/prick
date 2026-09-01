@@ -79,25 +79,26 @@ fi
 
 The stable codes emitted under `--json`.
 
-| Code                  | Exit | Retryable | Meaning                                                                                      |
-| --------------------- | ---- | --------- | -------------------------------------------------------------------------------------------- |
-| `UNAUTHENTICATED`     | 3    | no        | No credentials, or they expired and could not be refreshed                                   |
-| `FORBIDDEN`           | 4    | no        | Authenticated, but not granted the role this operation needs                                 |
-| `NOT_FOUND`           | 5    | no        | The project, environment, secret or version does not exist — or is not visible to you        |
-| `CONFLICT`            | 6    | yes       | A concurrent writer won                                                                      |
-| `PRECONDITION_FAILED` | 6    | no        | `--expected-rev` did not match                                                               |
-| `VALIDATION_FAILED`   | 11   | no        | The payload was rejected                                                                     |
-| `PAYLOAD_TOO_LARGE`   | 11   | no        | The environment would exceed its secret cap                                                  |
-| `RATE_LIMITED`        | 10   | yes       | The server asked the client to slow down                                                     |
-| `SERVER_ERROR`        | 8    | yes       | The server failed internally                                                                 |
-| `SERVICE_UNAVAILABLE` | 8    | yes       | Up but temporarily refusing work, or no admins configured yet                                |
-| `UNREACHABLE`         | 7    | yes       | DNS, connection refused, or no route                                                         |
-| `TLS_FAILURE`         | 7    | no        | The TLS handshake failed — typically a corporate proxy with a private certificate authority  |
-| `TIMEOUT`             | 7    | yes       | The request exceeded `--timeout`                                                             |
-| `NOT_A_PRICK_SERVER`  | 7    | no        | Something answered, but it is not a prick server                                             |
-| `MITIGATED`           | 7    | no        | A Cloudflare security product challenged or blocked the request before it reached the server |
-| `RESPONSE_TOO_LARGE`  | 12   | no        | The server answered correctly and the answer is larger than the client will read             |
-| `UNKNOWN`             | 1    | no        | A status with no specific handling                                                           |
+| Code                     | Exit | Retryable | Meaning                                                                                      |
+| ------------------------ | ---- | --------- | -------------------------------------------------------------------------------------------- |
+| `UNAUTHENTICATED`        | 3    | no        | No credentials, or they expired and could not be refreshed                                   |
+| `FORBIDDEN`              | 4    | no        | Authenticated, but not granted the role this operation needs                                 |
+| `NOT_FOUND`              | 5    | no        | The project, environment, secret or version does not exist — or is not visible to you        |
+| `CONFLICT`               | 6    | yes       | A concurrent writer won                                                                      |
+| `PRECONDITION_FAILED`    | 6    | no        | `--expected-rev` did not match                                                               |
+| `VALIDATION_FAILED`      | 11   | no        | The payload was rejected                                                                     |
+| `PAYLOAD_TOO_LARGE`      | 11   | no        | The environment would exceed its secret cap                                                  |
+| `UNSUPPORTED_MEDIA_TYPE` | 11   | no        | A request body was not declared `application/json`                                           |
+| `RATE_LIMITED`           | 10   | yes       | The server asked the client to slow down                                                     |
+| `SERVER_ERROR`           | 8    | yes       | The server failed internally                                                                 |
+| `SERVICE_UNAVAILABLE`    | 8    | yes       | Up but temporarily refusing work, or no admins configured yet                                |
+| `UNREACHABLE`            | 7    | yes       | DNS, connection refused, or no route                                                         |
+| `TLS_FAILURE`            | 7    | no        | The TLS handshake failed — typically a corporate proxy with a private certificate authority  |
+| `TIMEOUT`                | 7    | yes       | The request exceeded `--timeout`                                                             |
+| `NOT_A_PRICK_SERVER`     | 7    | no        | Something answered, but it is not a prick server                                             |
+| `MITIGATED`              | 7    | no        | A Cloudflare security product challenged or blocked the request before it reached the server |
+| `RESPONSE_TOO_LARGE`     | 12   | no        | The server answered correctly and the answer is larger than the client will read             |
+| `UNKNOWN`                | 1    | no        | A status with no specific handling                                                           |
 
 Codes the client raises itself, rather than reading off a response:
 
@@ -253,6 +254,21 @@ Nobody can administer this install yet. Set `BOOTSTRAP_ADMINS` in
 The handshake failed, which on a corporate network usually means a proxy
 presenting a private certificate authority. Install that CA into the system
 trust store; `prk` uses the platform's store.
+
+### `UNSUPPORTED_MEDIA_TYPE` (exit 11)
+
+The server refuses a state-changing request whose body is not declared
+`application/json` — see
+[Writes are same-origin and JSON](/reference/api#writes-are-same-origin-and-json).
+
+A working `prk` cannot produce this. It sets `Content-Type: application/json` on
+every API call it makes, so seeing it means something rewrote or stripped the
+header in transit, which in practice is an intercepting proxy — the same kind of
+network to suspect as for `TLS_FAILURE`, and the same thing to check.
+
+It is exit 11 alongside `VALIDATION_FAILED` — both are a request the server
+would not act on — but it keeps its own code, because the fix is one header
+rather than a field in the payload.
 
 ### `UNREPRESENTABLE_OUTPUT` (exit 9)
 

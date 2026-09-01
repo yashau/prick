@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { auditLog, secretVersions } from "../../src/lib/server/db/schema.js";
 import { seedEnvironment, seedProject } from "../auth/fixtures.js";
 import { apiHarness, body, OWNER, type ApiHarness } from "./harness.js";
+import { HTTP_SOURCES, stripComments } from "./sources.js";
 
 /**
  * THE FRAMEWORK-LEVEL RULE: a validation failure never echoes what was sent.
@@ -208,29 +209,10 @@ describe("query strings are coerced at the transport and nowhere else", () => {
  * looks completely ordinary in a diff. Rather than rely on a reviewer noticing,
  * the import itself is confined: `http/validate.ts` is the only module in the
  * shipped tree allowed to name `@hono/zod-validator`.
- */
-const HTTP_SOURCES = import.meta.glob(
-  ["../../src/lib/server/http/**/*.ts", "!../../src/lib/server/http/**/*.test.ts"],
-  { query: "?raw", import: "default", eager: true },
-) as Record<string, string>;
-
-/**
- * Comments are stripped before the greps below run.
  *
- * Both rules are about what the CODE does, and both names appear in prose all
- * over this tree precisely because they are the things being explained. A
- * sentinel that fires on its own documentation is a sentinel somebody deletes.
- *
- * Deliberately a heuristic rather than a parser: block comments go, and a `//`
- * goes unless it is preceded by `:` or a quote, which is what keeps `https://`
- * inside a string intact. It can in principle drop code that follows a URL on
- * the same line -- a false NEGATIVE, never a false positive -- and the rules it
- * guards are also enforced by the behavioural tests above.
+ * `HTTP_SOURCES` and `stripComments` live in `./sources.js`, shared with
+ * `csrf.test.ts`.
  */
-function stripComments(source: string): string {
-  return source.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/(^|[^:"'`\\])\/\/[^\n]*/gm, "$1");
-}
-
 describe("nothing validates outside http/validate.ts", () => {
   it("finds the http source tree", () => {
     const paths = Object.keys(HTTP_SOURCES);

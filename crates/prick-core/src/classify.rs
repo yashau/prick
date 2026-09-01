@@ -40,6 +40,24 @@ pub enum ErrorKind {
     Validation,
     /// The environment would exceed the per-environment secret cap.
     PayloadTooLarge,
+    /// A request body was not declared as `application/json`.
+    ///
+    /// Deliberately **not** [`Self::Validation`], though the two share exit 11.
+    /// A validation failure means the server read the payload and refused what
+    /// was in it, so its message names the offending field and a fixed hint
+    /// could not improve on it. This means the payload was never read at all:
+    /// the media type is wrong, and the fix is one header, the same one every
+    /// time. Folding them together would either leave a 415 with no next step
+    /// or attach a `Content-Type` hint to every rejected field.
+    ///
+    /// A correct `prk` cannot provoke it. Every API body is built with
+    /// reqwest's `.json()`, which sets the header, so in practice this means
+    /// something between the client and the Worker rewrote or dropped
+    /// `Content-Type`. Classifying it is what turns that into a fixable message
+    /// rather than an unclassified failure.
+    ///
+    /// Not retryable. The identical request is labelled identically.
+    UnsupportedMediaType,
     /// The server asked the client to slow down.
     RateLimited,
     /// The server failed internally.
@@ -99,6 +117,7 @@ impl ErrorKind {
             409 => Self::Conflict,
             412 => Self::PreconditionFailed,
             413 => Self::PayloadTooLarge,
+            415 => Self::UnsupportedMediaType,
             422 | 400 => Self::Validation,
             429 => Self::RateLimited,
             503 => Self::ServiceUnavailable,
@@ -144,6 +163,9 @@ impl ErrorKind {
             ),
             Self::PayloadTooLarge => Some(
                 "An environment has a hard cap on the number of secrets. Split the workload across environments.",
+            ),
+            Self::UnsupportedMediaType => Some(
+                "The server requires a request body to be declared `application/json`. `prk` always sets that header, so check for a proxy between this client and the server that rewrites or strips it.",
             ),
             Self::RateLimited => {
                 Some("Wait for the interval in the Retry-After header and try again.")
@@ -210,7 +232,7 @@ impl ErrorKind {
             | Self::Mitigated => 7,
             Self::ServerError | Self::ServiceUnavailable => 8,
             Self::RateLimited => 10,
-            Self::Validation | Self::PayloadTooLarge => 11,
+            Self::Validation | Self::PayloadTooLarge | Self::UnsupportedMediaType => 11,
             Self::ResponseTooLarge => 12,
             Self::Unknown => 1,
         }
@@ -226,6 +248,7 @@ impl ErrorKind {
             Self::PreconditionFailed => "PRECONDITION_FAILED",
             Self::Validation => "VALIDATION_FAILED",
             Self::PayloadTooLarge => "PAYLOAD_TOO_LARGE",
+            Self::UnsupportedMediaType => "UNSUPPORTED_MEDIA_TYPE",
             Self::RateLimited => "RATE_LIMITED",
             Self::ServerError => "SERVER_ERROR",
             Self::ServiceUnavailable => "SERVICE_UNAVAILABLE",
@@ -286,6 +309,7 @@ mod tests {
         ErrorKind::PreconditionFailed,
         ErrorKind::Validation,
         ErrorKind::PayloadTooLarge,
+        ErrorKind::UnsupportedMediaType,
         ErrorKind::RateLimited,
         ErrorKind::ServerError,
         ErrorKind::ServiceUnavailable,
@@ -306,6 +330,7 @@ mod tests {
         assert_eq!(ErrorKind::from_status(409), ErrorKind::Conflict);
         assert_eq!(ErrorKind::from_status(412), ErrorKind::PreconditionFailed);
         assert_eq!(ErrorKind::from_status(413), ErrorKind::PayloadTooLarge);
+        assert_eq!(ErrorKind::from_status(415), ErrorKind::UnsupportedMediaType);
         assert_eq!(ErrorKind::from_status(422), ErrorKind::Validation);
         assert_eq!(ErrorKind::from_status(429), ErrorKind::RateLimited);
         assert_eq!(ErrorKind::from_status(503), ErrorKind::ServiceUnavailable);
@@ -341,6 +366,7 @@ mod tests {
             ErrorKind::NotPrick,
             ErrorKind::ResponseTooLarge,
             ErrorKind::ServiceUnavailable,
+            ErrorKind::UnsupportedMediaType,
         ] {
             assert!(kind.hint().is_some(), "{kind} has no hint");
         }
@@ -406,6 +432,23 @@ mod tests {
     }
 
     #[test]
+    fn a_mislabelled_body_is_kept_apart_from_a_rejected_one() {
+        // 415 shares exit 11 with a validation failure, because both are a
+        // request the server would not act on. It keeps its own kind because
+        // the next step differs: a validation failure names a field in its
+        // message, and this one is always the same header.
+        assert_eq!(ErrorKind::from_status(415), ErrorKind::UnsupportedMediaType);
+        assert_eq!(ErrorKind::UnsupportedMediaType.exit_code(), ErrorKind::Validation.exit_code());
+        assert_ne!(ErrorKind::UnsupportedMediaType.code(), ErrorKind::Validation.code());
+
+        // The hint has to name the media type. Validation deliberately has no
+        // hint at all, so folding the two together would have lost this.
+        let hint = ErrorKind::UnsupportedMediaType.hint().expect("the kind is actionable");
+        assert!(hint.contains("application/json"), "the hint names no media type: {hint}");
+        assert!(ErrorKind::Validation.hint().is_none());
+    }
+
+    #[test]
     fn the_client_side_codes_do_not_collide_with_each_other() {
         // Every number a script can branch on that no status produces, in one
         // place. A repeat here is how a broken pipe comes to look like an
@@ -442,6 +485,8 @@ mod tests {
         assert!(!ErrorKind::Forbidden.is_retryable());
         assert!(!ErrorKind::Validation.is_retryable());
         assert!(!ErrorKind::PreconditionFailed.is_retryable());
+        // The same body goes back out with the same wrong label.
+        assert!(!ErrorKind::UnsupportedMediaType.is_retryable());
         assert!(!ErrorKind::NotPrick.is_retryable());
         // The same request produces the same oversized answer.
         assert!(!ErrorKind::ResponseTooLarge.is_retryable());

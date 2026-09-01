@@ -13,9 +13,22 @@ import {
   installArgs,
   parseSecrets,
   resolveVersionSpec,
+  stagingArgs,
+  verifiedVersion,
+  verifyArgs,
 } from "./cli.mjs";
 import { ActionError } from "./errors.mjs";
-import { fakeSpawn, harness, inject, TOKEN } from "./harness.mjs";
+import {
+  auditReport,
+  fakeNpm,
+  fakeSpawn,
+  fakeStaging,
+  harness,
+  inject,
+  STAGING,
+  TOKEN,
+  VERIFIED_VERSION,
+} from "./harness.mjs";
 import { commandInstall, main } from "./inject.mjs";
 
 // ---------------------------------------------------------------------------
@@ -252,6 +265,23 @@ describe("the version the action installs", () => {
 });
 
 describe("the install step", () => {
+  /**
+   * @param {object} [options]
+   * @param {Record<string, string>} [options.env]
+   * @param {{ staged?: object, audited?: object, installed?: object }} [options.npm]
+   */
+  const install = ({ env = {}, npm = {} } = {}) => {
+    const h = harness();
+    const calls = [];
+    const code = main(["install"], {
+      env: { ...TOKEN, ...env },
+      io: h.io,
+      spawn: fakeNpm(npm, calls),
+      staging: fakeStaging,
+    });
+    return { ...h, code, calls };
+  };
+
   test("installs the pinned version globally, without running install scripts", () => {
     const args = installArgs("2026.815.0");
     assert.deepEqual(args, [
@@ -271,29 +301,247 @@ describe("the install step", () => {
       env: { ...TOKEN, PRICK_INPUT_URL: "http://prick.example.com" },
       io: h.io,
       spawn: fakeSpawn({}, calls),
+      staging: fakeStaging,
     });
 
     assert.equal(code, 1);
     assert.equal(calls.length, 0, "npm ran despite an invalid url");
   });
 
-  test("reports an install failure against the version it tried", () => {
-    const h = harness();
-    const code = main(["install"], {
-      env: { ...TOKEN, PRICK_INPUT_VERSION: "1999.101.0" },
-      io: h.io,
-      spawn: fakeSpawn({ status: 1, stderr: "npm error 404" }),
+  test("reports a fetch failure against the version it tried", () => {
+    const result = install({
+      env: { PRICK_INPUT_VERSION: "1999.101.0" },
+      npm: { staged: { status: 1, stderr: "npm error 404" } },
     });
 
-    assert.equal(code, 1);
-    assert.match(h.commands("error")[0].text, /installing @yashau\/prick@1999\.101\.0 failed/);
+    assert.equal(result.code, 1);
+    assert.match(result.commands("error")[0].text, /fetching @yashau\/prick@1999\.101\.0 failed/);
   });
 
   test("succeeds quietly", () => {
+    const result = install();
+    assert.equal(result.code, 0);
+    assert.equal(result.calls[0].file, "npm");
+    assert.equal(result.commands("error").length, 0);
+  });
+
+  test("stages, verifies, and only then installs", () => {
+    const result = install();
+    assert.equal(result.calls.length, 3);
+    assert.equal(result.calls[0].args[0], "install");
+    assert.equal(result.calls[1].args[0], "audit");
+    assert.ok(result.calls[2].args.includes("--global"));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Provenance
+// ---------------------------------------------------------------------------
+
+describe("the staged fetch", () => {
+  test("pins the prefix so npm cannot install into an ancestor project", () => {
+    assert.deepEqual(stagingArgs("2026.815.0"), [
+      "install",
+      "--prefix",
+      ".",
+      "--ignore-scripts",
+      "--no-audit",
+      "--no-fund",
+      `${CLI_PACKAGE}@2026.815.0`,
+    ]);
+  });
+
+  test("runs no install script, exactly as the global install does not", () => {
+    assert.ok(stagingArgs("2026.815.0").includes("--ignore-scripts"));
+  });
+
+  test("refuses a spec that is not a registry version, like installArgs", () => {
+    assert.throws(() => stagingArgs("git+https://evil.example/x.git"), ActionError);
+  });
+
+  test("puts the staging directory in the cwd and never in an argument", () => {
+    const calls = [];
+    assert.equal(
+      commandInstall({
+        env: { ...TOKEN },
+        io: harness().io,
+        spawn: fakeNpm({}, calls),
+        staging: fakeStaging,
+      }),
+      0,
+    );
+
+    // The premise of `--prefix .`: a runner's temporary path can contain a
+    // space and an ampersand, and on Windows the npm invocation goes through
+    // cmd. A cwd goes to the operating system and never reaches a command line.
+    const [staged, audited, installed] = calls;
+    assert.equal(staged.options.cwd, STAGING);
+    assert.equal(audited.options.cwd, STAGING);
+    assert.equal(installed.options.cwd, undefined, "the global install is not staged");
+
+    for (const call of calls) {
+      for (const argument of call.args) {
+        assert.ok(!argument.includes(STAGING), `the staging path reached an argv: ${argument}`);
+      }
+    }
+  });
+});
+
+describe("the attestation audit", () => {
+  test("asks for the verified list, not merely the failures", () => {
+    // Without --include-attestations npm reports `invalid` and `missing` alone,
+    // and a package with NO attestation appears in neither -- which would pass.
+    assert.ok(verifyArgs().includes("--include-attestations"));
+    assert.ok(verifyArgs().includes("--json"));
+  });
+
+  test("returns the exact version npm verified", () => {
+    assert.equal(verifiedVersion(auditReport()), VERIFIED_VERSION);
+  });
+
+  test("refuses a package with a signature but no provenance attestation", () => {
+    assert.throws(
+      () => verifiedVersion(auditReport({ provenance: false })),
+      /carries no provenance attestation/,
+    );
+  });
+
+  test("refuses a report that does not name the CLI at all", () => {
+    assert.throws(
+      () => verifiedVersion(auditReport({ present: false })),
+      /verified no signature for @yashau\/prick/,
+    );
+  });
+
+  test("refuses when anything in the tree failed, including a dependency", () => {
+    // The platform package is where the `prk` executable actually lives.
+    const report = auditReport({
+      invalid: [{ name: "@yashau/prick-linux-x64-gnu", version: VERIFIED_VERSION }],
+    });
+    assert.throws(() => verifiedVersion(report), /refused 1 package/);
+    assert.throws(() => verifiedVersion(report), /prick-linux-x64-gnu/);
+  });
+
+  test("counts a missing registry signature as a refusal too", () => {
+    const report = auditReport({ missing: [{ name: "detect-libc", version: "2.1.2" }] });
+    assert.throws(() => verifiedVersion(report), /refused 1 package/);
+  });
+
+  test("an unreachable registry is a check that did not happen, not one that passed", () => {
+    // npm's own shape when it cannot fetch the verification keys.
+    const report = JSON.stringify({
+      error: { code: "ENOTFOUND", summary: "network request to ... failed", detail: "" },
+    });
+    assert.throws(() => verifiedVersion(report), /could not verify @yashau\/prick/);
+    assert.throws(() => verifiedVersion(report), /network request/);
+  });
+
+  test("refuses output that is not a report at all", () => {
+    for (const text of ["", "npm error something", "[]", "null", '"a string"']) {
+      assert.throws(() => verifiedVersion(text), ActionError, JSON.stringify(text));
+    }
+  });
+
+  test("refuses a version the registry answered with that is not a version", () => {
+    const report = JSON.stringify({
+      invalid: [],
+      missing: [],
+      verified: [
+        {
+          name: CLI_PACKAGE,
+          version: "2026.815.0 && curl evil",
+          attestations: { provenance: { predicateType: "https://slsa.dev/provenance/v1" } },
+        },
+      ],
+    });
+    assert.throws(() => verifiedVersion(report), /not a plain registry version/);
+  });
+
+  test("says what a failure means rather than only that it failed", () => {
+    assert.throws(
+      () => verifiedVersion(auditReport({ provenance: false })),
+      (error) => {
+        assert.match(error.hint, /refused rather than warned about/);
+        assert.match(error.hint, /mirror that does not serve attestations/);
+        return true;
+      },
+    );
+  });
+});
+
+describe("what actually gets installed", () => {
+  /** @param {object[]} calls */
+  const globalArgs = (calls) => calls.find((call) => call.args.includes("--global")).args;
+
+  /** The install step's log, as one string. */
+  const installLog = () => {
+    const h = harness();
+    main(["install"], { env: { ...TOKEN }, io: h.io, spawn: fakeNpm(), staging: fakeStaging });
+    return h
+      .of("log")
+      .map((event) => event.text)
+      .join("\n");
+  };
+
+  test("is the version that verified, never the spec that was resolved", () => {
+    // The whole point of verifying before installing: `latest` is resolved and
+    // audited once, and the global install then names the exact version, so a
+    // dist-tag that moves in between cannot slip an unaudited tarball past.
+    const calls = [];
+    commandInstall({
+      env: { ...TOKEN },
+      io: harness().io,
+      spawn: fakeNpm({}, calls),
+      staging: fakeStaging,
+    });
+
+    assert.ok(stagingArgs("latest").includes(`${CLI_PACKAGE}@latest`));
+    assert.ok(globalArgs(calls).includes(`${CLI_PACKAGE}@${VERIFIED_VERSION}`));
+    assert.ok(!globalArgs(calls).includes(`${CLI_PACKAGE}@latest`));
+  });
+
+  test("does not happen at all when the audit refuses", () => {
     const h = harness();
     const calls = [];
-    assert.equal(commandInstall({ env: { ...TOKEN }, io: h.io, spawn: fakeSpawn({}, calls) }), 0);
-    assert.equal(calls[0].file, "npm");
-    assert.equal(h.commands("error").length, 0);
+    const code = main(["install"], {
+      env: { ...TOKEN },
+      io: h.io,
+      spawn: fakeNpm({ audited: { stdout: auditReport({ provenance: false }) } }, calls),
+      staging: fakeStaging,
+    });
+
+    assert.equal(code, 1);
+    assert.equal(
+      calls.filter((call) => call.args.includes("--global")).length,
+      0,
+      "an unverified version was installed anyway",
+    );
+  });
+
+  test("relays npm's reason when the audit exits non-zero", () => {
+    const h = harness();
+    const code = main(["install"], {
+      env: { ...TOKEN },
+      io: h.io,
+      spawn: fakeNpm({
+        audited: {
+          status: 1,
+          stderr: "npm error code ENOTFOUND",
+          stdout: JSON.stringify({ error: { code: "ENOTFOUND", summary: "no route to host" } }),
+        },
+      }),
+      staging: fakeStaging,
+    });
+
+    assert.equal(code, 1);
+    const log = h
+      .of("log")
+      .map((event) => event.text)
+      .join("\n");
+    assert.match(log, /ENOTFOUND/);
+  });
+
+  test("names the verified version on the log, so a run records what it ran", () => {
+    assert.match(installLog(), new RegExp(`Verified @yashau/prick@${VERIFIED_VERSION}`));
   });
 });

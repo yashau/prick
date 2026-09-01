@@ -310,6 +310,44 @@ pub fn protected_resource_urls(resource: &str) -> Vec<String> {
     urls
 }
 
+/// Whether an endpoint named by a discovery document is one this client will
+/// use.
+///
+/// # A scheme is not just a transport here
+///
+/// These URLs arrive in a document fetched from the network, and the
+/// authorization endpoint among them is handed to the operating system's URI
+/// opener. That opener does not open pages, it invokes handlers: an endpoint
+/// spelled `someapp://whatever` starts whatever program registered `someapp`,
+/// with an argument the server wrote. An authorization server that named one
+/// would be choosing which local program this process launches.
+///
+/// The endpoints that are fetched rather than opened have a duller reason for
+/// the same rule: a token request over plain HTTP puts an authorization code
+/// and a refresh token on the wire in the clear.
+///
+/// So: `https`, or `http` on loopback. The loopback exemption is RFC 8252
+/// section 8.3 -- it is what the test suite and a local development server
+/// serve, and a request to it cannot leave the machine.
+///
+/// `localhost` is accepted by name rather than resolved. RFC 6761 reserves it
+/// for loopback, and resolving it would make this decision depend on a hosts
+/// file that a discovery document has no business reaching through.
+pub(crate) fn is_usable_endpoint(url: &str) -> bool {
+    let Ok(parsed) = url::Url::parse(url) else { return false };
+
+    match parsed.scheme() {
+        "https" => true,
+        "http" => match parsed.host() {
+            Some(url::Host::Ipv4(address)) => address.is_loopback(),
+            Some(url::Host::Ipv6(address)) => address.is_loopback(),
+            Some(url::Host::Domain(name)) => name.eq_ignore_ascii_case("localhost"),
+            None => false,
+        },
+        _ => false,
+    }
+}
+
 /// Splits `https://host:port/path` into its origin and its path.
 fn split_origin(url: &str) -> (&str, &str) {
     let Some(scheme_end) = url.find("://") else { return (url, "") };
@@ -448,7 +486,9 @@ fn stopped_at_the_edge(err: &prick_api::ApiError) -> bool {
 /// # Errors
 ///
 /// [`AuthError::Discovery`] if none of the candidate URLs yields a usable
-/// document, or if the one that does omits an endpoint the flow needs.
+/// document, or if the one that does omits an endpoint the flow needs or names
+/// one with a scheme this client will not use: HTTPS, or plain HTTP on loopback
+/// and nothing else.
 pub async fn fetch_authorization_server(
     client: &Client,
     issuer: &str,
@@ -465,6 +505,27 @@ pub async fn fetch_authorization_server(
                     return Err(AuthError::Discovery {
                         reason: format!("{url} omits an authorization or token endpoint"),
                     });
+                }
+                // Every endpoint the flow will use, checked where it enters the
+                // program rather than at each of the places it is used. The
+                // authorization one is opened by the OS, the other two are
+                // fetched -- and a document that names `file://` or a custom
+                // scheme for any of them is not describing an OAuth server.
+                for (name, endpoint) in [
+                    ("authorization_endpoint", Some(metadata.authorization_endpoint.as_str())),
+                    ("token_endpoint", Some(metadata.token_endpoint.as_str())),
+                    ("registration_endpoint", metadata.registration_endpoint.as_deref()),
+                    ("revocation_endpoint", metadata.revocation_endpoint.as_deref()),
+                ] {
+                    if let Some(endpoint) = endpoint
+                        && !is_usable_endpoint(endpoint)
+                    {
+                        return Err(AuthError::Discovery {
+                            reason: format!(
+                                "{url} names a {name} that is not an HTTPS URL: `{endpoint}`"
+                            ),
+                        });
+                    }
                 }
                 if !metadata.supports_s256() {
                     return Err(AuthError::Discovery {
@@ -497,16 +558,22 @@ pub async fn fetch_authorization_server(
 }
 
 /// A dynamically registered client.
+///
+/// # There is no client secret here, on purpose
+///
+/// The registration asks for `token_endpoint_auth_method: none`, so a
+/// conforming server issues no secret and no later request has one to send. A
+/// server that returns one anyway has it dropped at the parse rather than
+/// carried: every other secret in this crate is a
+/// [`secrecy::SecretString`], with tests pinning that it cannot reach a `Debug`
+/// line, and a plaintext `String` nothing reads would be the one exception --
+/// living in a struct that is cloned through the whole login for the sake of a
+/// request that is never made.
 #[derive(Debug, Clone, Deserialize)]
 #[non_exhaustive]
 pub struct Registration {
     /// The identifier to send in the authorization request.
     pub client_id: String,
-    /// Present only if the server issued one. A native client uses PKCE and no
-    /// secret, so this is normally absent; it is carried rather than dropped
-    /// because a server that issues one requires it back at the token endpoint.
-    #[serde(default)]
-    pub client_secret: Option<String>,
 }
 
 /// Registers a client for a loopback redirect URI.
@@ -779,10 +846,59 @@ mod tests {
     }
 
     #[test]
-    fn a_registration_without_a_secret_parses() {
+    fn a_registration_parses_and_never_carries_a_secret() {
         let registration: Registration =
             serde_json::from_str(r#"{"client_id":"abc"}"#).expect("the shape matches");
         assert_eq!(registration.client_id, "abc");
-        assert!(registration.client_secret.is_none());
+
+        // A server that issues one anyway despite `token_endpoint_auth_method:
+        // none`. It is dropped at the parse, so it never reaches a struct that
+        // is cloned through the login and rendered by `Debug`.
+        let volunteered: Registration =
+            serde_json::from_str(r#"{"client_id":"abc","client_secret":"do-not-keep-me"}"#)
+                .expect("an unknown field is ignored rather than rejected");
+        assert_eq!(volunteered.client_id, "abc");
+        let rendered = format!("{volunteered:?}");
+        assert!(!rendered.contains("do-not-keep-me"), "a secret was kept: {rendered}");
+    }
+
+    #[test]
+    fn an_endpoint_is_https_or_loopback_http_and_nothing_else() {
+        assert!(is_usable_endpoint("https://example.cloudflareaccess.com/authorize"));
+
+        // RFC 8252 section 8.3, and what the test suite's own mock server and a
+        // local development server serve.
+        for loopback in [
+            "http://127.0.0.1:8787/authorize",
+            "http://[::1]:8787/authorize",
+            "http://localhost:8787/authorize",
+            "http://LOCALHOST:8787/authorize",
+        ] {
+            assert!(is_usable_endpoint(loopback), "{loopback}");
+        }
+
+        // Plain HTTP anywhere else puts the authorization request, and the code
+        // that comes back, on the wire in the clear.
+        assert!(!is_usable_endpoint("http://example.com/authorize"));
+        assert!(!is_usable_endpoint("http://127.0.0.1.example.com/authorize"));
+    }
+
+    #[test]
+    fn an_endpoint_naming_a_scheme_the_os_would_hand_to_a_local_program_is_refused() {
+        // THE REASON THIS CHECK EXISTS. The authorization endpoint goes to the
+        // system URI opener, which invokes registered handlers rather than
+        // opening pages -- so a discovered endpoint with a custom scheme is a
+        // server choosing which local program this process starts.
+        for hostile in [
+            "someapp://open?payload=x",
+            "file:///etc/passwd",
+            "javascript:alert(1)",
+            "data:text/html,<script></script>",
+            "vscode://file/etc/hosts",
+            "not a url at all",
+            "",
+        ] {
+            assert!(!is_usable_endpoint(hostile), "accepted `{hostile}`");
+        }
     }
 }

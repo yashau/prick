@@ -6,6 +6,9 @@
 //! -- the probe, RFC 9728 and RFC 8414 discovery, dynamic client registration,
 //! the PKCE challenge, the constant-time `state` comparison, the token
 //! exchange -- runs for real.
+//!
+//! What happens to a session *after* it exists -- renewal, revocation,
+//! resolving one from the store -- lives in `tokens.rs`.
 
 use std::io::{Read as _, Write as _};
 use std::net::TcpStream;
@@ -20,7 +23,7 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 use prick_core::classify::ErrorKind;
 
 use prick_auth::discovery::{self, Probe};
-use prick_auth::store::{StorageBackend, StoredSession, TokenStore, Tokens};
+use prick_auth::store::{StorageBackend, TokenStore};
 use prick_auth::{AuthError, LoginOptions};
 
 /// Where the liveness probe actually lives.
@@ -105,6 +108,16 @@ async fn mount_token(server: &MockServer, response: ResponseTemplate) {
 fn browser_answering(
     query: impl Fn(&Url) -> String + Send + 'static,
 ) -> impl FnOnce(&str) -> Result<(), AuthError> {
+    browser_answering_each(move |authorize| vec![query(authorize)])
+}
+
+/// [`browser_answering`] with more than one request to deliver, in order.
+///
+/// The listener is single-shot, so "a stray redirect does not consume it" needs
+/// two requests on the same port: the stray one, then the real one.
+fn browser_answering_each(
+    queries: impl Fn(&Url) -> Vec<String> + Send + 'static,
+) -> impl FnOnce(&str) -> Result<(), AuthError> {
     move |authorize_url: &str| {
         let parsed = Url::parse(authorize_url).expect("login must produce a URL");
         let port: u16 = parsed
@@ -115,29 +128,40 @@ fn browser_answering(
             })
             .expect("a redirect URI is always sent");
 
-        let request =
-            format!("GET /callback?{} HTTP/1.1\r\nHost: localhost\r\n\r\n", query(&parsed));
+        let requests: Vec<String> = queries(&parsed)
+            .into_iter()
+            .map(|query| format!("GET /callback?{query} HTTP/1.1\r\nHost: localhost\r\n\r\n"))
+            .collect();
 
         std::thread::spawn(move || {
-            let mut stream =
-                TcpStream::connect(("127.0.0.1", port)).expect("the listener is already bound");
-            stream.write_all(request.as_bytes()).expect("write");
-            let mut discarded = String::new();
-            let _ = stream.read_to_string(&mut discarded);
+            // Sequentially, each answered before the next is sent: a browser
+            // following a redirect does not race itself, and neither does the
+            // operator with a stale tab.
+            for request in requests {
+                let mut stream =
+                    TcpStream::connect(("127.0.0.1", port)).expect("the listener is already bound");
+                stream.write_all(request.as_bytes()).expect("write");
+                let mut discarded = String::new();
+                let _ = stream.read_to_string(&mut discarded);
+            }
         });
 
         Ok(())
     }
 }
 
-/// The query a successful redirect carries: the code, and the state echoed back.
-fn successful_redirect(authorize: &Url) -> String {
-    let state = authorize
+/// The `state` the authorization request sent.
+fn state_of(authorize: &Url) -> String {
+    authorize
         .query_pairs()
         .find(|(key, _)| key == "state")
         .map(|(_, value)| value.into_owned())
-        .expect("state is always sent");
-    format!("code=the-authorization-code&state={state}")
+        .expect("state is always sent")
+}
+
+/// The query a successful redirect carries: the code, and the state echoed back.
+fn successful_redirect(authorize: &Url) -> String {
+    format!("code=the-authorization-code&state={}", state_of(authorize))
 }
 
 fn store() -> (tempfile::TempDir, TokenStore) {
@@ -363,72 +387,76 @@ async fn the_authorization_request_uses_s256_with_an_acceptable_challenge() {
     );
 }
 
+/// A redirect that is not this login's does not end this login.
+///
+/// The listener is single-shot, so ending the wait on a redirect the flow is
+/// about to discard would leave the browser's genuine one arriving at a closed
+/// port. The second shape is also why `state` is compared before `error` is
+/// read: acting on the `error` first would let anything that can reach loopback
+/// choose the sentence the operator is shown. More shapes, including a redirect
+/// carrying two `state` values, are covered by the unit tests in `callback`.
 #[tokio::test(flavor = "multi_thread")]
-async fn a_redirect_carrying_the_wrong_state_is_discarded() {
-    let server = MockServer::start().await;
-    mount_discovery(&server).await;
-    mount_token(&server, json(&serde_json::json!({ "access_token": "a", "token_type": "Bearer" })))
+async fn a_redirect_that_is_not_this_logins_is_ignored_rather_than_ending_it() {
+    for stray in ["code=forged&state=not-the-one-we-sent", "error=server_error&state=not-ours"] {
+        let server = MockServer::start().await;
+        mount_discovery(&server).await;
+        mount_token(
+            &server,
+            json(&serde_json::json!({ "access_token": "a", "token_type": "Bearer" })),
+        )
         .await;
 
-    let client = client_for(&server);
+        let outcome = prick_auth::login(
+            &client_for(&server),
+            &server.uri(),
+            &LoginOptions { timeout: Duration::from_secs(20), accept_pasted_redirect: false },
+            browser_answering_each(move |authorize| {
+                vec![stray.to_owned(), successful_redirect(authorize)]
+            }),
+        )
+        .await
+        .unwrap_or_else(|err| panic!("`{stray}` ended a login it does not belong to: {err}"));
+
+        assert_eq!(outcome.session.tokens.access_token.expose_secret(), "a");
+
+        let requests = server.received_requests().await.expect("recorded");
+        let exchanges = requests.iter().filter(|request| request.url.path() == "/token").count();
+        assert_eq!(exchanges, 1, "`{stray}`");
+        assert!(
+            !requests
+                .iter()
+                .any(|request| String::from_utf8_lossy(&request.body).contains("code=forged")),
+            "a forged code reached the token endpoint for `{stray}`"
+        );
+    }
+}
+
+/// Nothing belonging to this login arrives, and its own deadline ends the wait.
+///
+/// The counterpart to the test above: strays no longer end a login, so the
+/// deadline has to -- and it used to be extensible by an accepted connection
+/// that dribbled, so the elapsed time is asserted and not just the error.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_login_only_stray_redirects_reach_ends_on_its_own_deadline() {
+    let server = MockServer::start().await;
+    mount_discovery(&server).await;
+
+    let started = std::time::Instant::now();
     let err = prick_auth::login(
-        &client,
+        &client_for(&server),
         &server.uri(),
-        &LoginOptions { timeout: Duration::from_secs(20), accept_pasted_redirect: false },
+        &LoginOptions { timeout: Duration::from_millis(500), accept_pasted_redirect: false },
         browser_answering(|_| "code=forged&state=not-the-one-we-sent".to_owned()),
     )
     .await
-    .expect_err("a mismatched state must be refused");
+    .expect_err("nothing belonging to this login ever arrived");
 
-    assert!(matches!(err, AuthError::StateMismatch), "{err}");
+    assert!(matches!(err, AuthError::LoginTimeout { .. }), "{err}");
+    assert!(started.elapsed() < Duration::from_secs(10), "{:?}", started.elapsed());
 
-    // And no exchange was attempted with the forged code.
     let requests = server.received_requests().await.expect("recorded");
-    assert!(
-        !requests.iter().any(|request| request.url.path() == "/token"),
-        "a forged redirect reached the token endpoint"
-    );
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn a_redirect_with_no_state_at_all_is_discarded() {
-    let server = MockServer::start().await;
-    mount_discovery(&server).await;
-
-    let client = client_for(&server);
-    let err = prick_auth::login(
-        &client,
-        &server.uri(),
-        &LoginOptions { timeout: Duration::from_secs(20), accept_pasted_redirect: false },
-        browser_answering(|_| "code=forged".to_owned()),
-    )
-    .await
-    .expect_err("a redirect with no state must be refused");
-
-    assert!(matches!(err, AuthError::StateMismatch), "{err}");
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn a_state_repeated_twice_is_discarded_rather_than_disambiguated() {
-    let server = MockServer::start().await;
-    mount_discovery(&server).await;
-
-    let client = client_for(&server);
-    let err = prick_auth::login(
-        &client,
-        &server.uri(),
-        &LoginOptions { timeout: Duration::from_secs(20), accept_pasted_redirect: false },
-        browser_answering(|authorize| {
-            let real = successful_redirect(authorize);
-            // The real state plus an attacker-chosen one. Picking whichever
-            // matches would defeat the check entirely.
-            format!("{real}&state=attacker-chosen")
-        }),
-    )
-    .await
-    .expect_err("two state values must be refused");
-
-    assert!(matches!(err, AuthError::StateMismatch), "{err}");
+    let exchanged = requests.iter().any(|request| request.url.path() == "/token");
+    assert!(!exchanged, "a forged redirect reached the token endpoint");
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -436,27 +464,46 @@ async fn a_denial_redirect_is_reported_as_a_denial() {
     let server = MockServer::start().await;
     mount_discovery(&server).await;
 
-    let client = client_for(&server);
     let err = prick_auth::login(
-        &client,
+        &client_for(&server),
         &server.uri(),
         &LoginOptions { timeout: Duration::from_secs(20), accept_pasted_redirect: false },
-        browser_answering(|authorize| {
-            let state = authorize
-                .query_pairs()
-                .find(|(key, _)| key == "state")
-                .map(|(_, value)| value.into_owned())
-                .expect("state");
-            format!("error=access_denied&state={state}")
-        }),
+        browser_answering(|authorize| format!("error=access_denied&state={}", state_of(authorize))),
     )
     .await
     .expect_err("a denial is a failure");
 
+    // The server's own refusal, carrying the state it was sent: this one has
+    // been proven to be this login's, so its reason is reported.
     match err {
         AuthError::Denied { error } => assert_eq!(error, "access_denied"),
         other => panic!("expected a denial, got {other}"),
     }
+}
+
+#[tokio::test]
+async fn an_authorization_endpoint_the_os_would_hand_to_a_local_program_is_refused() {
+    // The endpoint is opened by the operating system, which invokes registered
+    // handlers rather than opening pages -- so a discovery document naming a
+    // custom scheme picks which local program this process starts.
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/.well-known/oauth-authorization-server"))
+        .respond_with(json(&serde_json::json!({
+            "issuer": server.uri(),
+            "authorization_endpoint": "someapp://open?payload=whatever",
+            "token_endpoint": format!("{}/token", server.uri()),
+            "code_challenge_methods_supported": ["S256"],
+        })))
+        .mount(&server)
+        .await;
+
+    let err = discovery::fetch_authorization_server(&client_for(&server), &server.uri())
+        .await
+        .expect_err("a non-HTTPS endpoint must not survive discovery");
+
+    assert!(matches!(err, AuthError::Discovery { .. }), "{err}");
+    assert!(err.to_string().contains("authorization_endpoint"), "{err}");
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -637,324 +684,4 @@ async fn a_server_with_no_registration_endpoint_reads_as_managed_oauth_being_off
         .expect_err("nothing to register against");
 
     assert!(matches!(err, AuthError::ManagedOAuthDisabled), "{err}");
-}
-
-#[tokio::test]
-async fn a_refresh_renews_the_access_token() {
-    let server = MockServer::start().await;
-    mount_token(
-        &server,
-        json(&serde_json::json!({
-            "access_token": "access-2",
-            "refresh_token": "refresh-2",
-            "token_type": "Bearer",
-            "expires_in": 900,
-        })),
-    )
-    .await;
-
-    let tokens = prick_auth::oauth::refresh(
-        &client_for(&server),
-        &format!("{}/token", server.uri()),
-        "registered-client-1",
-        &SecretString::from("refresh-1"),
-        Some("https://prick.example.com"),
-    )
-    .await
-    .expect("the refresh must succeed");
-
-    assert_eq!(tokens.access_token.expose_secret(), "access-2");
-    assert_eq!(tokens.refresh_token.as_ref().map(SecretString::expose_secret), Some("refresh-2"));
-
-    let requests = server.received_requests().await.expect("recorded");
-    let form = String::from_utf8_lossy(&requests[0].body);
-    assert!(form.contains("grant_type=refresh_token"), "{form}");
-    assert!(form.contains("refresh_token=refresh-1"), "{form}");
-    // RFC 8707 section 2.2: the renewal names the same resource the first
-    // exchange did, or it is asking for a different token than the one it
-    // replaces.
-    assert!(form.contains("resource=https%3A%2F%2Fprick.example.com"), "{form}");
-}
-
-#[tokio::test]
-async fn a_refresh_that_returns_no_new_refresh_token_keeps_the_old_one() {
-    // Dropping it would make every renewal the last one, and the failure would
-    // only surface at the *next* renewal, long after the cause.
-    let server = MockServer::start().await;
-    mount_token(
-        &server,
-        json(&serde_json::json!({
-            "access_token": "access-2",
-            "token_type": "Bearer",
-            "expires_in": 900,
-        })),
-    )
-    .await;
-
-    let tokens = prick_auth::oauth::refresh(
-        &client_for(&server),
-        &format!("{}/token", server.uri()),
-        "client-1",
-        &SecretString::from("refresh-1"),
-        None,
-    )
-    .await
-    .expect("refresh");
-
-    assert_eq!(
-        tokens.refresh_token.as_ref().map(SecretString::expose_secret),
-        Some("refresh-1"),
-        "the existing refresh token was dropped"
-    );
-}
-
-#[tokio::test]
-async fn invalid_grant_becomes_a_typed_expired_session() {
-    let server = MockServer::start().await;
-    mount_token(
-        &server,
-        ResponseTemplate::new(400).set_body_raw(
-            br#"{"error":"invalid_grant","error_description":"token is expired or revoked"}"#
-                .to_vec(),
-            "application/json",
-        ),
-    )
-    .await;
-
-    let err = prick_auth::oauth::refresh(
-        &client_for(&server),
-        &format!("{}/token", server.uri()),
-        "client-1",
-        &SecretString::from("revoked"),
-        None,
-    )
-    .await
-    .expect_err("a revoked refresh token cannot renew");
-
-    assert!(matches!(err, AuthError::AuthExpired), "{err}");
-    assert_eq!(err.code(), "AUTH_EXPIRED");
-    // Not the usage code: a script must be able to tell "log in again" from
-    // "you typed that wrong".
-    assert_eq!(err.exit_code(), 3);
-    assert_ne!(err.exit_code(), 2);
-}
-
-#[tokio::test]
-async fn another_oauth_error_is_reported_as_itself_rather_than_as_an_expiry() {
-    let server = MockServer::start().await;
-    mount_token(
-        &server,
-        ResponseTemplate::new(400)
-            .set_body_raw(br#"{"error":"invalid_client"}"#.to_vec(), "application/json"),
-    )
-    .await;
-
-    let err = prick_auth::oauth::refresh(
-        &client_for(&server),
-        &format!("{}/token", server.uri()),
-        "client-1",
-        &SecretString::from("r"),
-        None,
-    )
-    .await
-    .expect_err("an unknown client is a failure");
-
-    match err {
-        AuthError::Denied { error } => assert_eq!(error, "invalid_client"),
-        other => panic!("expected a denial, got {other}"),
-    }
-}
-
-#[tokio::test]
-async fn a_stale_session_is_renewed_before_the_request_that_needs_it() {
-    let server = MockServer::start().await;
-    mount_token(
-        &server,
-        json(&serde_json::json!({
-            "access_token": "access-renewed",
-            "refresh_token": "refresh-2",
-            "token_type": "Bearer",
-            "expires_in": 900,
-        })),
-    )
-    .await;
-
-    let (_dir, store) = store();
-    store
-        .save(&StoredSession {
-            api_url: server.uri().trim_end_matches('/').to_owned(),
-            issuer: server.uri(),
-            client_id: "client-1".to_owned(),
-            token_endpoint: format!("{}/token", server.uri()),
-            resource: Some(server.uri()),
-            revocation_endpoint: Some(format!("{}/revoke", server.uri())),
-            tokens: Tokens {
-                access_token: SecretString::from("access-stale"),
-                refresh_token: Some(SecretString::from("refresh-1")),
-                // Thirty seconds left, which is inside the sixty-second skew.
-                expires_at: Some(now() + 30),
-            },
-        })
-        .expect("save");
-
-    let resolved = prick_auth::resolve(&client_for(&server), &store, &server.uri(), None)
-        .await
-        .expect("the session must be renewed transparently");
-
-    assert!(resolved.refreshed, "a token expiring mid-request was used as-is");
-    match &resolved.credential {
-        prick_api::Credential::Bearer(token) => {
-            assert_eq!(token.expose_secret(), "access-renewed");
-        }
-        other => panic!("expected a bearer token, got {other:?}"),
-    }
-
-    // The renewal was written back, so the next invocation does not repeat it.
-    let reloaded = store.load().expect("load").expect("a session");
-    assert_eq!(reloaded.tokens.access_token.expose_secret(), "access-renewed");
-    assert_eq!(reloaded.resource, Some(server.uri()), "the resource indicator was not kept");
-
-    // And the renewal named the resource the stored session was minted for,
-    // rather than dropping it and asking for a token for something else.
-    let requests = server.received_requests().await.expect("recorded");
-    let form = String::from_utf8_lossy(&requests[0].body);
-    let sent: std::collections::HashMap<_, _> =
-        url::form_urlencoded::parse(form.as_bytes()).into_owned().collect();
-    assert_eq!(sent.get("resource").map(String::as_str), Some(server.uri().as_str()), "{form}");
-}
-
-#[tokio::test]
-async fn a_revoked_session_surfaces_as_expired_rather_than_as_a_server_error() {
-    let server = MockServer::start().await;
-    mount_token(
-        &server,
-        ResponseTemplate::new(400)
-            .set_body_raw(br#"{"error":"invalid_grant"}"#.to_vec(), "application/json"),
-    )
-    .await;
-
-    let (_dir, store) = store();
-    store
-        .save(&StoredSession {
-            api_url: server.uri().trim_end_matches('/').to_owned(),
-            issuer: server.uri(),
-            client_id: "client-1".to_owned(),
-            token_endpoint: format!("{}/token", server.uri()),
-            resource: None,
-            revocation_endpoint: None,
-            tokens: Tokens {
-                access_token: SecretString::from("stale"),
-                refresh_token: Some(SecretString::from("revoked")),
-                expires_at: Some(now().saturating_sub(10)),
-            },
-        })
-        .expect("save");
-
-    let err = prick_auth::resolve(&client_for(&server), &store, &server.uri(), None)
-        .await
-        .expect_err("a revoked session cannot be renewed");
-
-    assert!(matches!(err, AuthError::AuthExpired), "{err}");
-    assert_eq!(err.exit_code(), 3);
-}
-
-#[tokio::test]
-async fn a_revocation_hands_back_the_refresh_token_as_a_form_post() {
-    let server = MockServer::start().await;
-    Mock::given(method("POST"))
-        .and(path("/revoke"))
-        .respond_with(ResponseTemplate::new(200))
-        .mount(&server)
-        .await;
-
-    prick_auth::oauth::revoke(
-        &client_for(&server),
-        &format!("{}/revoke", server.uri()),
-        "client-1",
-        &SecretString::from("refresh-xyz"),
-        prick_auth::oauth::HINT_REFRESH_TOKEN,
-    )
-    .await
-    .expect("a 200 means the server has forgotten it");
-
-    let requests = server.received_requests().await.expect("the server recorded requests");
-    let revocation = requests
-        .iter()
-        .find(|request| request.url.path() == "/revoke")
-        .expect("the revocation was sent");
-
-    let body = String::from_utf8_lossy(&revocation.body);
-    let sent: std::collections::HashMap<String, String> =
-        url::form_urlencoded::parse(body.as_bytes())
-            .map(|(key, value)| (key.into_owned(), value.into_owned()))
-            .collect();
-
-    assert_eq!(sent.get("token").map(String::as_str), Some("refresh-xyz"));
-    assert_eq!(sent.get("token_type_hint").map(String::as_str), Some("refresh_token"));
-    // A public client authenticates with its identity alone, so the id has to be
-    // in the body -- without it the server cannot tell whose token this is.
-    assert_eq!(sent.get("client_id").map(String::as_str), Some("client-1"));
-
-    let content_type = revocation
-        .headers
-        .get("content-type")
-        .and_then(|value| value.to_str().ok())
-        .unwrap_or_default();
-    assert!(content_type.starts_with("application/x-www-form-urlencoded"), "{content_type}");
-}
-
-#[tokio::test]
-async fn a_token_the_server_never_knew_is_not_a_failure() {
-    // RFC 7009 section 2.2: a `200` covers both "revoked" and "that was not a
-    // token I recognise", because distinguishing them would make this endpoint
-    // an oracle for whether a token is live. The desired state already holds.
-    let server = MockServer::start().await;
-    Mock::given(method("POST"))
-        .and(path("/revoke"))
-        .respond_with(ResponseTemplate::new(200))
-        .mount(&server)
-        .await;
-
-    prick_auth::oauth::revoke(
-        &client_for(&server),
-        &format!("{}/revoke", server.uri()),
-        "client-1",
-        &SecretString::from("never-existed"),
-        prick_auth::oauth::HINT_ACCESS_TOKEN,
-    )
-    .await
-    .expect("an unknown token leaves nothing to do");
-}
-
-#[tokio::test]
-async fn a_refused_revocation_reports_the_servers_own_reason() {
-    let server = MockServer::start().await;
-    Mock::given(method("POST"))
-        .and(path("/revoke"))
-        .respond_with(ResponseTemplate::new(400).set_body_json(serde_json::json!({
-            "error": "unsupported_token_type"
-        })))
-        .mount(&server)
-        .await;
-
-    let err = prick_auth::oauth::revoke(
-        &client_for(&server),
-        &format!("{}/revoke", server.uri()),
-        "client-1",
-        &SecretString::from("refresh-xyz"),
-        prick_auth::oauth::HINT_REFRESH_TOKEN,
-    )
-    .await
-    .expect_err("a 400 is a refusal");
-
-    match err {
-        AuthError::Denied { error } => assert_eq!(error, "unsupported_token_type"),
-        other => panic!("expected the server's own error code, got {other:?}"),
-    }
-}
-
-fn now() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |elapsed| elapsed.as_secs())
 }

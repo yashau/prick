@@ -82,6 +82,9 @@ async function main(): Promise<void> {
     version: SERVER_VERSION,
     api_base_url: config.apiBaseUrl,
     allow_reveal: config.allowReveal,
+    // Logged so an operator can see what `secrets_diff` is confined to without
+    // having to work out what the client set as the working directory.
+    workspace_root: config.workspaceRoot,
     timeout_ms: config.requestTimeoutMs,
   });
 

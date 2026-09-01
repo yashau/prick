@@ -17,7 +17,8 @@
 //!    delivers it -- one request on the listener, or an address pasted by an
 //!    operator whose browser cannot reach this machine. See
 //!    [`crate::callback::await_redirect`] for why both are open at once.
-//! 7. **Compare `state` in constant time.**
+//! 7. **Compare `state` in constant time**, before reading anything else out
+//!    of the redirect -- an `error` included. See below.
 //! 8. **Exchange** the code and store the tokens.
 //!
 //! # Why the `state` comparison is constant-time
@@ -30,6 +31,16 @@
 //! The window is small and the attack is fiddly. It is also entirely avoidable
 //! by calling [`prick_core::pkce::constant_time_eq`], which is why nothing here
 //! uses `==`.
+//!
+//! # Why `state` is compared before `error`
+//!
+//! An authorization server reports a refusal as a redirect carrying `error`
+//! rather than `code`, and that redirect carries `state` like any other. Acting
+//! on the `error` first means acting on a redirect nothing has tied to this
+//! login: any local process that can reach the loopback listener could then end
+//! the login without knowing `state`, and pick the reason the operator reads
+//! for it. So the comparison happens first and everything else in the redirect
+//! is read after it, which is also what RFC 6749 section 10.12 asks for.
 
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -161,9 +172,20 @@ pub fn scopes_for(server: &AuthorizationServer) -> Vec<String> {
 /// for a server with nothing in front of it, which has no protected resource
 /// metadata to have named one and no authorization server to care.
 ///
+/// # The scheme is checked here as well as at discovery
+///
+/// This is the one URL in the flow that is handed to the operating system's URI
+/// opener, where a scheme is not merely a transport: `someapp://...` invokes
+/// whatever local handler is registered for `someapp`. Discovery already refuses
+/// an endpoint that is not HTTPS -- or plain HTTP on loopback -- and this
+/// repeats the check on the value actually being opened, because the cost of
+/// the belt is one comparison and the cost of the braces failing is a program
+/// of the server's choosing.
+///
 /// # Errors
 ///
-/// [`AuthError::Discovery`] if the authorization endpoint is not a URL.
+/// [`AuthError::Discovery`] if the authorization endpoint is not a URL, or is
+/// one this client will not open.
 pub fn authorization_url(
     server: &AuthorizationServer,
     client_id: &str,
@@ -179,6 +201,16 @@ pub fn authorization_url(
                 server.authorization_endpoint
             ),
         })?;
+
+    if !discovery::is_usable_endpoint(url.as_str()) {
+        return Err(AuthError::Discovery {
+            reason: format!(
+                "the authorization endpoint `{}` is not an HTTPS URL, and only a browser could \
+                 be sent to it safely",
+                server.authorization_endpoint
+            ),
+        });
+    }
 
     let scopes = scopes_for(server).join(" ");
     {
@@ -427,6 +459,45 @@ fn single<'a>(params: &'a [(String, String)], name: &str) -> Option<&'a str> {
     Some(&first.1)
 }
 
+/// Reads the authorization code out of a redirect, in the order the checks have
+/// to happen.
+///
+/// # `state` first, then everything else
+///
+/// A redirect that fails the `state` comparison is not this login's, so nothing
+/// else in it is either -- its `error` included. Reading that first would let
+/// any local process that can reach the loopback listener end the login and
+/// choose the sentence printed for it, without ever knowing the `state` it is
+/// supposed to be answering. RFC 6749 section 10.12 asks for the comparison on
+/// every response, not only on the successful ones.
+///
+/// The comparison is constant-time; see this module's header for why.
+///
+/// # Errors
+///
+/// [`AuthError::StateMismatch`] for a redirect belonging to another login,
+/// which is also what an absent or repeated `state` is treated as, and
+/// [`AuthError::Denied`] for a refusal this login owns.
+fn authorization_code<'a>(
+    params: &'a [(String, String)],
+    expected_state: &str,
+) -> Result<&'a str, AuthError> {
+    let returned = single(params, "state").ok_or(AuthError::StateMismatch)?;
+    if !pkce::constant_time_eq(returned, expected_state) {
+        return Err(AuthError::StateMismatch);
+    }
+
+    // RFC 6749 section 4.1.2.1: a refusal comes back as a redirect too, and it
+    // carries the same `state`. This one has been proven to be ours.
+    if let Some(error) = single(params, "error") {
+        return Err(AuthError::Denied { error: error.to_owned() });
+    }
+
+    single(params, "code").ok_or_else(|| AuthError::Denied {
+        error: "the redirect carried no authorization code".to_owned(),
+    })
+}
+
 /// What a login needs beyond the server's own configuration.
 #[derive(Debug, Clone)]
 pub struct LoginOptions {
@@ -551,25 +622,19 @@ where
     //    stays free.
     let timeout = options.timeout;
     let accept_pasted = options.accept_pasted_redirect;
+    let expected_state = state.clone();
     let (params, redirect_source) = tokio::task::spawn_blocking(move || {
-        callback::await_redirect(listener, timeout, accept_pasted)
+        callback::await_redirect(listener, &expected_state, timeout, accept_pasted)
     })
     .await
     .map_err(|err| AuthError::Io(std::io::Error::other(err.to_string())))??;
 
-    if let Some(error) = single(&params, "error") {
-        return Err(AuthError::Denied { error: error.to_owned() });
-    }
-
-    // 8. Constant-time comparison. `state` came from an untrusted redirect.
-    let returned = single(&params, "state").ok_or(AuthError::StateMismatch)?;
-    if !pkce::constant_time_eq(returned, &state) {
-        return Err(AuthError::StateMismatch);
-    }
-
-    let code = single(&params, "code").ok_or_else(|| AuthError::Denied {
-        error: "the redirect carried no authorization code".to_owned(),
-    })?;
+    // 8. The constant-time comparison, and only then the rest of the redirect.
+    //
+    //    The loopback listener filtered on the same value already, for a
+    //    different reason -- so that a stray redirect could not consume it. This
+    //    is the check the flow turns on, and it covers the pasted channel too.
+    let code = authorization_code(&params, &state)?;
 
     // 9. Exchange.
     let tokens = exchange_code(
@@ -732,6 +797,32 @@ mod tests {
     }
 
     #[test]
+    fn an_endpoint_the_os_would_hand_to_a_local_program_is_never_built_into_a_url() {
+        // The authorization URL is opened by the operating system, which invokes
+        // whatever handler is registered for the scheme. A discovered endpoint
+        // is a value the server chose, so this is the server choosing a program
+        // to start unless it is refused before `browser::open` sees it.
+        for hostile in ["someapp://open", "file:///etc/passwd", "http://evil.example/authorize"] {
+            let mut server = server();
+            server.authorization_endpoint = hostile.to_owned();
+
+            let err =
+                authorization_url(&server, "c", "http://127.0.0.1:1/callback", "ch", "st", None)
+                    .expect_err("this endpoint must not reach the URI opener");
+            assert!(matches!(err, AuthError::Discovery { .. }), "{err:?}");
+        }
+    }
+
+    #[test]
+    fn a_loopback_authorization_endpoint_still_works_for_local_development() {
+        let mut server = server();
+        server.authorization_endpoint = "http://127.0.0.1:8787/authorize".to_owned();
+        let url = authorization_url(&server, "c", "http://127.0.0.1:1/callback", "ch", "st", None)
+            .expect("RFC 8252 exempts loopback, and the test suite runs on it");
+        assert!(url.starts_with("http://127.0.0.1:8787/authorize?"), "{url}");
+    }
+
+    #[test]
     fn scopes_are_narrowed_to_what_the_server_offers() {
         let mut server = server();
         server.scopes_supported = Some(vec!["openid".to_owned(), "email".to_owned()]);
@@ -761,6 +852,48 @@ mod tests {
         let params = vec![("state".to_owned(), "a".to_owned())];
         assert_eq!(single(&params, "state"), Some("a"));
         assert_eq!(single(&params, "code"), None);
+    }
+
+    #[test]
+    fn a_redirect_is_tied_to_this_login_before_its_error_is_read() {
+        // THE ORDERING IS THE PROPERTY. An `error` read first would let anything
+        // that can reach the loopback listener end the login -- and choose the
+        // sentence printed for it -- without ever knowing `state`.
+        let forged = [
+            ("error".to_owned(), "server_error".to_owned()),
+            ("state".to_owned(), "not-the-one".to_owned()),
+        ];
+        assert!(matches!(authorization_code(&forged, "the-state"), Err(AuthError::StateMismatch)));
+
+        let stateless = [("error".to_owned(), "access_denied".to_owned())];
+        assert!(matches!(
+            authorization_code(&stateless, "the-state"),
+            Err(AuthError::StateMismatch)
+        ));
+
+        // The server's own refusal, carrying the state it was sent, still reads
+        // as the denial it is rather than as a mismatch.
+        let denied = [
+            ("error".to_owned(), "access_denied".to_owned()),
+            ("state".to_owned(), "the-state".to_owned()),
+        ];
+        match authorization_code(&denied, "the-state") {
+            Err(AuthError::Denied { error }) => assert_eq!(error, "access_denied"),
+            other => panic!("expected a denial, got {other:?}"),
+        }
+
+        let delivered = [
+            ("code".to_owned(), "the-code".to_owned()),
+            ("state".to_owned(), "the-state".to_owned()),
+        ];
+        assert_eq!(
+            authorization_code(&delivered, "the-state").expect("a good redirect"),
+            "the-code"
+        );
+
+        // Matching state, but no authorization response beside it.
+        let bare = [("state".to_owned(), "the-state".to_owned())];
+        assert!(matches!(authorization_code(&bare, "the-state"), Err(AuthError::Denied { .. })));
     }
 
     #[test]

@@ -20,6 +20,16 @@
 //! request that is not the callback gets a `404` and the listener keeps
 //! waiting, because browsers speculatively fetch `/favicon.ico` and treating
 //! that as the login response would fail every login on some platforms.
+//!
+//! # Only the redirect this login is waiting for ends the wait
+//!
+//! The listener is single-shot: returning ends it and the port stops answering.
+//! So a request that reaches `/callback` without carrying the `state` this
+//! login sent is answered and then ignored, exactly as `/favicon.ico` is. Ending
+//! the wait on one would consume the listener on a redirect the caller is about
+//! to discard, and the genuine redirect arriving moments later would find a dead
+//! port -- which turns anything that can reach loopback into a way to fail a
+//! login it cannot otherwise observe.
 
 use std::io::{BufRead as _, BufReader, Read as _, Write as _};
 use std::net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream};
@@ -46,7 +56,12 @@ pub const CALLBACK_PATH: &str = "/callback";
 /// whatever is on the other end decide how much memory this process uses.
 pub const MAX_REQUEST_LINE: usize = 8 * 1024;
 
-/// How long a single accepted connection has to send its request line.
+/// The most a single accepted connection is given to send its request line.
+///
+/// An upper bound rather than the figure actually used: what remains of the
+/// login deadline is used when that is shorter. A flat ten seconds per
+/// connection is renewable by the client -- reconnect, or dribble a byte every
+/// nine seconds -- and a bound a client can renew is not a bound.
 const READ_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// How often the accept loop wakes to check its deadline.
@@ -220,6 +235,15 @@ fn read_pasted_redirect() -> Result<Option<Vec<(String, String)>>, AuthError> {
 /// would hold the process open until its own deadline passed. A detached thread
 /// ends with the process instead.
 ///
+/// # What each channel is trusted with
+///
+/// `expected_state` is what the loopback listener filters on, so that a
+/// redirect belonging to another login cannot consume it. It is not the
+/// authorization check: the paste channel is deliberately not filtered here --
+/// someone who pasted the wrong redirect is told so rather than left watching a
+/// listener time out -- and the caller compares `state` on whichever response
+/// wins before acting on it.
+///
 /// # Errors
 ///
 /// Whatever the winning channel reported: [`AuthError::LoginTimeout`] if the
@@ -227,10 +251,16 @@ fn read_pasted_redirect() -> Result<Option<Vec<(String, String)>>, AuthError> {
 /// [`AuthError::RedirectUnreadable`] for a paste that carried no response.
 pub fn await_redirect(
     listener: CallbackListener,
+    expected_state: &str,
     timeout: Duration,
     accept_pasted: bool,
 ) -> Result<(Vec<(String, String)>, RedirectSource), AuthError> {
-    await_redirect_from(listener, timeout, accept_pasted.then_some(read_pasted_redirect))
+    await_redirect_from(
+        listener,
+        expected_state,
+        timeout,
+        accept_pasted.then_some(read_pasted_redirect),
+    )
 }
 
 /// [`await_redirect`] with the paste channel supplied rather than assumed.
@@ -240,6 +270,7 @@ pub fn await_redirect(
 /// test harness owns stdin and has nothing to write to it.
 fn await_redirect_from<P>(
     listener: CallbackListener,
+    expected_state: &str,
     timeout: Duration,
     paste: Option<P>,
 ) -> Result<(Vec<(String, String)>, RedirectSource), AuthError>
@@ -249,9 +280,11 @@ where
     let (sender, receiver) = std::sync::mpsc::channel();
 
     let loopback = sender.clone();
+    let wanted = expected_state.to_owned();
     std::thread::spawn(move || {
-        let arrival =
-            listener.wait_for_callback(timeout).map(|params| (params, RedirectSource::Loopback));
+        let arrival = listener
+            .wait_for_callback(&wanted, timeout)
+            .map(|params| (params, RedirectSource::Loopback));
         // A closed receiver means the other channel won. Nothing to report.
         let _ = loopback.send(arrival);
     });
@@ -277,6 +310,10 @@ where
 
     // The first definitive answer, from either channel. Both send only once
     // they have one, so there is nothing to filter here.
+    //
+    // This blocks with no deadline of its own, which is only safe because the
+    // loopback thread has one it cannot be talked out of: every wait inside
+    // `wait_for_callback` is bounded by the same instant, so it always sends.
     receiver.recv().unwrap_or(Err(AuthError::LoginTimeout { seconds: timeout.as_secs() }))
 }
 
@@ -315,30 +352,49 @@ impl CallbackListener {
         redirect_uri(self.port)
     }
 
-    /// Waits for the callback and returns its query parameters.
+    /// Waits for the redirect this login is expecting and returns its query
+    /// parameters.
     ///
     /// Requests for anything other than [`CALLBACK_PATH`] are answered with a
     /// `404` and ignored, so a browser's speculative `/favicon.ico` does not
-    /// consume the one request this listener was going to accept.
+    /// consume the one request this listener was going to accept. A callback
+    /// that does not carry `expected_state` is ignored for the same reason --
+    /// see this module's header.
+    ///
+    /// # The deadline binds every wait, not just the idle one
+    ///
+    /// `timeout` is a deadline for the whole call. It is checked before each
+    /// `accept`, and what remains of it caps how long an accepted connection is
+    /// given to send its request line -- so a client that connects and then
+    /// dribbles cannot hold the listener open one refreshed [`READ_TIMEOUT`] at
+    /// a time, which is the shape the caller's own timeout could not see.
     ///
     /// # Errors
     ///
     /// [`AuthError::LoginTimeout`] if nothing arrives before the deadline, or
     /// an I/O failure from the socket.
-    pub fn wait_for_callback(&self, timeout: Duration) -> Result<Vec<(String, String)>, AuthError> {
+    pub fn wait_for_callback(
+        &self,
+        expected_state: &str,
+        timeout: Duration,
+    ) -> Result<Vec<(String, String)>, AuthError> {
         let deadline = Instant::now() + timeout;
 
         loop {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return Err(AuthError::LoginTimeout { seconds: timeout.as_secs() });
+            }
+
             match self.listener.accept() {
                 Ok((stream, _)) => {
-                    if let Some(params) = Self::serve(&stream)? {
+                    if let Some(params) =
+                        Self::serve(&stream, expected_state, READ_TIMEOUT.min(remaining))?
+                    {
                         return Ok(params);
                     }
                 }
                 Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {
-                    if Instant::now() >= deadline {
-                        return Err(AuthError::LoginTimeout { seconds: timeout.as_secs() });
-                    }
                     std::thread::sleep(POLL_INTERVAL);
                 }
                 Err(err) => return Err(AuthError::Io(err)),
@@ -348,11 +404,17 @@ impl CallbackListener {
 
     /// Reads one request and answers it.
     ///
-    /// Returns the query parameters when the request was the callback, and
-    /// `None` when it was anything else.
-    fn serve(stream: &TcpStream) -> Result<Option<Vec<(String, String)>>, AuthError> {
+    /// Returns the query parameters when the request was this login's callback,
+    /// and `None` when it was anything else -- including a callback carrying
+    /// somebody else's `state`, which is answered and then dropped rather than
+    /// ending the wait.
+    fn serve(
+        stream: &TcpStream,
+        expected_state: &str,
+        read_timeout: Duration,
+    ) -> Result<Option<Vec<(String, String)>>, AuthError> {
         stream.set_nonblocking(false)?;
-        stream.set_read_timeout(Some(READ_TIMEOUT))?;
+        stream.set_read_timeout(Some(read_timeout))?;
 
         let mut reader = BufReader::new(stream);
         let mut line = String::new();
@@ -376,9 +438,36 @@ impl CallbackListener {
         }
 
         let params = request.query().map(parse_query).unwrap_or_default();
+        if !belongs_to(&params, expected_state) {
+            respond(stream, 400, STRAY_BODY);
+            return Ok(None);
+        }
+
         respond(stream, 200, SUCCESS_BODY);
         Ok(Some(params))
     }
+}
+
+/// Whether an authorization response belongs to the login that is waiting.
+///
+/// Two conditions, both necessary. It has to be an authorization response at
+/// all -- a `code` or an `error`, the same rule [`parse_redirect`] applies to a
+/// paste -- and the `state` beside it has to be the one that was sent.
+///
+/// `state` is read the way the caller reads it: exactly once, so a redirect
+/// carrying two of them is not given the chance to have the convenient one
+/// picked. The comparison is [`prick_core::pkce::constant_time_eq`] rather than
+/// `==` for the reason the whole crate avoids `==` here -- the value arrived in
+/// a URL from an untrusted redirect, and `==` returns as soon as two bytes
+/// differ, which leaks how long a common prefix was to anything that can retry.
+fn belongs_to(params: &[(String, String)], expected_state: &str) -> bool {
+    if !params.iter().any(|(key, _)| key == "code" || key == "error") {
+        return false;
+    }
+
+    let mut found = params.iter().filter(|(key, _)| key == "state");
+    let Some((_, state)) = found.next() else { return false };
+    found.next().is_none() && prick_core::pkce::constant_time_eq(state, expected_state)
 }
 
 /// What the browser tab shows once the redirect has been received.
@@ -386,6 +475,12 @@ impl CallbackListener {
 /// Deliberately plain: no script, no external resource, no styling that would
 /// need one. The page exists to tell someone they can close the tab.
 const SUCCESS_BODY: &str = "Signed in. You can close this tab and return to the terminal.";
+
+/// What a tab shows when its redirect is not the one being waited for.
+///
+/// Says nothing about which login is waiting or what it expected: whoever is
+/// reading this page is, by definition, not the login that started.
+const STRAY_BODY: &str = "That sign-in response does not belong to a login in progress.";
 
 /// Writes a minimal HTTP response and closes the connection.
 ///
@@ -544,8 +639,9 @@ mod tests {
             response
         });
 
-        let params =
-            listener.wait_for_callback(Duration::from_secs(10)).expect("the callback arrives");
+        let params = listener
+            .wait_for_callback("the-state", Duration::from_secs(10))
+            .expect("the callback arrives");
         assert_eq!(
             params,
             [
@@ -583,7 +679,7 @@ mod tests {
         });
 
         let params =
-            listener.wait_for_callback(Duration::from_secs(10)).expect("the callback arrives");
+            listener.wait_for_callback("s", Duration::from_secs(10)).expect("the callback arrives");
         assert_eq!(params[0], ("code".to_owned(), "c".to_owned()));
     }
 
@@ -591,9 +687,77 @@ mod tests {
     fn waiting_times_out_rather_than_blocking_forever() {
         let listener = CallbackListener::bind().expect("bind");
         let err = listener
-            .wait_for_callback(Duration::from_millis(150))
+            .wait_for_callback("s", Duration::from_millis(150))
             .expect_err("nothing will connect");
         assert!(matches!(err, AuthError::LoginTimeout { .. }));
+    }
+
+    #[test]
+    fn a_redirect_for_another_login_does_not_consume_the_one_this_login_needs() {
+        // THE SINGLE-SHOT PROPERTY. Anything that can reach loopback can hit
+        // `/callback`; if that ended the wait, it would end the login too, and
+        // the browser's real redirect would arrive at a closed port.
+        let listener = CallbackListener::bind().expect("bind");
+        let port = listener.port();
+
+        std::thread::spawn(move || {
+            for query in [
+                // A different login's response, a stale tab's, and a forged one.
+                "code=stray&state=some-other-login",
+                // An authorization response with no `state` beside it at all.
+                "code=stray",
+                // Two values, one of them the right one: picking whichever
+                // matched would defeat the comparison entirely.
+                "code=stray&state=the-state&state=attacker-chosen",
+                // Not an authorization response in the first place.
+                "",
+            ] {
+                let mut stray = TcpStream::connect((Ipv4Addr::LOCALHOST, port)).expect("connect");
+                stray
+                    .write_all(format!("GET /callback?{query} HTTP/1.1\r\n\r\n").as_bytes())
+                    .expect("write");
+                let mut answered = String::new();
+                let _ = stray.read_to_string(&mut answered);
+                assert!(answered.starts_with("HTTP/1.1 400"), "{answered}");
+                assert!(!answered.contains("the-state"), "the expectation leaked: {answered}");
+            }
+
+            let mut real = TcpStream::connect((Ipv4Addr::LOCALHOST, port)).expect("connect");
+            real.write_all(b"GET /callback?code=real&state=the-state HTTP/1.1\r\n\r\n")
+                .expect("write");
+            let mut response = String::new();
+            let _ = real.read_to_string(&mut response);
+            assert!(response.starts_with("HTTP/1.1 200 OK"), "{response}");
+        });
+
+        let params = listener
+            .wait_for_callback("the-state", Duration::from_secs(15))
+            .expect("the login's own redirect still arrives");
+        assert_eq!(params[0], ("code".to_owned(), "real".to_owned()));
+    }
+
+    #[test]
+    fn a_connection_that_dribbles_cannot_outlive_the_login_deadline() {
+        // A slowloris client: connected, sending nothing, never closing. Each
+        // accepted connection used to get a flat ten seconds regardless of how
+        // much of the login deadline was left, so holding the listener past its
+        // advertised timeout cost one byte every nine seconds -- and the caller
+        // waiting on the result had no deadline of its own to fall back on.
+        let listener = CallbackListener::bind().expect("bind");
+        let held = TcpStream::connect((Ipv4Addr::LOCALHOST, listener.port())).expect("connect");
+
+        let started = Instant::now();
+        let err = listener
+            .wait_for_callback("the-state", Duration::from_millis(300))
+            .expect_err("a connection that says nothing completes no login");
+
+        assert!(matches!(err, AuthError::LoginTimeout { .. }), "{err:?}");
+        assert!(
+            started.elapsed() < READ_TIMEOUT,
+            "the deadline was extended by a whole read timeout: {:?}",
+            started.elapsed()
+        );
+        drop(held);
     }
 
     #[test]
@@ -615,7 +779,7 @@ mod tests {
         });
 
         let params = listener
-            .wait_for_callback(Duration::from_secs(15))
+            .wait_for_callback("s", Duration::from_secs(15))
             .expect("the real callback still arrives");
         assert_eq!(params[0].1, "c");
     }
@@ -697,8 +861,8 @@ mod tests {
 
         // With the paste channel off: stdin belongs to the test harness, so the
         // race is driven from the side a test can actually supply.
-        let (params, source) =
-            await_redirect(listener, Duration::from_secs(15), false).expect("the callback arrives");
+        let (params, source) = await_redirect(listener, "s", Duration::from_secs(15), false)
+            .expect("the callback arrives");
         assert_eq!(value(&params, "code"), Some("loop"));
         assert_eq!(source, RedirectSource::Loopback);
     }
@@ -706,7 +870,7 @@ mod tests {
     #[test]
     fn a_login_nothing_completes_times_out_rather_than_hanging() {
         let listener = CallbackListener::bind().expect("bind");
-        let err = await_redirect(listener, Duration::from_millis(200), false)
+        let err = await_redirect(listener, "s", Duration::from_millis(200), false)
             .expect_err("nothing was going to arrive");
         assert!(matches!(err, AuthError::LoginTimeout { .. }), "{err:?}");
     }
@@ -719,6 +883,7 @@ mod tests {
 
         let (params, source) = await_redirect_from(
             listener,
+            "s",
             Duration::from_secs(30),
             Some(|| parse_redirect("http://127.0.0.1:1/callback?code=pasted&state=s").map(Some)),
         )
@@ -744,7 +909,7 @@ mod tests {
         });
 
         let (params, source) =
-            await_redirect_from(listener, Duration::from_secs(30), Some(|| Ok(None)))
+            await_redirect_from(listener, "s", Duration::from_secs(30), Some(|| Ok(None)))
                 .expect("the browser still gets there");
 
         assert_eq!(value(&params, "code"), Some("slow"));
@@ -759,11 +924,61 @@ mod tests {
 
         let err = await_redirect_from(
             listener,
+            "s",
             Duration::from_secs(30),
             Some(|| parse_redirect("not a redirect").map(Some)),
         )
         .expect_err("a paste that carries no response is a failure");
 
         assert!(matches!(err, AuthError::RedirectUnreadable), "{err:?}");
+    }
+
+    #[test]
+    fn a_paste_is_not_filtered_by_state_the_way_the_listener_is() {
+        // The listener filters so that a stray redirect cannot consume it. A
+        // paste has no such problem -- it is delivered once, by hand -- and
+        // filtering it would turn "you pasted the wrong redirect" into a wait
+        // that ends in a timeout. The caller compares `state` either way.
+        let listener = CallbackListener::bind().expect("bind");
+
+        let (params, source) = await_redirect_from(
+            listener,
+            "the-state",
+            Duration::from_secs(30),
+            Some(|| parse_redirect("http://127.0.0.1:1/callback?code=c&state=another").map(Some)),
+        )
+        .expect("the paste is delivered rather than swallowed");
+
+        assert_eq!(value(&params, "state"), Some("another"));
+        assert_eq!(source, RedirectSource::Pasted);
+    }
+
+    #[test]
+    fn the_state_comparison_the_listener_makes_is_not_a_byte_at_a_time_one() {
+        // Pinned against the shape of the check rather than against timing: a
+        // `==` here would leak how long a common prefix was to anything that can
+        // retry, which on loopback is anything at all.
+        let response = |state: &str| {
+            vec![("code".to_owned(), "c".to_owned()), ("state".to_owned(), state.to_owned())]
+        };
+
+        assert!(belongs_to(&response("abc"), "abc"));
+        assert!(!belongs_to(&response("abd"), "abc"), "one byte apart");
+        assert!(!belongs_to(&response("ab"), "abc"), "a prefix is not a match");
+        assert!(!belongs_to(&response("abcd"), "abc"), "nor is an extension");
+        assert!(!belongs_to(&response(""), "abc"));
+
+        // An authorization response is required, not just a matching state: a
+        // browser fetching `/callback` with the state still on the URL and
+        // nothing else is not the redirect this login is waiting for.
+        assert!(!belongs_to(&[("state".to_owned(), "abc".to_owned())], "abc"));
+        // An error response with the right state is one, though.
+        assert!(belongs_to(
+            &[
+                ("error".to_owned(), "access_denied".to_owned()),
+                ("state".to_owned(), "abc".to_owned())
+            ],
+            "abc"
+        ));
     }
 }

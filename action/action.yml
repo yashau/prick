@@ -16,9 +16,11 @@
 # built from the sources next to it. For a secrets manager that is exactly the
 # wrong shape: the thing with access to every secret in an environment would be
 # the one file nobody looks at. A composite action installs the CLI that is
-# already published, signed and provenance-attested, and everything this action
-# adds is the readable JavaScript beside this file: `inject.mjs` and the five
-# small modules it imports, none of them generated, minified or bundled.
+# already published, signed and provenance-attested -- and VERIFIES that
+# attestation before installing it, failing the step if it does not verify --
+# and everything this action adds is the readable JavaScript beside this file:
+# `inject.mjs` and the five small modules it imports, none of them generated,
+# minified or bundled.
 #
 # WHY EVERY INPUT IS PASSED THROUGH `env:` AND NEVER INTERPOLATED INTO A SHELL
 #
@@ -95,7 +97,9 @@ inputs:
     description: >-
       Version of the @yashau/prick CLI to install. Defaults to this action's own
       ref when that ref is a release tag, so the action and the CLI cannot
-      drift; a floating ref falls back to the `latest` dist-tag.
+      drift; a floating ref falls back to the `latest` dist-tag. Whatever this
+      resolves to, its provenance attestation is verified before it is
+      installed, and the step fails if it does not verify.
     required: false
     default: ""
 
@@ -137,7 +141,7 @@ runs:
   using: composite
 
   steps:
-    - name: Install the prick CLI
+    - name: Verify and install the prick CLI
       id: install
       shell: bash
       run: node "${GITHUB_ACTION_PATH}/inject.mjs" install

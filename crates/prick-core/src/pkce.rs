@@ -100,7 +100,18 @@ pub fn constant_time_eq(a: &str, b: &str) -> bool {
     }
     let mut diff = 0u8;
     for (x, y) in a.iter().zip(b.iter()) {
-        diff |= x ^ y;
+        // The `black_box` is what keeps the loop constant-time rather than
+        // merely appearing to be. Accumulating with `|=` is correct as written,
+        // but nothing in the language stops an optimiser from noticing that a
+        // non-zero accumulator can never return to zero and leaving the loop
+        // early -- which would put the timing signal straight back. Keeping
+        // `diff` opaque on every iteration denies it that reasoning.
+        //
+        // `black_box` is a hint and not a guarantee, but it is the only barrier
+        // the standard library offers, and this crate may not take a dependency
+        // on one that does better. The cost is a few nanoseconds on a
+        // comparison that runs once per login.
+        diff = core::hint::black_box(diff | (x ^ y));
     }
     diff == 0
 }
@@ -219,6 +230,30 @@ mod tests {
         assert!(!constant_time_eq("abc", "abcd"));
         assert!(!constant_time_eq("abc", ""));
         assert!(!constant_time_eq("Abc", "abc"));
+    }
+
+    #[test]
+    fn constant_time_eq_finds_a_difference_wherever_it_falls() {
+        // The barrier in the accumulate loop is invisible to a functional test;
+        // what a test can pin is that the loop still reports a difference in
+        // the last position, where an early-exiting comparison would have run
+        // longest, as readily as one in the first.
+        let base = "s".repeat(64);
+        for i in [0usize, 31, 63] {
+            let mut other = base.clone();
+            other.replace_range(i..=i, "t");
+            assert!(!constant_time_eq(&base, &other), "missed a difference at {i}");
+        }
+        assert!(constant_time_eq(&base, &base));
+    }
+
+    #[test]
+    fn constant_time_eq_compares_bytes_not_characters() {
+        // `state` is compared exactly as the redirect delivered it. Two values
+        // of equal byte length that differ only inside a multi-byte code point
+        // must still compare unequal.
+        assert!(constant_time_eq("→←↑", "→←↑"));
+        assert!(!constant_time_eq("→←↑", "→←↓"));
     }
 
     #[test]

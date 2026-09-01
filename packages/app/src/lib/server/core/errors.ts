@@ -70,6 +70,18 @@ export const ERROR_STATUS = {
   /** `expected_rev` did not match. The environment is byte-for-byte unchanged. */
   PRECONDITION_FAILED: 412,
   PAYLOAD_TOO_LARGE: 413,
+  /**
+   * A state-changing request declared a media type that is not
+   * `application/json`, or carried a body and declared nothing at all.
+   *
+   * Not a validation failure, and the distinction is load-bearing. Hono's `json`
+   * validator does not reject a mismatched `Content-Type`: it hands the schema
+   * `{}` instead, so a form-encoded body reaches a strict schema as an EMPTY
+   * OBJECT and validates whenever every field happens to be optional. The
+   * transport has to refuse the media type before the schema ever sees it, and
+   * 415 is the answer that says which half was wrong.
+   */
+  UNSUPPORTED_MEDIA_TYPE: 415,
   RATE_LIMITED: 429,
   /** Constant message. The original text may embed anything at all. */
   INTERNAL: 500,

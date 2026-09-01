@@ -296,6 +296,8 @@ export function createMcpServer(options: CreateServerOptions): McpServer {
         'Because of that, "in_both" means the key exists on both sides. It does NOT mean the two values agree, and there is no way to check that without revealing a value.',
         "",
         'Use this to answer "what is my .env missing before I deploy?" without reading a single credential.',
+        "",
+        "The file must be inside the directory this server was started in. A path that leaves it is refused, so this cannot be pointed at a dotfile elsewhere on the machine.",
       ].join("\n"),
       inputSchema: {
         project: SlugInput.describe("Project slug."),
@@ -304,7 +306,7 @@ export function createMcpServer(options: CreateServerOptions): McpServer {
           .string()
           .min(1)
           .describe(
-            "Path to the local .env file. Relative paths resolve against the working directory this server was started in.",
+            "Path to the local .env file, relative to the working directory this server was started in. It must resolve to a file inside that directory: `..`, an absolute path elsewhere and a symbolic link leading out are all refused.",
           ),
       },
       annotations: {

@@ -8,6 +8,7 @@ export function stubConfig(overrides: Partial<ServerConfig> = {}): ServerConfig 
     accessClientId: "test-client-id.access",
     accessClientSecret: "test-client-secret",
     allowReveal: false,
+    workspaceRoot: process.cwd(),
     requestTimeoutMs: 5_000,
     logLevel: "debug",
     ...overrides,

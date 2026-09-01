@@ -39,6 +39,9 @@
 
 import { spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import {
   CLI_ARGS,
@@ -50,6 +53,9 @@ import {
   parseSecrets,
   resolveVersionSpec,
   run,
+  stagingArgs,
+  verifiedVersion,
+  verifyArgs,
 } from "./cli.mjs";
 import { ActionError } from "./errors.mjs";
 import { readInputs } from "./inputs.mjs";
@@ -57,33 +63,90 @@ import { chooseDelimiter, maskPayloads, realIo, renderAssignment, renderBlock } 
 import { planInjection } from "./plan.mjs";
 
 /**
- * `install`: validate the inputs, resolve the version, install the CLI.
+ * A fresh directory to stage and verify a candidate version in.
+ *
+ * `RUNNER_TEMP` in preference to the operating system's temporary directory: the
+ * runner empties it at the start of every job, so the staged tree needs no
+ * cleanup here -- and leaving it in place is what makes a verification failure
+ * something a maintainer can go and look at rather than only read about.
+ *
+ * @param {NodeJS.ProcessEnv} env
+ * @returns {string}
+ */
+export function stagingDirectory(env) {
+  const base = String(env.RUNNER_TEMP ?? "").trim();
+  return mkdtempSync(join(base === "" ? tmpdir() : base, "prick-verify-"));
+}
+
+/**
+ * `install`: validate the inputs, resolve the version, VERIFY it, install it.
  *
  * Validation happens here rather than in `inject` so that a plaintext URL or a
  * missing token fails in a second instead of after an npm install.
+ *
+ * Three npm invocations, in an order that matters -- see the Provenance section
+ * of cli.mjs for why the version is staged and audited before it is installed,
+ * and why the global install below names an exact version rather than the spec
+ * that was resolved.
  *
  * @param {object} options
  * @param {NodeJS.ProcessEnv} options.env
  * @param {import('./io.mjs').Io} options.io
  * @param {typeof spawnSync} [options.spawn]
+ * @param {(env: NodeJS.ProcessEnv) => string} [options.staging]
  * @returns {number} exit code
  */
-export function commandInstall({ env, io, spawn = spawnSync }) {
+export function commandInstall({ env, io, spawn = spawnSync, staging = stagingDirectory }) {
   const inputs = readInputs(env);
   const { spec, source } = resolveVersionSpec(inputs);
 
-  io.log(`Installing ${CLI_PACKAGE}@${spec} (from ${source}).`);
-  const result = run("npm", installArgs(spec), env, spawn);
+  io.log(`Resolving ${CLI_PACKAGE}@${spec} (from ${source}).`);
+
+  const directory = staging(env);
+  const staged = run("npm", stagingArgs(spec), env, spawn, directory);
+
+  if (staged.error || staged.status !== 0) {
+    if (staged.stderr !== "") {
+      io.log(staged.stderr.trimEnd());
+    }
+    throw new ActionError(
+      `fetching ${CLI_PACKAGE}@${spec} failed`,
+      spec === "latest"
+        ? "Check that the runner can reach the npm registry."
+        : `Check that ${spec} is a published version of ${CLI_PACKAGE}.`,
+    );
+  }
+
+  const audited = run("npm", verifyArgs(), env, spawn, directory);
+
+  if (audited.error) {
+    throw new ActionError(
+      "could not run `npm audit signatures`",
+      "The runner's npm is too old to verify provenance. npm 9.5 or newer is needed, " +
+        "and every supported runner image ships one.",
+    );
+  }
+  // A non-zero status is npm saying it would not or could not verify something.
+  // Its stderr says which, and carries no secret: nothing has been fetched yet.
+  if (audited.status !== 0 && audited.stderr.trim() !== "") {
+    io.log(audited.stderr.trimEnd());
+  }
+
+  // Throws unless this exact version verified. Never falls through to the
+  // install on a check that merely failed to run.
+  const version = verifiedVersion(audited.stdout);
+  io.log(`Verified ${CLI_PACKAGE}@${version}: registry signature and provenance attestation.`);
+
+  const result = run("npm", installArgs(version), env, spawn);
 
   if (result.error || result.status !== 0) {
     if (result.stderr !== "") {
       io.log(result.stderr.trimEnd());
     }
     throw new ActionError(
-      `installing ${CLI_PACKAGE}@${spec} failed`,
-      spec === "latest"
-        ? "Check that the runner can reach the npm registry."
-        : `Check that ${spec} is a published version of ${CLI_PACKAGE}.`,
+      `installing ${CLI_PACKAGE}@${version} failed`,
+      "The version verified but would not install. Re-run with ACTIONS_STEP_DEBUG " +
+        "enabled to see the npm output.",
     );
   }
 
@@ -205,13 +268,14 @@ export function commandInject({ env, io, spawn = spawnSync, random = randomBytes
  * @param {import('./io.mjs').Io} [options.io]
  * @param {typeof spawnSync} [options.spawn]
  * @param {(size: number) => Buffer} [options.random]
+ * @param {(env: NodeJS.ProcessEnv) => string} [options.staging]
  * @returns {number} exit code
  */
-export function main(argv, { env = process.env, io = realIo(env), spawn, random } = {}) {
+export function main(argv, { env = process.env, io = realIo(env), spawn, random, staging } = {}) {
   const subcommand = argv[0] ?? "";
   try {
     if (subcommand === "install") {
-      return commandInstall({ env, io, spawn });
+      return commandInstall({ env, io, spawn, staging });
     }
     if (subcommand === "inject") {
       return commandInject({ env, io, spawn, random });

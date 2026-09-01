@@ -11,6 +11,7 @@ export {
 } from "./errors.js";
 export {
   bodyLimit,
+  crossSiteGuard,
   docsCsp,
   expectedRevFromIfMatch,
   keyring,

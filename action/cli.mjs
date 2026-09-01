@@ -139,6 +139,181 @@ export function installArgs(spec) {
 }
 
 // ---------------------------------------------------------------------------
+// Provenance
+// ---------------------------------------------------------------------------
+//
+// WHY THE VERSION IS STAGED BEFORE IT IS INSTALLED
+//
+// This action hands the CLI a service token and every secret in an environment,
+// so which tarball it runs is the whole question. `--ignore-scripts` stops the
+// install itself executing anything, and VERSION_SPEC stops the spec naming a
+// git remote or a tarball URL -- but neither says anything about WHO published
+// the version the registry served. A consumer pinned to a floating action ref
+// resolves the `latest` dist-tag, and an npm account takeover moves that tag.
+//
+// npm can answer the question: every `@yashau/prick*` package is published by
+// cli-release.yml under trusted publishing, so every one of them carries a SLSA
+// provenance attestation, and `npm audit signatures` verifies those
+// cryptographically.
+//
+// It cannot answer it about a GLOBAL install, though. Measured, not assumed:
+// `npm audit signatures --global` is refused outright with EAUDITGLOBAL, and
+// pointing the audit at the global prefix instead reports only the packages that
+// are DEPENDENCIES of something -- which leaves `@yashau/prick` itself, the one
+// package a moved `latest` tag would replace, as the only thing unverified.
+//
+// So the resolved version is first installed into a throwaway directory, where
+// npm writes a package.json naming it as a dependency and the audit therefore
+// covers it. Then, and only then, the exact version that verified is installed
+// globally. Doing it in that order is also what closes the gap between the two:
+// the global install names a version rather than a dist-tag, so a tag that moves
+// in between cannot slip an unverified tarball past the check. The second
+// install reads the npm cache the first one filled.
+
+/**
+ * The staging install: the same package, into `cwd`, as a dependency.
+ *
+ * `--prefix .` is load-bearing and is not decoration. Without it npm searches
+ * upwards for the nearest package.json and would install into whatever project
+ * happens to be an ancestor of the temporary directory. `.` is a literal, so it
+ * costs nothing to pass -- see `run` on why no path appears in this argv.
+ *
+ * @param {string} spec
+ * @returns {string[]}
+ */
+export function stagingArgs(spec) {
+  return [
+    "install",
+    "--prefix",
+    ".",
+    "--ignore-scripts",
+    "--no-audit",
+    "--no-fund",
+    `${CLI_PACKAGE}@${assertSafeVersionSpec(spec)}`,
+  ];
+}
+
+/**
+ * The verification, run in the staging directory.
+ *
+ * `--include-attestations` is what makes the report say which packages were
+ * VERIFIED rather than only which ones failed; npm's own output suggests that
+ * spelling. Without it the document carries `invalid` and `missing` alone, and a
+ * package published with no attestation at all appears in neither -- which is
+ * precisely the silent pass this check exists to rule out.
+ *
+ * @returns {string[]}
+ */
+export function verifyArgs() {
+  return ["audit", "signatures", "--json", "--include-attestations", "--prefix", "."];
+}
+
+/** What to do about any failure to verify. One answer, because there is one. */
+const PROVENANCE_HINT =
+  "This is refused rather than warned about: the CLI it guards receives the " +
+  "service token and every secret in the environment. Every published version of " +
+  `${CLI_PACKAGE} is published by GitHub Actions under npm trusted publishing and ` +
+  "carries a provenance attestation, so a version that has none, or one whose " +
+  "attestation does not verify, is not a version this action will run. A registry " +
+  "mirror that does not serve attestations is not supported.";
+
+/**
+ * Reads npm's attestation report and returns the version it verified.
+ *
+ * FAILS CLOSED on every path that is not an affirmative verification of this
+ * package. In particular a registry that cannot be reached, or that serves no
+ * verification keys, is a check that did not happen rather than one that passed:
+ * npm reports that as an `error` document, and it is refused here like any other
+ * failure to verify.
+ *
+ * Anything in `invalid` or `missing` fails the whole install, including a
+ * dependency of the CLI rather than the CLI itself -- the platform package is
+ * where the actual `prk` executable lives, so a bad signature there is a bad
+ * signature on the binary.
+ *
+ * @param {string} text  stdout of `npm audit signatures --json --include-attestations`
+ * @returns {string} the exact version whose signature and provenance verified
+ */
+export function verifiedVersion(text) {
+  let report;
+  try {
+    report = JSON.parse(text);
+  } catch {
+    throw new ActionError(
+      "npm produced no readable attestation report",
+      `\`npm audit signatures\` did not return JSON. ${PROVENANCE_HINT}`,
+    );
+  }
+
+  if (report === null || typeof report !== "object") {
+    throw new ActionError("npm produced no readable attestation report", PROVENANCE_HINT);
+  }
+
+  // npm's own failure shape, and the one an unreachable registry takes.
+  if (report.error) {
+    const summary = String(report.error.summary ?? "").trim();
+    throw new ActionError(
+      `npm could not verify ${CLI_PACKAGE}${summary === "" ? "" : `: ${summary}`}`,
+      PROVENANCE_HINT,
+    );
+  }
+
+  const unverified = [...toList(report.invalid), ...toList(report.missing)];
+  if (unverified.length > 0) {
+    throw new ActionError(
+      `npm refused ${unverified.length} package(s): ${unverified.map(describePackage).join(", ")}`,
+      PROVENANCE_HINT,
+    );
+  }
+
+  const entry = toList(report.verified).find((item) => item.name === CLI_PACKAGE);
+  if (entry === undefined) {
+    throw new ActionError(`npm verified no signature for ${CLI_PACKAGE}`, PROVENANCE_HINT);
+  }
+
+  const predicate = String(entry.attestations?.provenance?.predicateType ?? "").trim();
+  if (predicate === "") {
+    throw new ActionError(
+      `${describePackage(entry)} carries no provenance attestation`,
+      PROVENANCE_HINT,
+    );
+  }
+
+  const version = String(entry.version ?? "").trim();
+  if (version === "") {
+    throw new ActionError(
+      `npm verified ${CLI_PACKAGE} without saying which version`,
+      PROVENANCE_HINT,
+    );
+  }
+
+  // Checked again on the way out even though it came from npm rather than from
+  // the workflow. It is about to be spliced into an npm argument vector, and
+  // `installArgs` is not the place to discover that a registry answered with
+  // something that is not a version.
+  return assertSafeVersionSpec(version);
+}
+
+/**
+ * @param {unknown} value
+ * @returns {{ name?: string, version?: string, attestations?: any }[]}
+ */
+function toList(value) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.filter((item) => item !== null && typeof item === "object");
+}
+
+/**
+ * @param {{ name?: string, version?: string }} entry
+ * @returns {string}
+ */
+function describePackage(entry) {
+  return `${entry.name ?? "an unnamed package"}@${entry.version ?? "?"}`;
+}
+
+// ---------------------------------------------------------------------------
 // The CLI's exit-code contract
 // ---------------------------------------------------------------------------
 
@@ -312,22 +487,31 @@ export function cliEnvironment({ base, url, project, environment, clientId, clie
  *
  * `shell` on Windows, and only on Windows: npm and the npm-installed `prk` are
  * both `.cmd` shims there, and since the CVE-2024-24576 fix Node refuses to
- * execute a batch file without one. It is safe here because both argument
- * vectors are built from literals plus a version spec that `VERSION_SPEC` has
+ * execute a batch file without one. It is safe here because every argument
+ * vector is built from literals plus a version spec that `VERSION_SPEC` has
  * already restricted to `[\^~]?[A-Za-z0-9._+-]+` -- no separator, no
  * redirection, no substitution -- and because Node quotes what it passes to the
  * shell, which makes even the leading caret inert. User data supplied by the
  * workflow never appears in an argv at all; it goes through `env`.
  *
+ * `cwd` is why the staging directory is passed HERE and never as an argument.
+ * A directory name is not user data, but it is not a literal either: it contains
+ * whatever the runner's temporary path contains, and an `&` in a Windows profile
+ * name would be a command separator to `cmd`. A cwd goes to the operating system
+ * rather than through the shell, so `stagingArgs` and `verifyArgs` say
+ * `--prefix .` and the path never reaches a command line at all.
+ *
  * @param {string} file
  * @param {string[]} args
  * @param {NodeJS.ProcessEnv} env
  * @param {typeof spawnSync} spawn
+ * @param {string} [cwd] working directory; the process's own when omitted
  * @returns {{ status: number | null, stdout: string, stderr: string, error?: Error }}
  */
-export function run(file, args, env, spawn = spawnSync) {
+export function run(file, args, env, spawn = spawnSync, cwd = undefined) {
   const result = spawn(file, args, {
     env,
+    cwd,
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
     windowsHide: true,

@@ -6,7 +6,14 @@ import { secureHeaders } from "hono/secure-headers";
 import { authenticate } from "./context.js";
 import type { ApiEnv } from "./env.js";
 import { statusFor, toErrorBody } from "./errors.js";
-import { bodyLimit, docsCsp, keyring, requestId, SCALAR_CDN } from "./middleware.js";
+import {
+  bodyLimit,
+  crossSiteGuard,
+  docsCsp,
+  keyring,
+  requestId,
+  SCALAR_CDN,
+} from "./middleware.js";
 import { GENERATOR_OPTIONS } from "./openapi.js";
 import { accessRoutes } from "./routes/access.js";
 import { adminRoutes } from "./routes/admin.js";
@@ -82,6 +89,28 @@ export function createApi() {
    * failure fixable.
    */
   app.use("*", keyring);
+
+  /*
+   * THE CSRF GUARD, AND ITS POSITION IS ALSO THE FEATURE.
+   *
+   * On the ROOT app with `"*"`, ahead of every mount -- so `/api/v1`, anything
+   * mounted beside it later, and the 404 path all inherit it. Per-route would
+   * mean the next state-changing route added is the one that forgets.
+   *
+   * The comment above about there being no CORS explains why another site
+   * cannot READ this API. This is the other half: why another site cannot WRITE
+   * to it either. Cross-origin reads are the browser's job and cost this Worker
+   * nothing; cross-site WRITES are not, because a form post needs no response
+   * and is exempt from preflight, and the `CF_Authorization` fallback in
+   * `extractAssertion` means the browser would authenticate it. See
+   * `crossSiteGuard` for the mechanics and for what each real client sends.
+   *
+   * BELOW `keyring` on purpose. A Worker with a broken `MASTER_KEY` must answer
+   * 500 SERVER_MISCONFIGURED to EVERYTHING, including a request this guard
+   * would otherwise refuse first -- a 403 there would report a configuration
+   * failure as an access decision.
+   */
+  app.use("*", crossSiteGuard);
 
   /*
    * Versioned from day one. `/api/v1` is not aspirational: the CLI is a
