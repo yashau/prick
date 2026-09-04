@@ -67,12 +67,8 @@ repository.
 brew install yashau/prick/prk    # macOS, Linux
 cargo binstall prk               # anywhere with a Rust toolchain
 npm install -g @yashau/prick     # anywhere with Node
-# winget install yashau.prick    # Windows — not yet approved by Microsoft
+winget install yashau.prick      # Windows
 ```
-
-The WinGet line is commented out on purpose: the manifest is submitted but still sitting in
-Microsoft's manual review queue, so `winget install yashau.prick` will not resolve yet. Use one of
-the other channels on Windows until it merges.
 
 Scoop takes the bucket first:
 
@@ -536,9 +532,9 @@ See **[Backup and recovery](https://docs.getprick.dev/guides/backup-and-recovery
 
 ## 📊 Status
 
-The CLI is published on **crates.io, npm, Homebrew and Scoop** — WinGet is submitted and awaiting
-Microsoft's review — and the Worker is yours to deploy. Releases are CalVer, cut from a git tag,
-and every archive carries a provenance attestation and an SBOM.
+The CLI is published on **crates.io, npm, Homebrew, Scoop and WinGet**, and the Worker is yours to
+deploy. Releases are CalVer, cut from a git tag, and every archive carries a provenance attestation
+and an SBOM.
 
 The test suite is real: six suites — Rust, Worker + UI, end-to-end, scripts, the GitHub Action and
 the MCP server — and CI runs every one of them on every push. `prick-core` additionally carries a
