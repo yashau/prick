@@ -58,7 +58,9 @@ export class ConfigError extends Error {
 
 /** Environment variables consulted, in precedence order, for each setting. */
 export const ENV_NAMES = {
-  apiUrl: ["PRICK_MCP_API_URL", "PRK_URL"],
+  // `PRK_API_URL` is what `prk` itself reads, so an environment set up for the
+  // CLI works here unchanged.
+  apiUrl: ["PRICK_MCP_API_URL", "PRK_API_URL", "PRK_URL"],
   clientId: ["PRICK_MCP_CLIENT_ID", "PRK_ACCESS_CLIENT_ID", "CF_ACCESS_CLIENT_ID"],
   clientSecret: ["PRICK_MCP_CLIENT_SECRET", "PRK_ACCESS_CLIENT_SECRET", "CF_ACCESS_CLIENT_SECRET"],
   allowReveal: ["PRICK_MCP_ALLOW_REVEAL"],

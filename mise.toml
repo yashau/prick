@@ -492,7 +492,7 @@ description = "Assert every manifest carries the same version"
 run = "node scripts/version.mjs check"
 
 # ---------------------------------------------------------------------------
-# RELEASE — two lines, one mechanism
+# RELEASE — three lines, one mechanism
 # ---------------------------------------------------------------------------
 # There are two release lines, `cli:*` and `docs:*`. They work identically and
 # differ only in their tag prefix: `v` for the CLI, `docs-v` for the
@@ -608,6 +608,24 @@ run = "node scripts/docs.mjs cut"
 [tasks."docs:status"]
 description = "Follow the most recent docs-release.yml run. Read-only"
 run = "node scripts/docs.mjs status"
+
+# The web app is the third release line. It has no workflow: this repository
+# never deploys the Worker, so an `app-v*` tag only names a release, and
+# `app:set` is what puts that version into a self-hoster's build. See
+# scripts/app.mjs.
+[tasks."app:next"]
+description = "Print the version the next web app release would take. Read-only, never prompts"
+run = "node scripts/app.mjs next"
+
+[tasks."app:cut"]
+description = "Release the web app: tag and push an app-v* tag. Deploys nothing. Requires a typed confirmation"
+# Pass --yes for automation: `mise run app:cut -- --yes`.
+run = "node scripts/app.mjs cut"
+
+[tasks."app:set"]
+description = "Stamp the web app's version into packages/app before a deploy. With no version, takes it from the app-v* tag on HEAD"
+usage = 'arg "[version]" help="CalVer version, e.g. 2026.815.0. Default: the app-v* tag on HEAD"'
+run = "node scripts/app.mjs set {{ usage.version }}"
 
 # ---------------------------------------------------------------------------
 # CI — pure fan-out; an exact mirror of ci.yml

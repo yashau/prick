@@ -9,6 +9,7 @@ import path from 'node:path';
 import test, { describe } from 'node:test';
 
 import {
+  APP_TAG_PREFIX,
   CLI_TAG_PREFIX,
   DEV_VERSION,
   DOCS_TAG_PREFIX,
@@ -256,10 +257,19 @@ describe('the two release lines count N independently', () => {
 describe('the workflow tag globs cannot cross', () => {
   const CLI_GLOB = tagGlob(CLI_TAG_PREFIX);
   const DOCS_GLOB = tagGlob(DOCS_TAG_PREFIX);
+  const APP_GLOB = tagGlob(APP_TAG_PREFIX);
 
   test('the globs are what the workflows declare', () => {
     assert.equal(CLI_GLOB, 'v*');
     assert.equal(DOCS_GLOB, 'docs-v*');
+    assert.equal(APP_GLOB, 'app-v*');
+  });
+
+  test('an app tag triggers neither workflow', () => {
+    assert.equal(tagMatchesGlob(CLI_GLOB, 'app-v2026.815.0'), false);
+    assert.equal(tagMatchesGlob(DOCS_GLOB, 'app-v2026.815.0'), false);
+    assert.equal(tagMatchesGlob(APP_GLOB, 'v2026.815.0'), false);
+    assert.equal(tagMatchesGlob(APP_GLOB, 'docs-v2026.815.0'), false);
   });
 
   test('a docs tag does not trigger the CLI workflow', () => {
@@ -281,9 +291,9 @@ describe('the workflow tag globs cannot cross', () => {
 
   test('no tag either line can produce matches both globs', () => {
     for (const date of ['2026-01-05', '2026-08-15', '2026-10-01', '2026-12-31']) {
-      for (const prefix of [CLI_TAG_PREFIX, DOCS_TAG_PREFIX]) {
+      for (const prefix of [CLI_TAG_PREFIX, DOCS_TAG_PREFIX, APP_TAG_PREFIX]) {
         const { tag } = planVersion({ date, tags: [], tagPrefix: prefix });
-        const matches = [CLI_GLOB, DOCS_GLOB].filter((g) => tagMatchesGlob(g, tag));
+        const matches = [CLI_GLOB, DOCS_GLOB, APP_GLOB].filter((g) => tagMatchesGlob(g, tag));
         assert.deepEqual(matches, [tagGlob(prefix)], `${tag} matched ${matches.join(' and ')}`);
       }
     }

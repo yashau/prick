@@ -163,6 +163,17 @@ window between the two steps.
 
 ## 8. Deploy
 
+To deploy a named release rather than whatever is on `main`, check out its
+`app-v` tag and stamp the version first, so `/health` reports it:
+
+```bash
+git checkout app-v2026.815.0
+```
+
+```bash
+mise run app:set
+```
+
 Check the resolved configuration first if you want to be careful:
 
 ```bash
@@ -199,8 +210,8 @@ When authenticated, the endpoint answers:
 { "service": "prick", "status": "ok", "version": "0.0.0-dev" }
 ```
 
-The version always reads `0.0.0-dev`: the Worker is deployed from your own
-checkout and is not version-stamped.
+The version reads `0.0.0-dev` unless you deployed a stamped release — see
+step 8.
 
 ## 10. Install the CLI
 

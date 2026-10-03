@@ -134,17 +134,23 @@ describe("a failing CLI", () => {
     return { ...h, code };
   };
 
-  test("403 says what to do about it, and where", () => {
-    const result = failWith(4);
+  test("a first-run 404 says what to do about it, and where", () => {
+    // A token with no grant is told the project does not exist, so the 404 is
+    // where the first-run guidance has to live.
+    const result = failWith(5);
     const message = result.commands("error")[0].text;
     const hint = result
       .of("log")
       .map((e) => e.text)
       .join("\n");
 
-    assert.match(message, /no grant for this project and environment/);
+    assert.match(message, /no grant on it/);
     assert.match(hint, /Seen but not granted/);
     assert.match(hint, /reader/);
+  });
+
+  test("403 is a role that is too low, not a missing grant", () => {
+    assert.match(failWith(4).commands("error")[0].text, /role is too low/);
   });
 
   test("401 points at the token, not at a login", () => {

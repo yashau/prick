@@ -345,19 +345,24 @@ export function describeExit(code) {
       };
     case 4:
       return {
-        title: "the service token has no grant for this project and environment",
+        title: "the service token's role is too low for this environment",
         hint:
-          "This is the usual first-run failure, and it is fixed in the admin UI, not " +
-          'in this workflow: open Access, find the client id under "Seen but not ' +
-          'granted" (the denial you just caused puts it there), and grant it the ' +
-          "`reader` role on this project or environment.",
+          "The token can see this environment but its grant does not cover the " +
+          "operation. Reading secrets needs `reader`; raise the grant in the admin UI " +
+          "under Access.",
       };
     case 5:
+      // prick reports a project the caller holds no grant on as absent rather
+      // than forbidden, so the status cannot reveal which names exist. For a
+      // service token that is almost always the first-run case, so it leads.
       return {
-        title: "no such project or environment",
+        title: "no such project or environment — or the service token has no grant on it",
         hint:
-          "Names are matched exactly and are case-sensitive. Check `project` and " +
-          "`environment` against `prk projects list` and `prk env list`.",
+          "On a first run this is expected, and it is fixed in the admin UI, not in " +
+          'this workflow: open Access, find the client id under "Seen but not ' +
+          'granted" (the denial you just caused puts it there), and grant it the ' +
+          "`reader` role on this project or environment. Otherwise check `project` " +
+          "and `environment`: names are matched exactly and are case-sensitive.",
       };
     case 6:
       return {

@@ -43,8 +43,9 @@ for exactly this — a **service token**, a client id and client secret pair tha
    the denied client id is sitting there with a Grant button next to it. `reader` on the project (or
    on the single environment) is enough.
 
-Step 4 is the usual first-run failure. The action reports it as "no such project or environment"
-(exit 5), because prick does not reveal a project to a token with no grant on it.
+Step 4 is the usual first-run failure, and the action's error message says so. It arrives as exit 5
+("no such project or environment — or the service token has no grant on it"), because prick does not
+reveal a project to a token with no grant on it.
 
 ## Inputs
 

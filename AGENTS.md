@@ -67,15 +67,16 @@ enough to have wedged the `e2e` job outright. Run it only on a bare Linux box.
 
 Never hand-edit a version; see the Conventions below for why the tag is the source of truth.
 
-| Task                         | Does                                                                                                            |
-| ---------------------------- | --------------------------------------------------------------------------------------------------------------- |
-| `version:plan`               | Compute today's CalVer and the tag that would claim it. Read-only                                               |
-| `version:check`              | Assert every manifest carries the same version. Read-only                                                       |
-| `version:set`                | Stamp a version into every manifest. CI calls this immediately before compiling                                 |
-| `cli:next` / `docs:next`     | Print the version and tag the next release would take. Read-only, never prompts                                 |
-| `cli:dry`                    | Dispatch `cli-release.yml` with `dry_run=true` on the **current branch** — stages everything, publishes nothing |
-| `cli:cut` / `docs:cut`       | **Releases it.** Tags and pushes; that push is the only trigger                                                 |
-| `cli:status` / `docs:status` | Follow the most recent run. Read-only                                                                           |
+| Task                                  | Does                                                                                                            |
+| ------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| `version:plan`                        | Compute today's CalVer and the tag that would claim it. Read-only                                               |
+| `version:check`                       | Assert every manifest carries the same version. Read-only                                                       |
+| `version:set`                         | Stamp a version into every manifest. CI calls this immediately before compiling                                 |
+| `cli:next` / `docs:next` / `app:next` | Print the version and tag the next release would take. Read-only, never prompts                                 |
+| `cli:dry`                             | Dispatch `cli-release.yml` with `dry_run=true` on the **current branch** — stages everything, publishes nothing |
+| `cli:cut` / `docs:cut` / `app:cut`    | **Releases it.** Tags and pushes; that push is the only trigger (`app:cut` triggers nothing)                    |
+| `app:set`                             | Stamp the web app's version into `packages/app/src/lib/version.js`. Never commit the stamp                      |
+| `cli:status` / `docs:status`          | Follow the most recent run. Read-only                                                                           |
 
 `*:cut` demands a typed confirmation of the **tag**, so it cannot be answered from muscle memory.
 `--yes` skips it, for automation only.
@@ -159,7 +160,8 @@ Breaking these fails the build, not review.
   three releases (add nullable + backfill → require → drop).
 - Versions are CalVer and machine-managed. Every manifest reads `0.0.0-dev`; the git tag is the
   source of truth. **Never hand-edit a version.**
-- Two release lines, one mechanism: `cli:*` on the `v` tag prefix and `docs:*` on `docs-v`.
+- Three release lines, one mechanism: `cli:*` on the `v` tag prefix, `docs:*` on `docs-v` and
+  `app:*` on `app-v`. The app line has no workflow; `app:set` stamps its version before a deploy.
   **Cutting the version is what releases it** — `mise run cli:cut` / `docs:cut` push the tag, and
   that push is the only trigger for `cli-release.yml` / `docs-release.yml`. Neither workflow
   computes a version, and nothing in CI moves a ref. See `docs/contributing/releasing.md`.

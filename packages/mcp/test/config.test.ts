@@ -56,6 +56,39 @@ describe("loadConfig", () => {
     assert.equal(config.accessClientSecret, "shhh");
   });
 
+  test("reads the prk CLI's own PRK_API_URL", () => {
+    const config = loadConfig(
+      {
+        PRK_API_URL: "https://secrets.example.com",
+        PRK_ACCESS_CLIENT_ID: "id.access",
+        PRK_ACCESS_CLIENT_SECRET: "shhh",
+      },
+      [],
+    );
+
+    assert.equal(config.apiBaseUrl, loadConfig(COMPLETE, []).apiBaseUrl);
+  });
+
+  test("PRICK_MCP_API_URL wins over PRK_API_URL, which wins over PRK_URL", () => {
+    const base = { PRICK_MCP_CLIENT_ID: "id.access", PRICK_MCP_CLIENT_SECRET: "shhh" };
+    const own = loadConfig(
+      {
+        ...base,
+        PRICK_MCP_API_URL: "https://mcp.example.com",
+        PRK_API_URL: "https://prk.example.com",
+        PRK_URL: "https://old.example.com",
+      },
+      [],
+    );
+    const cli = loadConfig(
+      { ...base, PRK_API_URL: "https://prk.example.com", PRK_URL: "https://old.example.com" },
+      [],
+    );
+
+    assert.match(own.apiBaseUrl, /mcp\.example\.com/);
+    assert.match(cli.apiBaseUrl, /prk\.example\.com/);
+  });
+
   test("reveal is off by default", () => {
     assert.equal(loadConfig(COMPLETE, []).allowReveal, false);
   });

@@ -1,6 +1,8 @@
 import adapter from "@sveltejs/adapter-cloudflare";
 import { vitePreprocess } from "@sveltejs/vite-plugin-svelte";
 
+import { APP_VERSION } from "./src/lib/version.js";
+
 /**
  * NOTE ON THE VITE SETUP -- this is a settled decision, do not "fix" it.
  *
@@ -81,9 +83,9 @@ const config = {
     },
 
     version: {
-      // The release pipeline stamps this from the git tag. In-repo it is the
-      // placeholder, matching every other version representation in the tree.
-      name: "0.0.0-dev",
+      // The same value `/health` reports, from the one stamped module. In-repo
+      // it is `0.0.0-dev`; `mise run app:set` stamps an `app-v*` release.
+      name: APP_VERSION,
     },
   },
 };

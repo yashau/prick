@@ -239,8 +239,9 @@ npm update -g @yashau/prick
 ```
 
 Or replace the binary. A client and a server on different versions is normal and
-supported — the API is versioned at `/api/v1`. `prk --version` reports the client; the
-Worker's `/health` reports `0.0.0-dev`, because the Worker is not version-stamped.
+supported — the API is versioned at `/api/v1`, and `prk doctor` reports both: the client's
+version, and the version the Worker's `/health` reports (`0.0.0-dev` unless it was deployed from a
+stamped `app-v` release).
 
 ## Uninstalling
 
