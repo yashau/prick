@@ -85,8 +85,9 @@ describe("loadConfig", () => {
       [],
     );
 
-    assert.match(own.apiBaseUrl, /mcp\.example\.com/);
-    assert.match(cli.apiBaseUrl, /prk\.example\.com/);
+    // The exact host, not a substring: `evil-mcp.example.com.attacker` must not pass.
+    assert.equal(new URL(own.apiBaseUrl).host, "mcp.example.com");
+    assert.equal(new URL(cli.apiBaseUrl).host, "prk.example.com");
   });
 
   test("reveal is off by default", () => {

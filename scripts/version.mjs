@@ -52,14 +52,11 @@ export const DEV_VERSION = '0.0.0-dev';
  * selects which tags count towards N, which tag `cut` pushes, and which workflow
  * that push triggers.
  *
- * No two may overlap in either direction, because the workflow triggers are
- * `push: tags: [<prefix>*]` globs. `docs-v2026.815.0` and `app-v2026.815.0` do
- * not match `v*` (they start with `d` and `a`), and no line's tag matches
- * another's glob. That non-overlap is asserted in version.test.mjs rather than
- * assumed.
- *
- * The app line has no workflow: self-hosters deploy the Worker from their own
- * checkout, so an `app-v*` tag only names a version, and `app:set` stamps it.
+ * No two may overlap, because the workflow triggers are `push: tags:
+ * [<prefix>*]` globs: `docs-v…` and `app-v…` do not match `v*`, and no line's
+ * tag matches another's glob — asserted in version.test.mjs and app.test.mjs.
+ * The app line has no workflow; an `app-v*` tag only names a version (see
+ * scripts/app.mjs).
  */
 export const CLI_TAG_PREFIX = 'v';
 export const DOCS_TAG_PREFIX = 'docs-v';

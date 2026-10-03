@@ -333,7 +333,7 @@ impl TokenStore {
     /// [`AuthError::StorageUnavailable`] for the keyring backend,
     /// [`AuthError::Store`] for an unreadable or unparsable file.
     pub fn load(&self) -> Result<Option<StoredSession>, AuthError> {
-        self.require_file_backend()?;
+        self.check_available()?;
 
         let path = self.path();
         let mut bytes = match std::fs::read(&path) {
@@ -383,7 +383,7 @@ impl TokenStore {
     /// [`AuthError::StorageUnavailable`] for the keyring backend, and
     /// [`AuthError::Store`] for any filesystem failure.
     pub fn save(&self, session: &StoredSession) -> Result<(), AuthError> {
-        self.require_file_backend()?;
+        self.check_available()?;
         self.ensure_dir()?;
 
         let wire = Wire::from_session(session);
@@ -442,21 +442,16 @@ impl TokenStore {
         })
     }
 
-    /// Whether this store's backend can be used at all in this build.
+    /// Refuses a backend this build cannot serve.
     ///
-    /// Call it before any work whose result this store will have to hold. A
-    /// login that only discovers it cannot save at the very end has already
-    /// sent the operator through a browser sign-in for nothing.
+    /// Public so a caller can ask before doing work whose result this store
+    /// will have to hold: a login that only discovers it cannot save at the very
+    /// end has already sent the operator through a browser sign-in for nothing.
     ///
     /// # Errors
     ///
     /// [`AuthError::StorageUnavailable`] for a backend this build cannot serve.
     pub fn check_available(&self) -> Result<(), AuthError> {
-        self.require_file_backend()
-    }
-
-    /// Refuses a backend this build cannot serve.
-    fn require_file_backend(&self) -> Result<(), AuthError> {
         match self.backend {
             StorageBackend::File => Ok(()),
             // Named rather than silently downgraded to a file: an operator who

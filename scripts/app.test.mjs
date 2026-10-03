@@ -6,7 +6,6 @@
 
 import assert from 'node:assert/strict';
 import { readdirSync, readFileSync } from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import test, { describe } from 'node:test';
 
@@ -24,7 +23,9 @@ import {
 } from './app.mjs';
 import {
   APP_TAG_PREFIX,
+  CLI_TAG_PREFIX,
   DEV_VERSION,
+  DOCS_TAG_PREFIX,
   planVersion,
   tagCreateArgs,
   tagGlob,
@@ -103,7 +104,9 @@ function harness(overrides = {}) {
       sleep: async () => {},
       interactive: overrides.interactive ?? true,
       prompt: overrides.prompt ?? (async () => ''),
-      root: os.tmpdir(),
+      // The repository, not a temporary directory: `set` resolves the version
+      // file against it, and the injected writeFile records rather than writes.
+      root: path.join(import.meta.dirname, '..'),
       readFile: () => overrides.source ?? COMMITTED,
       writeFile: (file, contents) => writes.push({ file, contents }),
     },
@@ -136,6 +139,18 @@ describe('the release line', () => {
     }
     assert.equal(tagMatchesGlob(tagGlob('v'), 'app-v2026.815.0'), false);
     assert.equal(tagMatchesGlob(tagGlob('docs-v'), 'app-v2026.815.0'), false);
+  });
+
+  test('no tag any of the three lines can produce matches another glob', () => {
+    const prefixes = [CLI_TAG_PREFIX, DOCS_TAG_PREFIX, APP_TAG_PREFIX];
+    const globs = prefixes.map(tagGlob);
+    for (const date of ['2026-01-05', '2026-08-15', '2026-10-01', '2026-12-31']) {
+      for (const prefix of prefixes) {
+        const { tag } = planVersion({ date, tags: [], tagPrefix: prefix });
+        const matches = globs.filter((g) => tagMatchesGlob(g, tag));
+        assert.deepEqual(matches, [tagGlob(prefix)], `${tag} matched ${matches.join(' and ')}`);
+      }
+    }
   });
 });
 
