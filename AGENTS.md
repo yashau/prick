@@ -20,12 +20,12 @@ renders the root `docs/` Markdown in place), and `action/` (the composite GitHub
 mise trust && mise run bootstrap
 ```
 
-Install **only** mise. It pins Rust, Node, pnpm, Vite+ and every dev tool. A system-wide install of
+Install **only** mise. It pins Rust, Node, pnpm and every dev tool. A system-wide install of
 any of them shadows the pinned version.
 
 ## Tasks
 
-`mise run <task>` is the entry point for everything. Invoking `cargo`, `pnpm`, `vp` or `wrangler`
+`mise run <task>` is the entry point for everything. Invoking `cargo`, `pnpm`, `oxlint`, `oxfmt` or `wrangler`
 directly bypasses the pins and the `TZ=UTC` every task sets — reach for a task first, and add one if
 none fits. `mise tasks` lists them all with descriptions.
 
@@ -57,9 +57,6 @@ anything. `build` is left out because `lint:rust` compiles every target already,
 | `build`         | CLI, Worker bundle and MCP server                                          | `build:rust`, `build:js`, `build:mcp`                                                                         |
 | `e2e`           | Playwright; `e2e:install` fetches the browsers first                       | `e2e:install`, `e2e:install:deps`                                                                             |
 | `version:check` | Every manifest carries the same version                                    | —                                                                                                             |
-
-`lint:js` splits further into `lint:js:app` and `lint:js:repo` — packages/app has to be linted from
-inside itself, because SvelteKit's plugin resolves `src/app.html` relative to the working directory.
 
 `e2e:install` downloads browser binaries and nothing else. `e2e:install:deps` installs the system
 libraries Chromium links against; it needs root, and CI deliberately does not run it, because the

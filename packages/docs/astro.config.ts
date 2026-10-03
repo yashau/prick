@@ -66,8 +66,6 @@ export default defineConfig({
       title: SITE_TITLE,
       description: `${SITE_TAGLINE} -- a self-hosted secrets manager that runs on one Cloudflare Worker and a D1 database.`,
 
-      tagline: SITE_TAGLINE,
-
       // The mark alone, with Starlight rendering `title` as text beside it.
       // `lockup.svg` bakes the wordmark into the artwork, which makes the site's
       // name an image: not selectable, not searchable, and fixed at one colour

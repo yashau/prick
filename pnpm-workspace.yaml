@@ -34,6 +34,12 @@ minimumReleaseAge: 4320
 minimumReleaseAgeExclude:
   - "@yashau/prick"
   - "@yashau/prick-*"
+  # TEMPORARY, added 2026-10-03 by explicit decision to land the SvelteKit 3
+  # migration before the cooldown elapsed. Both were published 2026-10-01
+  # 17:22 UTC and clear the 72 hours at 2026-10-04 17:22 UTC. DELETE THESE TWO
+  # LINES in the next change after that instant -- nothing else depends on them.
+  - "@sveltejs/kit@3.0.0"
+  - "@sveltejs/adapter-cloudflare@8.0.0"
 
 # -----------------------------------------------------------------------------
 # Refuse non-registry dependency specs (git://, github:, http(s) tarballs,
@@ -91,22 +97,23 @@ ignoredOptionalDependencies:
 # cannot drift onto different vitest majors, and a bump is a one-line diff here
 # instead of five.
 #
-# typescript is deliberately held at 5.9.x: @sveltejs/kit and svelte-check
-# declare `typescript: ^5.3.3 || ^6.0.0` as a peer, so TypeScript 7 (the native
-# port, current `latest`) is outside the supported range for this stack.
-# -----------------------------------------------------------------------------
+# typescript is deliberately held at 6.0.x. svelte-check, @astrojs/check and
+# @sveltejs/kit (2.x and 3.x) all cap their peer range at ^6, because they
+# drive the language-service API that TypeScript 7 (the native port, current
+# `latest`) does not expose. Checked 2026-10-03: `tsc` 7.0.2 passes clean on
+# packages/shared, packages/mcp and e2e, so the blocker is only those three
+# tools. Move the whole workspace at once when they support 7, rather than
+# splitting it across two compilers.
 #
-# vite-plus (CLI: `vp`) is pinned here as well as installed by mise. Pinning it
-# in the workspace keeps `pnpm run lint` / `fmt` working on a clone that has not
-# run `mise install` yet, and guarantees the two agree on a version. It vendors
-# vitest 4.1.10 exactly, which is why the vitest pin above must match it.
+# vitest is held on the 4.x line: @cloudflare/vitest-pool-workers has no Vitest
+# 5 release yet (cloudflare/workers-sdk#15618). The two move together.
+# -----------------------------------------------------------------------------
 catalog:
-  "@cloudflare/vitest-pool-workers": 0.21.1
-  typescript: 5.9.3
-  vite: 8.2.1
-  vite-plus: 0.2.9
-  vitest: 4.1.10
-  wrangler: 4.121.0
+  "@cloudflare/vitest-pool-workers": 0.22.0
+  typescript: 6.0.3
+  vite: 8.3.1
+  vitest: 4.1.11
+  wrangler: 4.145.0
 
 # -----------------------------------------------------------------------------
 # One upstream bug, patched here until it ships.
@@ -144,7 +151,7 @@ catalog:
 # and check.
 # -----------------------------------------------------------------------------
 patchedDependencies:
-  wrangler@4.121.0: patches/wrangler@4.121.0.patch
+  wrangler@4.145.0: patches/wrangler@4.145.0.patch
 
 # -----------------------------------------------------------------------------
 # Two advisories that upstream cannot hand us a release for.

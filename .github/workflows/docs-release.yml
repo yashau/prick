@@ -43,7 +43,7 @@ env:
   # the Cloudflare deploy credentials. Same pin as ci.yml and cli-release.yml,
   # and the same reasoning; the longer note is in ci.yml, and the three move
   # together.
-  PINNED_MISE_VERSION: "2026.8.14"
+  PINNED_MISE_VERSION: "2026.9.18"
 
   # The version is derived from the tag, in UTC like everything else.
   TZ: UTC

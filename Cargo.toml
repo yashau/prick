@@ -26,16 +26,16 @@ prick-auth = { path = "crates/prick-auth", version = "0.0.0-dev" }
 prick-core = { path = "crates/prick-core", version = "0.0.0-dev" }
 prick-exec = { path = "crates/prick-exec", version = "0.0.0-dev" }
 
-base64 = "0.22"
+base64 = "0.23"
 clap = { version = "4.5", features = ["derive", "env"] }
 clap_complete = "4.5"
-clap_mangen = "0.2"
+clap_mangen = "0.3"
 percent-encoding = "2.3"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-# default-features = false keeps the `asm` feature (and its cc/FFI build) off.
+# default-features = false keeps sha2 to the bare hash: no `alloc`, no `oid`.
 # prick-core must stay FFI-free so `cargo miri test -p prick-core` is meaningful.
-sha2 = { version = "0.10", default-features = false, features = ["std"] }
+sha2 = { version = "0.11", default-features = false }
 thiserror = "2"
 
 # --- impure crates only -----------------------------------------------------
@@ -49,8 +49,14 @@ thiserror = "2"
 # `openssl-sys`, whose aarch64-musl cross build is the worst part of Rust
 # release engineering), and it keeps rustls off `aws-lc-rs`, whose cmake/C
 # build would put a compiler toolchain on the critical path for every target.
-reqwest = { version = "0.12", default-features = false, features = [
-  "rustls-tls-manual-roots",
+#
+# `rustls-no-provider`, NOT `rustls`: since reqwest 0.13 the plain `rustls`
+# feature turns on aws-lc-rs. The provider is ring, installed and configured by
+# prick-api's `tls::client_config` and handed over with
+# `use_preconfigured_tls`, so reqwest never chooses one of its own.
+reqwest = { version = "0.13", default-features = false, features = [
+  "rustls-no-provider",
+  "form",
   "charset",
   "http2",
   "json",
@@ -80,7 +86,7 @@ tokio = { version = "1", default-features = false, features = [
 
 secrecy = { version = "0.10", features = ["serde"] }
 zeroize = "1"
-getrandom = "0.3"
+getrandom = "0.4"
 open = "5"
 # Reads the terminal device directly, so a masked prompt and a piped --stdin
 # never contend for the same stream.

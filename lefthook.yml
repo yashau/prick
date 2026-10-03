@@ -35,7 +35,7 @@ pre-commit:
       run: rustfmt --edition 2024 {staged_files}
       stage_fixed: true
 
-    # No `svelte` in this glob. `vp fmt` is Oxfmt, which has no Svelte support:
+    # No `svelte` in this glob. Oxfmt has no Svelte support:
     # hand it a .svelte file and it drops it silently, so the glob was promising
     # a formatter that never ran. Harmless on a mixed commit, fatal on a commit
     # that stages ONLY .svelte files -- every path gets excluded, Oxfmt finds no
@@ -44,37 +44,18 @@ pre-commit:
     #     Expected at least one target file. All matched files may have been
     #     excluded by ignore rules.
     #
-    # Same failure mode as lint-js-app below, found the same way: the hook was
+    # Found the hard way: the hook was
     # broken for a whole class of commits, and which class depended on what you
     # staged. .svelte files are formatted by nothing in this repository at
     # present; listing them here did not change that, it only hid it.
     - name: fmt-js
       glob: "*.{js,mjs,cjs,ts,mts,cts,jsx,tsx,json,jsonc,json5,css,md,yml,yaml,html}"
-      run: vp fmt {staged_files}
+      run: oxfmt {staged_files}
       stage_fixed: true
 
-    # Split in two for the same reason `lint:js` is -- see `lint:js:app` in
-    # mise.toml. Oxlint resolves vite configs through its own path and walks
-    # into `packages/app/vite.config.ts`, whose SvelteKit plugin resolves
-    # `src/app.html` relative to the CURRENT DIRECTORY and aborts before linting
-    # anything. The root `vite.config.ts` short-circuits that for `vp fmt`, but
-    # not for oxlint.
-    #
-    # A single `vp lint {staged_files}` at the root therefore fails outright the
-    # moment a commit stages only files under packages/app -- which is exactly
-    # how this was found, on a one-file commit. It had been passing on mixed
-    # commits, where oxlint happened to resolve the root config instead, so the
-    # hook was broken for months in a way that depended on what you staged.
-    - name: lint-js-app
-      root: "packages/app/"
+    - name: lint-js
       glob: "*.{js,mjs,cjs,ts,mts,cts,jsx,tsx,svelte}"
-      run: vp lint {staged_files}
-
-    - name: lint-js-repo
-      glob: "*.{js,mjs,cjs,ts,mts,cts,jsx,tsx,svelte}"
-      exclude:
-        - "packages/app/**"
-      run: vp lint {staged_files}
+      run: oxlint {staged_files}
 
     # `--force-exclude` because this job names paths EXPLICITLY. Without it,
     # typos honours `_typos.toml`'s `extend-exclude` only for files it

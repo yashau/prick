@@ -30,13 +30,13 @@ env:
   # Read by every mise-action call site below, so there is one string to bump
   # rather than ten to keep in step.
   #
-  # NOT the newest release, deliberately. 2026.8.14 is the newest that has
+  # NOT the newest release, deliberately. 2026.9.18 is the newest that has
   # cleared the same 72-hour cooldown `pnpm-workspace.yaml` applies to every npm
   # dependency (`minimumReleaseAge: 4320`), and the argument recorded there is
   # the argument here: a malicious release is almost always spotted and pulled
   # inside three days, so declining to run one younger than that turns most of
   # those incidents into a non-event. Bump this to whatever is three days old.
-  PINNED_MISE_VERSION: "2026.8.14"
+  PINNED_MISE_VERSION: "2026.9.18"
 
   # Incremental artefacts are large, never reused across CI runs, and poison the
   # cache with several hundred MB of dead weight.
@@ -116,13 +116,11 @@ jobs:
               - 'pnpm-workspace.yaml'
               - 'packages/**'
               # The two ROOT files that govern the whole JS workspace rather
-              # than one package, and so were being missed: `vp lint`, `vp fmt`
-              # and `vp test` are invoked from the root and read the root
-              # `vite.config.ts` (without it `vp` walks the workspace and loads
-              # packages/app's config with the wrong cwd -- see the header of
-              # that file), and every package tsconfig extends
-              # `tsconfig.base.json`, so it governs `mise run typecheck`.
-              - 'vite.config.ts'
+              # than one package, and so were being missed: `oxfmt` runs from
+              # the root and reads the root `.oxfmtrc.jsonc`, and every package
+              # tsconfig extends `tsconfig.base.json`, so it governs
+              # `mise run typecheck`.
+              - '.oxfmtrc.jsonc'
               - 'tsconfig.base.json'
               # `js-check` runs `test:scripts` and `test:action`, which live
               # here rather than under `packages/`. `action/**` matched no

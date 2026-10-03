@@ -52,16 +52,16 @@ The documentation Markdown lives at the repository root in `docs/` and is read *
 
 `mise tasks` lists everything. The ones you will use:
 
-| Task                     | Does                                                                          |
-| ------------------------ | ----------------------------------------------------------------------------- |
-| `mise run dev`           | Worker + UI dev server                                                        |
-| `mise run test`          | Rust, doc, Worker, script, action and MCP suites                              |
-| `mise run lint`          | clippy, `vp lint`, svelte-check, actionlint, zizmor, pinact, typos, file size |
-| `mise run fmt`           | format everything in place                                                    |
-| `mise run openapi:check` | fail if `docs/openapi.json` is stale                                          |
-| `mise run docs:dev`      | the documentation site, with hot reload                                       |
-| `mise run e2e`           | Playwright                                                                    |
-| `mise run ci`            | **exact mirror of CI** — run before opening a PR                              |
+| Task                     | Does                                                                       |
+| ------------------------ | -------------------------------------------------------------------------- |
+| `mise run dev`           | Worker + UI dev server                                                     |
+| `mise run test`          | Rust, doc, Worker, script, action and MCP suites                           |
+| `mise run lint`          | clippy, Oxlint, svelte-check, actionlint, zizmor, pinact, typos, file size |
+| `mise run fmt`           | format everything in place                                                 |
+| `mise run openapi:check` | fail if `docs/openapi.json` is stale                                       |
+| `mise run docs:dev`      | the documentation site, with hot reload                                    |
+| `mise run e2e`           | Playwright                                                                 |
+| `mise run ci`            | **exact mirror of CI** — run before opening a PR                           |
 
 `docs/openapi.json` is generated from the Hono router by `mise run openapi`. Never hand-edit it; if
 you changed a route, regenerate it in the same commit.
