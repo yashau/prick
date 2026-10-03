@@ -510,8 +510,6 @@ fn respond(mut stream: &TcpStream, status: u16, body: &str) {
 
 #[cfg(test)]
 mod tests {
-    use std::io::Read as _;
-
     use super::*;
 
     #[test]
