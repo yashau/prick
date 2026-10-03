@@ -104,7 +104,7 @@ interface Cursor {
 }
 
 export function parseDotenv(source: string): DotenvDocument {
-  // A UTF-8 BOM in front of the first key turns `KEY` into `﻿KEY`, which
+  // A UTF-8 BOM in front of the first key turns `KEY` into `\uFEFFKEY`, which
   // then fails the POSIX name check with a message about an invalid character
   // that is invisible in every editor.
   const text = source.charCodeAt(0) === 0xfeff ? source.slice(1) : source;

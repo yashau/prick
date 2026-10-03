@@ -50,7 +50,7 @@ mod tests {
 
     #[test]
     fn the_version_is_never_empty() {
-        assert!(!VERSION.is_empty());
+        assert_ne!(VERSION, "");
     }
 
     #[test]

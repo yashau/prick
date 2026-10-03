@@ -336,7 +336,7 @@ mod tests {
             TokenSource::CloudflaredEnvironment,
             TokenSource::Stored,
         ] {
-            assert!(!source.as_str().is_empty());
+            assert_ne!(source.as_str(), "");
         }
         assert!(TokenSource::CloudflaredEnvironment.as_str().contains("CF_ACCESS_CLIENT_ID"));
     }

@@ -78,7 +78,7 @@ mod tests {
 
     #[test]
     fn an_anonymous_request_carries_no_credential_headers() {
-        assert!(Credential::Anonymous.headers().is_empty());
+        assert_eq!(Credential::Anonymous.headers(), Vec::<(&str, String)>::new());
         assert!(!Credential::Anonymous.is_present());
     }
 

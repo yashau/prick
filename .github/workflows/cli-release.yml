@@ -66,9 +66,9 @@ env:
   # pin, and the three move together.
   #
   # NOT the newest release, deliberately -- see the longer note in ci.yml.
-  # 2026.8.14 is the newest that has cleared the 72-hour cooldown
+  # 2026.9.18 is the newest that has cleared the 72-hour cooldown
   # `pnpm-workspace.yaml` applies to every npm dependency.
-  PINNED_MISE_VERSION: "2026.8.14"
+  PINNED_MISE_VERSION: "2026.9.18"
 
   CARGO_INCREMENTAL: "0"
   CARGO_TERM_COLOR: always

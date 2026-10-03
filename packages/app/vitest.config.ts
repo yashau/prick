@@ -48,10 +48,6 @@ export default defineConfig({
   plugins: [
     cloudflareTest({
       main: "./src/lib/server/http/test-entry.ts",
-      // One isolate for the whole run: fixtures are seeded per test and
-      // cross-worker isolation would only buy parallelism this suite does not
-      // need yet.
-      singleWorker: true,
       miniflare: {
         compatibilityDate: "2026-08-01",
         compatibilityFlags: ["nodejs_compat"],
@@ -86,12 +82,12 @@ export default defineConfig({
      * 20 s rather than Vitest's 5 s default, and this is a correctness fix
      * rather than a comfort setting.
      *
-     * `singleWorker: true` above puts every test in ONE workerd isolate, while
-     * Vitest still runs the test FILES in parallel. So the route-matrix tests --
+     * Vitest runs the test FILES in parallel, so the route-matrix tests --
      * `authentication.test.ts`'s "is a 401 on every authenticated route" and
      * `permissions.test.ts`'s per-actor matrix, each issuing dozens of requests
-     * in a loop -- queue behind every other file's requests at that one isolate.
-     * Their wall-clock scales with the size of the route table and with whatever
+     * in a loop -- compete with every other file for the machine. (An earlier
+     * `singleWorker: true` claimed one shared isolate; the pool has ignored that
+     * option since its Vitest 4 line, and it is gone.) Their wall-clock scales with the size of the route table and with whatever
      * else is running, neither of which says anything about whether the code is
      * right.
      *

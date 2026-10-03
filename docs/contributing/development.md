@@ -25,7 +25,7 @@ mise run bootstrap
 mise run dev
 ```
 
-`mise.toml` pins exact versions of Rust, Node, pnpm, Vite+ and every dev tool. A
+`mise.toml` pins exact versions of Rust, Node, pnpm and every dev tool. A
 system-wide install of any of them shadows the pinned one, and you will spend an
 afternoon debugging a problem nobody else has.
 
@@ -69,22 +69,22 @@ for a Windows contributor. Node is guaranteed present because mise installed it.
 
 `mise tasks` lists everything. The ones you will use:
 
-| Task                     | Does                                                                          |
-| ------------------------ | ----------------------------------------------------------------------------- |
-| `mise run dev`           | Worker + UI dev server                                                        |
-| `mise run demo`          | A signed-in, seeded copy of the app, for browsing                             |
-| `mise run fmt`           | Format everything in place                                                    |
-| `mise run lint`          | clippy, `vp lint`, svelte-check, actionlint, zizmor, pinact, typos, file size |
-| `mise run typecheck`     | TypeScript across the workspace                                               |
-| `mise run test`          | Rust, doc, Worker, script, action and MCP suites                              |
-| `mise run openapi`       | Regenerate `docs/openapi.json` from the Hono router                           |
-| `mise run openapi:check` | Fail if `docs/openapi.json` is stale                                          |
-| `mise run miri`          | The purity proof for `prick-core`                                             |
-| `mise run e2e`           | Playwright                                                                    |
-| `mise run build`         | CLI, Worker bundle and MCP server                                             |
-| `mise run docs:dev`      | The documentation site, with hot reload                                       |
-| `mise run deny`          | Licences, bans, advisories, the git-source ban                                |
-| `mise run ci`            | **A superset of CI.** Run before opening a pull request                       |
+| Task                     | Does                                                                       |
+| ------------------------ | -------------------------------------------------------------------------- |
+| `mise run dev`           | Worker + UI dev server                                                     |
+| `mise run demo`          | A signed-in, seeded copy of the app, for browsing                          |
+| `mise run fmt`           | Format everything in place                                                 |
+| `mise run lint`          | clippy, Oxlint, svelte-check, actionlint, zizmor, pinact, typos, file size |
+| `mise run typecheck`     | TypeScript across the workspace                                            |
+| `mise run test`          | Rust, doc, Worker, script, action and MCP suites                           |
+| `mise run openapi`       | Regenerate `docs/openapi.json` from the Hono router                        |
+| `mise run openapi:check` | Fail if `docs/openapi.json` is stale                                       |
+| `mise run miri`          | The purity proof for `prick-core`                                          |
+| `mise run e2e`           | Playwright                                                                 |
+| `mise run build`         | CLI, Worker bundle and MCP server                                          |
+| `mise run docs:dev`      | The documentation site, with hot reload                                    |
+| `mise run deny`          | Licences, bans, advisories, the git-source ban                             |
+| `mise run ci`            | **A superset of CI.** Run before opening a pull request                    |
 
 `depends` fans out in parallel, and `sources`/`outputs` give content-hash
 skipping, so a repeat run is cheap.
@@ -104,18 +104,14 @@ the demo server as the cause.
 
 ## Who owns what
 
-| Owns         | Scope                                                                                         |
-| ------------ | --------------------------------------------------------------------------------------------- |
-| mise         | Rust, Node, pnpm, the Rust dev tools, and Vite+ itself. The only thing a contributor installs |
-| Vite+ (`vp`) | The JS-side workflow for `packages/**` only                                                   |
-| pnpm         | Package management. `vp` wraps whatever the lockfile indicates                                |
+| Owns           | Scope                                                                               |
+| -------------- | ----------------------------------------------------------------------------------- |
+| mise           | Rust, Node, pnpm and the Rust dev tools. The only thing a contributor installs      |
+| pnpm           | Package management, and the JS tools below, pinned in the root `package.json`       |
+| Oxlint / Oxfmt | Linting and formatting on the JS side. Formatting is configured in `.oxfmtrc.jsonc` |
 
-`vp env` is never used. mise pins Node, and two version managers fighting over it
-is the exact failure mode mise was chosen to prevent.
-
-Because Vite+ is built on Oxc, `vp lint` and `vp fmt` replace standalone linters
-and formatters on the JS side. Keeping both would mean two configs that can
-silently disagree.
+One linter and one formatter on the JS side, both from Oxc. Adding ESLint or
+Prettier alongside them would mean two configs that can silently disagree.
 
 ## Rules enforced by tooling
 

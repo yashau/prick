@@ -87,7 +87,6 @@
         "@cloudflare/**",
         "@vitest/**",
         "vite",
-        "vite-plus",
       ],
       groupName: "cloudflare and vitest toolchain",
       // Never let a patch bump of one member slip through on its own.

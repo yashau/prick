@@ -9,7 +9,7 @@
 
     // `isolatedModules` + `verbatimModuleSyntax` are what make the source
     // transpilable file-by-file. Every bundler in this repo (Vite, esbuild via
-    // vitest-pool-workers, oxc via vite-plus) does exactly that, so anything
+    // vitest-pool-workers) does exactly that, so anything
     // requiring whole-program knowledge to emit correctly is a latent bug.
     "isolatedModules": true,
     "verbatimModuleSyntax": true,

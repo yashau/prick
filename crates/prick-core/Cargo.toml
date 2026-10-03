@@ -18,10 +18,11 @@ authors.workspace = true
 #
 # Known caveat, verified with
 #   cargo tree -p prick-core -e normal --target <triple> -i libc
-# On aarch64-linux ONLY, sha2 pulls cpufeatures, which pulls libc for a single
-# getauxval call to read HWCAP. No other target family has it, and miri runs on
-# x86_64-linux where the tree is genuinely FFI-free. Re-check this if the sha2
-# major version moves.
+# sha2 pulls cpufeatures, which pulls libc on aarch64 ONLY (linux, android and
+# apple), to read the CPU feature bits from the OS. No other target family has
+# it, and miri runs on x86_64-linux where the tree is genuinely FFI-free --
+# cpufeatures has an explicit cfg(miri) path there. Last re-checked for sha2
+# 0.11 / cpufeatures 0.3; re-check this if either major version moves.
 [dependencies]
 base64 = { workspace = true }
 percent-encoding = { workspace = true }

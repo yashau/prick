@@ -52,56 +52,46 @@ output = "prefix"
 # (~1 GB). Release builds add their target in the workflow, on the one runner
 # that needs it.
 [tools]
-node = "26.7.0"
-pnpm = "11.21.0"
+node = "26.10.0"
+pnpm = "12.8.2"
 
 # Stable does the work; the date-pinned nightly exists only to carry miri.
 # Pinning the date keeps the miri job from breaking on unrelated PRs when a
 # rolling nightly regresses. `rust-src` is required by `cargo miri setup`.
 rust = [
-  { version = "1.97.1", components = [
+  { version = "1.99.0", components = [
     "rustfmt",
     "clippy",
   ] },
-  { version = "nightly-2026-08-01", components = [
+  { version = "nightly-2026-09-29", components = [
     "miri",
     "rust-src",
   ], profile = "minimal" },
 ]
 
-# Vite Plus (CLI `vp`) owns the JS-side workflow: lint, fmt, check, test, build.
-# It is installed by mise, NOT by its curl installer. `vp env` is never used —
-# mise owns Node, and two version managers fighting over it is the exact failure
-# mode this file exists to prevent.
-#
-# vp ships no tools of its own (`vp --version` reports vite/oxlint/oxfmt/vitest
-# as "Not found" until they are in node_modules), so every vp task below waits
-# for bootstrap:js.
-"npm:vite-plus" = "0.2.9"
-
 # Dev tools use the `aqua:` backend: prebuilt, checksum-verified binaries with
 # real Windows support. `cargo:` would compile each of these from source on
 # every fresh Windows clone.
 "aqua:EmbarkStudios/cargo-deny" = "0.20.2"
-"aqua:nextest-rs/nextest/cargo-nextest" = "0.9.143"
+"aqua:nextest-rs/nextest/cargo-nextest" = "0.9.146"
 "aqua:rustsec/rustsec/cargo-audit" = "0.22.2"
-"aqua:crate-ci/typos" = "1.49.0"
+"aqua:crate-ci/typos" = "1.50.3"
 "aqua:rhysd/actionlint" = "1.7.12"
-"aqua:zizmorcore/zizmor" = "1.29.0"
-"aqua:suzuki-shunsuke/pinact" = "4.1.1"
-"aqua:evilmartians/lefthook" = "2.1.10"
+"aqua:zizmorcore/zizmor" = "1.30.1"
+"aqua:suzuki-shunsuke/pinact" = "5.0.0"
+"aqua:evilmartians/lefthook" = "2.1.15"
 
 # The GitHub CLI. Cutting a release needs only git — the tag push is the trigger
 # — but `cli:status`, `docs:status` and `cli:dry` all go through gh, so a
 # contributor without it cannot watch or rehearse a release. Pin it rather than
 # assume it.
-"aqua:cli/cli" = "2.97.0"
+"aqua:cli/cli" = "2.102.0"
 
 # cargo-auditable embeds the dependency list inside the binary so
 # `cargo audit bin ./prk` works on a shipped artefact with no side-car SBOM.
 # It has no aqua package; the cargo backend uses cargo-binstall by default, so
 # this still resolves to a prebuilt release binary rather than a source build.
-"cargo:cargo-auditable" = "0.7.5"
+"cargo:cargo-auditable" = "0.7.6"
 
 # ---------------------------------------------------------------------------
 # ENVIRONMENT
@@ -157,8 +147,8 @@ description = "rustfmt the cargo workspace"
 run = "cargo fmt --all"
 
 [tasks."fmt:js"]
-description = "Format the JS/Svelte workspace (vp fmt, Oxfmt-based)"
-run = "vp fmt --write"
+description = "Format the JS workspace with Oxfmt"
+run = "oxfmt"
 wait_for = ["bootstrap:js"]
 
 [tasks."fmt:check"]
@@ -170,15 +160,15 @@ description = "rustfmt --check"
 run = "cargo fmt --all --check"
 
 [tasks."fmt:check:js"]
-description = "vp fmt --check"
-run = "vp fmt --check"
+description = "oxfmt --check"
+run = "oxfmt --check"
 wait_for = ["bootstrap:js"]
 
 # ---------------------------------------------------------------------------
 # LINT — pure fan-out, every leaf individually runnable
 # ---------------------------------------------------------------------------
 [tasks.lint]
-description = "Every linter: clippy, vp lint, svelte-check, astro check, actionlint, zizmor, pinact, typos, file size"
+description = "Every linter: clippy, oxlint, svelte-check, astro check, actionlint, zizmor, pinact, typos, file size"
 depends = [
   "lint:rust",
   "lint:js",
@@ -191,41 +181,21 @@ depends = [
   "lint:loc",
 ]
 
-[tasks."lint:js:app"]
-description = "vp lint over packages/app, from inside packages/app"
-# `-C` is load-bearing. SvelteKit's plugin resolves `src/app.html` relative to
-# the CURRENT DIRECTORY, so loading packages/app/vite.config.ts from the repo
-# root aborts before a single file is linted. The root vite.config.ts
-# short-circuits that discovery for `vp fmt`, but oxlint resolves vite configs
-# through its own path and still walks into the nested one.
-run = "vp -C packages/app lint --deny-warnings"
-wait_for = ["bootstrap:js"]
-
-[tasks."lint:js:repo"]
-description = "vp lint over everything outside packages/app"
-# Explicit paths rather than a bare `vp lint`, for the same reason as above: a
-# bare invocation at the root rediscovers packages/app/vite.config.ts and dies.
-# Naming the directories also means a new top-level package is linted only once
-# somebody adds it here, which is a visible decision rather than a silent gap.
-# The same two commands are duplicated in the root package.json `lint` script,
-# which exists so a clone that has not run `mise install` still has a working
-# gate (see the catalog note in pnpm-workspace.yaml). A new package has to be
-# added in BOTH places, or one of the two entry points silently skips it.
-run = "vp lint --deny-warnings scripts action packages/mcp packages/shared packages/docs e2e"
-wait_for = ["bootstrap:js"]
-
 [tasks."lint:rust"]
 description = "clippy over the whole workspace, warnings are errors"
 run = "cargo clippy --workspace --all-targets --all-features --locked -- -D warnings"
 
 [tasks."lint:js"]
-description = "vp lint (Oxlint) across the workspace; replaces a standalone oxlint invocation"
-# Split in two because packages/app must be linted from its own directory --
-# see lint:js:app. A single bare `vp lint` at the root cannot work.
-depends = ["lint:js:app", "lint:js:repo"]
+description = "Oxlint across the JS workspace, warnings are errors"
+# Explicit paths rather than a bare `oxlint`: a new top-level package is linted
+# only once somebody adds it here, which is a visible decision rather than a
+# silent gap. The same command is the root package.json `lint` script; a new
+# package has to be added in BOTH places, or one entry point silently skips it.
+run = "oxlint --deny-warnings packages/app scripts action packages/mcp packages/shared packages/docs e2e"
+wait_for = ["bootstrap:js"]
 
 [tasks."lint:svelte"]
-description = "svelte-check — neither vp lint nor tsc typechecks .svelte files"
+description = "svelte-check — neither oxlint nor tsc typechecks .svelte files"
 # Delegated to the package script because it must run `svelte-kit sync` first,
 # which is two commands and therefore not a legal task body here.
 # Deliberately overlaps with `typecheck` (which fans out to the same script
@@ -311,14 +281,9 @@ run = "typos"
 # ---------------------------------------------------------------------------
 [tasks.typecheck]
 description = "TypeScript typecheck across the workspace"
-# NOT `vp check`. Verified against vp 0.2.9: plain `vp check` is fmt + lint +
-# typecheck, so it would duplicate fmt:check:js and lint:js inside `ci`; and
-# narrowing it with `vp check --no-fmt --no-lint` exits non-zero with
-# "No checks enabled" unless `lint.options.typeCheck` is set in vite.config.ts,
-# which nothing in this repo sets. Delegating to each package's own `typecheck`
-# script runs svelte-check for packages/app and tsc --noEmit for e2e today, and
-# picks up new packages automatically. Revisit if Vite+ gains a typecheck-only
-# subcommand.
+# Delegating to each package's own `typecheck` script runs svelte-check for
+# packages/app and tsc --noEmit for e2e today, and picks up new packages
+# automatically.
 run = "pnpm --recursive --if-present run typecheck"
 wait_for = ["bootstrap:js"]
 
@@ -338,15 +303,12 @@ description = "Doc tests — nextest cannot run these, so they need their own pa
 run = "cargo test --workspace --doc --locked"
 
 [tasks."test:js"]
-description = "vp test — Vitest against packages/app (vitest-pool-workers)"
-# Scoped with -C, verified against vp 0.2.9 for two reasons: at the workspace
-# root vp hands Vitest the whole tree, which sweeps up scripts/*.test.mjs (those
-# are node:test files, owned by test:scripts); and e2e's own `test` script is
-# Playwright, which must not run here.
-# `run` is explicit rather than relying on vp's run-once default.
-# Fallback if vitest-pool-workers turns out not to work under vp: replace with
-# `pnpm --dir packages/app run test` — a one-line swap.
-run = "vp -C packages/app test run"
+description = "Vitest against packages/app (vitest-pool-workers)"
+# Scoped to packages/app for two reasons: at the workspace root Vitest would
+# sweep up scripts/*.test.mjs (those are node:test files, owned by
+# test:scripts); and e2e's own `test` script is Playwright, which must not run
+# here. The package script is `vitest run`, never watch mode.
+run = "pnpm --dir packages/app run test"
 wait_for = ["bootstrap:js"]
 
 [tasks."test:scripts"]
@@ -386,7 +348,7 @@ wait_for = ["bootstrap:js"]
 description = "Machine-checked proof that prick-core is pure (no I/O, no unsafe)"
 # The pinned nightly is activated for this task only, so `cargo` stays stable
 # everywhere else.
-tools = { rust = "nightly-2026-08-01" }
+tools = { rust = "nightly-2026-09-29" }
 env = { MIRIFLAGS = "-Zmiri-strict-provenance" }
 run = "cargo miri nextest run --package prick-core"
 
@@ -474,12 +436,8 @@ description = "cargo build --release for the host target"
 run = "cargo build --workspace --release --locked"
 
 [tasks."build:js"]
-description = "vp build — the SvelteKit + adapter-cloudflare Worker bundle"
-# Scoped with -C because vp 0.2.9 refuses to build at the workspace root:
-# "`vp build` at the workspace root needs a target package."
-# Fallback if vp does not drive the SvelteKit build: replace with
-# `pnpm --dir packages/app run build` — a one-line swap.
-run = "vp -C packages/app build"
+description = "vite build — the SvelteKit + adapter-cloudflare Worker bundle"
+run = "pnpm --dir packages/app run build"
 wait_for = ["bootstrap:js"]
 
 [tasks."build:dist"]

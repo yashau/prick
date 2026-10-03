@@ -681,7 +681,10 @@ fn a_query_parameter_name_matches_exactly_or_not_at_all() {
         );
     }
 
-    assert!(check_query(&operation, &[("reason".to_owned(), "run".to_owned())]).is_empty());
+    assert_eq!(
+        check_query(&operation, &[("reason".to_owned(), "run".to_owned())]),
+        Vec::<String>::new()
+    );
 }
 
 // ---------------------------------------------------------------------------

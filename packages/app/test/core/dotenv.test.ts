@@ -57,7 +57,7 @@ describe("the basic forms", () => {
   });
 
   it("strips a UTF-8 BOM", () => {
-    // Without this the first key is `﻿FOO`, which fails the name check
+    // Without this the first key is `\uFEFFFOO`, which fails the name check
     // with a complaint about a character that is invisible in every editor.
     expect(parse("﻿FOO=bar")).toEqual({ FOO: "bar" });
   });

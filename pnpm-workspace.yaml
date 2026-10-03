@@ -91,22 +91,23 @@ ignoredOptionalDependencies:
 # cannot drift onto different vitest majors, and a bump is a one-line diff here
 # instead of five.
 #
-# typescript is deliberately held at 5.9.x: @sveltejs/kit and svelte-check
-# declare `typescript: ^5.3.3 || ^6.0.0` as a peer, so TypeScript 7 (the native
-# port, current `latest`) is outside the supported range for this stack.
-# -----------------------------------------------------------------------------
+# typescript is deliberately held at 6.0.x. svelte-check, @astrojs/check and
+# @sveltejs/kit (2.x and 3.x) all cap their peer range at ^6, because they
+# drive the language-service API that TypeScript 7 (the native port, current
+# `latest`) does not expose. Checked 2026-10-03: `tsc` 7.0.2 passes clean on
+# packages/shared, packages/mcp and e2e, so the blocker is only those three
+# tools. Move the whole workspace at once when they support 7, rather than
+# splitting it across two compilers.
 #
-# vite-plus (CLI: `vp`) is pinned here as well as installed by mise. Pinning it
-# in the workspace keeps `pnpm run lint` / `fmt` working on a clone that has not
-# run `mise install` yet, and guarantees the two agree on a version. It vendors
-# vitest 4.1.10 exactly, which is why the vitest pin above must match it.
+# vitest is held on the 4.x line: @cloudflare/vitest-pool-workers has no Vitest
+# 5 release yet (cloudflare/workers-sdk#15618). The two move together.
+# -----------------------------------------------------------------------------
 catalog:
-  "@cloudflare/vitest-pool-workers": 0.21.1
-  typescript: 5.9.3
-  vite: 8.2.1
-  vite-plus: 0.2.9
-  vitest: 4.1.10
-  wrangler: 4.121.0
+  "@cloudflare/vitest-pool-workers": 0.22.0
+  typescript: 6.0.3
+  vite: 8.3.1
+  vitest: 4.1.11
+  wrangler: 4.145.0
 
 # -----------------------------------------------------------------------------
 # One upstream bug, patched here until it ships.
@@ -144,20 +145,20 @@ catalog:
 # and check.
 # -----------------------------------------------------------------------------
 patchedDependencies:
-  wrangler@4.121.0: patches/wrangler@4.121.0.patch
+  wrangler@4.145.0: patches/wrangler@4.145.0.patch
 
 # -----------------------------------------------------------------------------
-# Two advisories that upstream cannot hand us a release for.
+# Advisories that upstream cannot hand us a release for.
 #
-# Both reach us transitively, and in both cases the direct dependent's own
+# All reach us transitively, and in every case the direct dependent's own
 # latest release still resolves the vulnerable version -- so there is nothing to
 # bump. A range selector applies the correction only to a resolution that is
 # actually in the advisory's range: when the graph stops producing one, the
 # entry stops matching and can be deleted.
 #
 # Each target version is one ALREADY IN THE LOCKFILE for another consumer, so
-# both entries deduplicate onto an existing copy rather than adding one, and
-# neither is subject to the `minimumReleaseAge` cooldown above.
+# every entry deduplicates onto an existing copy rather than adding one, and
+# none is subject to the `minimumReleaseAge` cooldown above.
 #
 #   cookie <0.7.0 -- GHSA-pxg6-pf52-xh8x
 #     `serialize()` does not reject out-of-bounds characters in the cookie name,
@@ -165,7 +166,7 @@ patchedDependencies:
 #     field with `;` and append attributes of its choosing to the Set-Cookie
 #     header -- `Domain`, or an `Expires` in the past that deletes a different
 #     cookie. It arrives through `@sveltejs/kit`, which still declares
-#     `cookie: ^0.6.0` as of 2.70.3. This is the one of the two that SHIPS: the
+#     `cookie: ^0.6.0` as of 2.70.3. This is the only one that SHIPS: the
 #     Worker bundle contains Kit's runtime, and Kit's runtime contains cookie.
 #     0.7.2 only tightens validation; the parse/serialize signatures are
 #     unchanged.
@@ -180,7 +181,19 @@ patchedDependencies:
 #     `tsx` and will not be released again, so the pin is permanent and only an
 #     override moves it. drizzle-kit's own direct dependency is already 0.25.12;
 #     this collapses the stale second copy onto it.
+#
+#   undici >=7.0.0 <7.29.1 -- GHSA-* (DoS via WebSocket subprotocol, TLS
+#   validation bypass in BalancedPool, and seven lower-severity advisories)
+#   sharp <0.35.4 -- GHSA-g89c-p67h-r497, GHSA-2jg2-4ch7-h545 (libheif)
+#     Test tooling only. @cloudflare/vitest-pool-workers 0.22.0 pins its OWN
+#     wrangler and miniflare (4.124 / 5.20260815), whose undici and sharp are
+#     older than the top-level wrangler's. Neither ships: miniflare is the
+#     local runtime the Worker suite runs in. Both targets are the versions the
+#     top-level wrangler 4.145.0 already resolves. Delete these two once a
+#     vitest-pool-workers release depends on a current miniflare.
 # -----------------------------------------------------------------------------
 overrides:
   "cookie@<0.7.0": "0.7.2"
   "esbuild@<0.25.0": "0.25.12"
+  "undici@>=7.0.0 <7.29.1": "7.29.1"
+  "sharp@<0.35.4": "0.35.4"

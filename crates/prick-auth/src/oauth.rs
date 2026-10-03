@@ -836,7 +836,7 @@ mod tests {
     fn a_server_offering_nothing_we_want_produces_no_scope_parameter() {
         let mut server = server();
         server.scopes_supported = Some(vec!["something_else".to_owned()]);
-        assert!(scopes_for(&server).is_empty());
+        assert_eq!(scopes_for(&server), Vec::<String>::new());
 
         let url = authorization_url(&server, "c", "http://127.0.0.1:1/callback", "ch", "st", None)
             .expect("a URL");

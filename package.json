@@ -8,21 +8,22 @@
     "build": "pnpm --filter @prick/app run build",
     "typecheck": "pnpm -r run typecheck",
     "check": "pnpm run fmt:check && pnpm run lint && pnpm run typecheck",
-    "lint": "vp -C packages/app lint --deny-warnings && vp lint --deny-warnings scripts action packages/mcp packages/shared packages/docs e2e",
-    "fmt": "vp fmt",
-    "fmt:check": "vp fmt --check",
+    "lint": "oxlint --deny-warnings packages/app scripts action packages/mcp packages/shared packages/docs e2e",
+    "fmt": "oxfmt",
+    "fmt:check": "oxfmt --check",
     "test": "pnpm -r run test",
     "e2e": "pnpm --filter @prick/e2e run test",
     "cf-typegen": "pnpm --filter @prick/app run cf-typegen",
     "deploy:dry-run": "pnpm --filter @prick/app run deploy:dry-run"
   },
   "devDependencies": {
-    "@types/node": "^26.2.0",
-    "typescript": "catalog:",
-    "vite-plus": "catalog:"
+    "@types/node": "^26.6.3",
+    "oxfmt": "0.71.0",
+    "oxlint": "1.86.0",
+    "typescript": "catalog:"
   },
   "engines": {
     "node": ">=26"
   },
-  "packageManager": "pnpm@11.21.0"
+  "packageManager": "pnpm@12.8.2"
 }

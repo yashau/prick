@@ -597,13 +597,9 @@
                   "additionalProperties": false,
                   "properties": {
                     "cursor": {
-                      "anyOf": [
-                        {
-                          "type": "string"
-                        },
-                        {
-                          "type": "null"
-                        }
+                      "type": [
+                        "string",
+                        "null"
                       ]
                     },
                     "entries": {
@@ -653,23 +649,15 @@
                             ]
                           },
                           "requestId": {
-                            "anyOf": [
-                              {
-                                "type": "string"
-                              },
-                              {
-                                "type": "null"
-                              }
+                            "type": [
+                              "string",
+                              "null"
                             ]
                           },
                           "targetKey": {
-                            "anyOf": [
-                              {
-                                "type": "string"
-                              },
-                              {
-                                "type": "null"
-                              }
+                            "type": [
+                              "string",
+                              "null"
                             ]
                           },
                           "ts": {
@@ -1416,13 +1404,9 @@
                     "additionalProperties": false,
                     "properties": {
                       "description": {
-                        "anyOf": [
-                          {
-                            "type": "string"
-                          },
-                          {
-                            "type": "null"
-                          }
+                        "type": [
+                          "string",
+                          "null"
                         ]
                       },
                       "grantCount": {
@@ -1601,13 +1585,9 @@
                   "additionalProperties": false,
                   "properties": {
                     "description": {
-                      "anyOf": [
-                        {
-                          "type": "string"
-                        },
-                        {
-                          "type": "null"
-                        }
+                      "type": [
+                        "string",
+                        "null"
                       ]
                     },
                     "grantCount": {
@@ -1868,13 +1848,9 @@
                   "additionalProperties": false,
                   "properties": {
                     "description": {
-                      "anyOf": [
-                        {
-                          "type": "string"
-                        },
-                        {
-                          "type": "null"
-                        }
+                      "type": [
+                        "string",
+                        "null"
                       ]
                     },
                     "grantCount": {
@@ -2051,13 +2027,9 @@
                   "additionalProperties": false,
                   "properties": {
                     "description": {
-                      "anyOf": [
-                        {
-                          "type": "string"
-                        },
-                        {
-                          "type": "null"
-                        }
+                      "type": [
+                        "string",
+                        "null"
                       ]
                     },
                     "grantCount": {
@@ -2852,13 +2824,9 @@
                         "type": "boolean"
                       },
                       "displayName": {
-                        "anyOf": [
-                          {
-                            "type": "string"
-                          },
-                          {
-                            "type": "null"
-                          }
+                        "type": [
+                          "string",
+                          "null"
                         ]
                       },
                       "identityId": {
@@ -3026,13 +2994,9 @@
                       "type": "boolean"
                     },
                     "displayName": {
-                      "anyOf": [
-                        {
-                          "type": "string"
-                        },
-                        {
-                          "type": "null"
-                        }
+                      "type": [
+                        "string",
+                        "null"
                       ]
                     },
                     "identityId": {
@@ -3395,13 +3359,9 @@
                         "type": "boolean"
                       },
                       "displayName": {
-                        "anyOf": [
-                          {
-                            "type": "string"
-                          },
-                          {
-                            "type": "null"
-                          }
+                        "type": [
+                          "string",
+                          "null"
                         ]
                       },
                       "id": {
@@ -3581,13 +3541,9 @@
                       "type": "boolean"
                     },
                     "displayName": {
-                      "anyOf": [
-                        {
-                          "type": "string"
-                        },
-                        {
-                          "type": "null"
-                        }
+                      "type": [
+                        "string",
+                        "null"
                       ]
                     },
                     "id": {
@@ -3769,13 +3725,9 @@
                           "type": "boolean"
                         },
                         "displayName": {
-                          "anyOf": [
-                            {
-                              "type": "string"
-                            },
-                            {
-                              "type": "null"
-                            }
+                          "type": [
+                            "string",
+                            "null"
                           ]
                         },
                         "id": {
@@ -4114,13 +4066,9 @@
                     "additionalProperties": false,
                     "properties": {
                       "description": {
-                        "anyOf": [
-                          {
-                            "type": "string"
-                          },
-                          {
-                            "type": "null"
-                          }
+                        "type": [
+                          "string",
+                          "null"
                         ]
                       },
                       "environmentCount": {
@@ -4293,13 +4241,9 @@
                   "additionalProperties": false,
                   "properties": {
                     "description": {
-                      "anyOf": [
-                        {
-                          "type": "string"
-                        },
-                        {
-                          "type": "null"
-                        }
+                      "type": [
+                        "string",
+                        "null"
                       ]
                     },
                     "environmentCount": {
@@ -4544,13 +4488,9 @@
                   "additionalProperties": false,
                   "properties": {
                     "description": {
-                      "anyOf": [
-                        {
-                          "type": "string"
-                        },
-                        {
-                          "type": "null"
-                        }
+                      "type": [
+                        "string",
+                        "null"
                       ]
                     },
                     "environmentCount": {
@@ -4721,13 +4661,9 @@
                   "additionalProperties": false,
                   "properties": {
                     "description": {
-                      "anyOf": [
-                        {
-                          "type": "string"
-                        },
-                        {
-                          "type": "null"
-                        }
+                      "type": [
+                        "string",
+                        "null"
                       ]
                     },
                     "environmentCount": {
@@ -4870,13 +4806,9 @@
                     "additionalProperties": false,
                     "properties": {
                       "description": {
-                        "anyOf": [
-                          {
-                            "type": "string"
-                          },
-                          {
-                            "type": "null"
-                          }
+                        "type": [
+                          "string",
+                          "null"
                         ]
                       },
                       "id": {
@@ -5071,13 +5003,9 @@
                   "additionalProperties": false,
                   "properties": {
                     "description": {
-                      "anyOf": [
-                        {
-                          "type": "string"
-                        },
-                        {
-                          "type": "null"
-                        }
+                      "type": [
+                        "string",
+                        "null"
                       ]
                     },
                     "id": {
@@ -5350,13 +5278,9 @@
                   "additionalProperties": false,
                   "properties": {
                     "description": {
-                      "anyOf": [
-                        {
-                          "type": "string"
-                        },
-                        {
-                          "type": "null"
-                        }
+                      "type": [
+                        "string",
+                        "null"
                       ]
                     },
                     "id": {
@@ -5519,13 +5443,9 @@
                     "additionalProperties": false,
                     "properties": {
                       "description": {
-                        "anyOf": [
-                          {
-                            "type": "string"
-                          },
-                          {
-                            "type": "null"
-                          }
+                        "type": [
+                          "string",
+                          "null"
                         ]
                       },
                       "key": {
@@ -5535,13 +5455,9 @@
                         "type": "string"
                       },
                       "kid": {
-                        "anyOf": [
-                          {
-                            "type": "string"
-                          },
-                          {
-                            "type": "null"
-                          }
+                        "type": [
+                          "string",
+                          "null"
                         ]
                       },
                       "unreadable": {
@@ -5884,13 +5800,9 @@
                         "type": "boolean"
                       },
                       "kid": {
-                        "anyOf": [
-                          {
-                            "type": "string"
-                          },
-                          {
-                            "type": "null"
-                          }
+                        "type": [
+                          "string",
+                          "null"
                         ]
                       },
                       "op": {
@@ -7015,13 +6927,9 @@
                       "type": "boolean"
                     },
                     "displayName": {
-                      "anyOf": [
-                        {
-                          "type": "string"
-                        },
-                        {
-                          "type": "null"
-                        }
+                      "type": [
+                        "string",
+                        "null"
                       ]
                     },
                     "identityId": {
