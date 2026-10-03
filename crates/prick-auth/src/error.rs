@@ -305,7 +305,7 @@ mod tests {
 
         for err in &failures {
             assert_ne!(err.exit_code(), 0, "{err} claimed success");
-            assert!(!err.code().is_empty());
+            assert_ne!(err.code(), "");
         }
     }
 

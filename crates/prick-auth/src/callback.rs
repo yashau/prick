@@ -595,8 +595,8 @@ mod tests {
 
     #[test]
     fn an_empty_query_yields_no_parameters() {
-        assert!(parse_query("").is_empty());
-        assert!(parse_query("&&").is_empty());
+        assert_eq!(parse_query(""), Vec::<(String, String)>::new());
+        assert_eq!(parse_query("&&"), Vec::<(String, String)>::new());
     }
 
     #[test]

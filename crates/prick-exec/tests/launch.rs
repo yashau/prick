@@ -87,7 +87,7 @@ fn an_empty_argument_is_not_dropped() {
     assert!(out.status.success());
     let received = split_argv(&out.stdout);
     assert_eq!(received.len(), 3, "an empty argument disappeared: {received:?}");
-    assert!(received[1].is_empty());
+    assert_eq!(received[1], Vec::<u8>::new());
 }
 
 #[test]
@@ -153,5 +153,5 @@ fn a_secret_never_reaches_a_variable_it_was_not_named_for() {
         "PRICK_TEST_OTHER",
     ]);
     assert!(out.status.success());
-    assert!(out.stdout.is_empty());
+    assert_eq!(out.stdout, Vec::<u8>::new());
 }

@@ -338,7 +338,7 @@ mod tests {
     #[test]
     fn a_program_with_no_arguments_has_an_empty_argument_slice() {
         let spec = LaunchSpec::new(vec!["true".into()]).expect("non-empty");
-        assert!(spec.args().is_empty());
+        assert_eq!(spec.args(), Vec::<OsString>::new());
     }
 
     #[test]

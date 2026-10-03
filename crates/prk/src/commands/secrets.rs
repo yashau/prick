@@ -759,7 +759,7 @@ mod tests {
     fn a_set_without_the_flag_sends_no_description_entry_at_all() {
         // Not `[(K, None)]`. That is the CLEAR, and sending it for every write
         // would erase the description of every secret rotated without the flag.
-        assert!(descriptions_for("K", None).is_empty());
+        assert_eq!(descriptions_for("K", None), Vec::<(&str, Option<&str>)>::new());
         assert_eq!(descriptions_for("K", Some("live mode")), vec![("K", Some("live mode"))]);
     }
 

@@ -368,7 +368,7 @@ mod tests {
         document["scopes"] = Value::Array(Vec::new());
 
         let explanation = parse(&document).expect("no access is a valid answer");
-        assert!(explanation.scopes.is_empty());
+        assert_eq!(explanation.scopes, Vec::<Entry>::new());
         assert_eq!(json(&explanation)["scopes"], serde_json::json!([]));
     }
 }
