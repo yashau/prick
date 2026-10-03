@@ -126,6 +126,7 @@ pub fn run(global: &GlobalArgs, out: Output) -> Result<(), CliError> {
 
     // 2. Token storage, whether or not the server is reachable.
     checks.push(token_file_check());
+    checks.extend(roaming_copy_check());
 
     // 3. Reachability and identity, which need the server.
     if let Some(mut context) = context {
@@ -180,6 +181,27 @@ fn token_file_check() -> Check {
         ),
         Err(err) => Check::new("token storage", Status::Warn, err.to_string()),
     }
+}
+
+/// Reports a token left in the roaming profile.
+///
+/// Reading a roaming session moves it into the local profile and deletes the
+/// original, so a copy here is one that deletion could not remove. It is
+/// copied to a file server at every sign-out, which is the exposure the move
+/// exists to end. Nothing to report off Windows, where there is no roaming
+/// directory.
+fn roaming_copy_check() -> Option<Check> {
+    let path = TokenStore::new(StorageBackend::File).ok()?.roaming_path()?;
+    path.exists().then(|| {
+        Check::new(
+            "roaming token",
+            Status::Warn,
+            format!(
+                "{} holds a session in the roaming profile; delete it, or run `prk logout`",
+                path.display()
+            ),
+        )
+    })
 }
 
 /// Everything that needs to talk to the server.

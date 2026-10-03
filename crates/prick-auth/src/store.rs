@@ -13,6 +13,19 @@
 //! Keyring support stays behind `--storage keyring` for people whose threat
 //! model wants it.
 //!
+//! # Location
+//!
+//! On Windows the file lives under `%LOCALAPPDATA%`, never `%APPDATA%`. The
+//! roaming half of a profile is copied to a file server at sign-out wherever
+//! roaming profiles or folder redirection are in force, and a refresh token on
+//! a share sits outside the DACL this module sets and inside every backup of
+//! that share. A session is bound to the machine that signed in, so it belongs
+//! in the half of the profile that stays on it.
+//!
+//! A session found in `%APPDATA%\prick` is moved to the local directory the
+//! first time it is read, and the roaming copy is deleted. `prk logout` removes
+//! both, and `prk doctor` reports a roaming copy that could not be removed.
+//!
 //! # Atomicity
 //!
 //! A token file is written to a temporary file **in the same directory**, then
@@ -268,9 +281,10 @@ pub fn config_dir_from(lookup: impl Fn(&str) -> Option<String>) -> Result<PathBu
     };
 
     if cfg!(windows) {
-        let base = lookup("APPDATA")
+        // Local, not roaming: see the module documentation.
+        let base = lookup("LOCALAPPDATA")
             .filter(|value| !value.is_empty())
-            .ok_or_else(|| missing("%APPDATA%"))?;
+            .ok_or_else(|| missing("%LOCALAPPDATA%"))?;
         return Ok(PathBuf::from(base).join("prick"));
     }
 
@@ -286,10 +300,27 @@ pub fn config_dir_from(lookup: impl Fn(&str) -> Option<String>) -> Result<PathBu
     Ok(base.join("prick"))
 }
 
+/// The roaming directory a Windows session was kept in before it moved to
+/// `%LOCALAPPDATA%`, if there is one to look in.
+///
+/// `None` off Windows, and `None` under `PRK_CONFIG_DIR`: an operator who named
+/// a directory has said where the session is, and reaching past that into a
+/// profile directory would read a session they did not point at.
+pub fn roaming_config_dir_from(lookup: impl Fn(&str) -> Option<String>) -> Option<PathBuf> {
+    if !cfg!(windows) || lookup(CONFIG_DIR_VAR).is_some_and(|value| !value.is_empty()) {
+        return None;
+    }
+    lookup("APPDATA")
+        .filter(|value| !value.is_empty())
+        .map(|base| PathBuf::from(base).join("prick"))
+}
+
 /// Reads and writes the token file.
 #[derive(Debug, Clone)]
 pub struct TokenStore {
     dir: PathBuf,
+    /// Where a session written to the roaming profile is picked up from.
+    roaming: Option<PathBuf>,
     backend: StorageBackend,
 }
 
@@ -300,12 +331,28 @@ impl TokenStore {
     ///
     /// See [`default_config_dir`].
     pub fn new(backend: StorageBackend) -> Result<Self, AuthError> {
-        Ok(Self::in_dir(default_config_dir()?, backend))
+        let roaming = roaming_config_dir_from(|name| std::env::var(name).ok());
+        Ok(Self { roaming, ..Self::in_dir(default_config_dir()?, backend) })
     }
 
     /// Builds a store rooted at a specific directory.
+    ///
+    /// Only that directory: a roaming copy is picked up by [`TokenStore::new`]
+    /// alone.
     pub fn in_dir(dir: impl Into<PathBuf>, backend: StorageBackend) -> Self {
-        Self { dir: dir.into(), backend }
+        Self { dir: dir.into(), roaming: None, backend }
+    }
+
+    /// The same store, on another backend.
+    #[must_use]
+    pub fn with_backend(&self, backend: StorageBackend) -> Self {
+        Self { backend, ..self.clone() }
+    }
+
+    /// The roaming token file this store migrates from and removes on logout,
+    /// whether or not it exists.
+    pub fn roaming_path(&self) -> Option<PathBuf> {
+        self.roaming.as_ref().map(|dir| dir.join(TOKEN_FILE_NAME))
     }
 
     /// The directory the token file lives in.
@@ -328,55 +375,40 @@ impl TokenStore {
     /// A missing file is `Ok(None)`, not an error: not being logged in is a
     /// normal state and the caller has a better message for it than this does.
     ///
+    /// With no local file, a roaming copy is read instead and moved into the
+    /// local directory before it is returned.
+    ///
     /// # Errors
     ///
     /// [`AuthError::StorageUnavailable`] for the keyring backend,
-    /// [`AuthError::Store`] for an unreadable or unparsable file.
+    /// [`AuthError::Store`] for an unreadable or unparsable file, or a roaming
+    /// copy that cannot be written locally.
     pub fn load(&self) -> Result<Option<StoredSession>, AuthError> {
         self.check_available()?;
 
-        let path = self.path();
-        let mut bytes = match std::fs::read(&path) {
-            Ok(bytes) => bytes,
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-            Err(source) => {
-                return Err(AuthError::Store {
-                    operation: "read",
-                    path: path.display().to_string(),
-                    source,
-                });
-            }
-        };
-
-        let parsed = serde_json::from_slice::<Wire>(&bytes);
-        // The buffer held the tokens in plaintext; clear it before anything
-        // else can happen, including the error path.
-        bytes.zeroize();
-
-        let wire = parsed.map_err(|err| AuthError::Store {
-            operation: "parse",
-            path: path.display().to_string(),
-            source: std::io::Error::new(std::io::ErrorKind::InvalidData, err.to_string()),
-        })?;
-
-        if wire.version != WIRE_VERSION {
-            return Err(AuthError::Store {
-                operation: "read",
-                path: path.display().to_string(),
-                source: std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    format!(
-                        "unknown credential file version {} (this build understands {WIRE_VERSION})",
-                        wire.version
-                    ),
-                ),
-            });
+        if let Some(session) = read_session(&self.path())? {
+            return Ok(Some(session));
         }
 
-        Ok(Some(wire.into_session()))
+        let Some(roaming) = self.roaming_path() else {
+            return Ok(None);
+        };
+        let Some(session) = read_session(&roaming)? else {
+            return Ok(None);
+        };
+
+        // Written locally first, so a failure here leaves the roaming copy as
+        // the only one rather than leaving none at all.
+        self.save(&session)?;
+        Ok(Some(session))
     }
 
     /// Writes the session, replacing whatever was there.
+    ///
+    /// A roaming copy is deleted once the local file is in place, so no
+    /// session outlives its replacement on a file share. That deletion is best
+    /// effort: a save that has already succeeded is not turned into a failure,
+    /// and `prk doctor` reports a roaming copy that survives.
     ///
     /// # Errors
     ///
@@ -396,10 +428,15 @@ impl TokenStore {
 
         let result = self.write_atomically(&bytes);
         bytes.zeroize();
-        result
+        result?;
+
+        if let Some(roaming) = self.roaming_path() {
+            let _ = remove_if_present(&roaming);
+        }
+        Ok(())
     }
 
-    /// Removes the stored session.
+    /// Removes the stored session, and any roaming copy of it.
     ///
     /// A missing file is success: `prk logout` is idempotent by design, because
     /// the state it establishes is "no credentials", and that state is already
@@ -408,17 +445,12 @@ impl TokenStore {
     /// # Errors
     ///
     /// [`AuthError::Store`] for a file that exists and cannot be removed.
+    /// Unlike [`TokenStore::save`] a roaming copy that survives is an error
+    /// here: an operator who logged out is owed the absence of every copy.
     pub fn clear(&self) -> Result<(), AuthError> {
-        let path = self.path();
-        match std::fs::remove_file(&path) {
-            Ok(()) => Ok(()),
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
-            Err(source) => Err(AuthError::Store {
-                operation: "remove",
-                path: path.display().to_string(),
-                source,
-            }),
-        }
+        let local = remove_if_present(&self.path());
+        let roaming = self.roaming_path().map_or(Ok(()), |path| remove_if_present(&path));
+        local.and(roaming)
     }
 
     /// Whether the token file is readable only by its owner.
@@ -517,6 +549,59 @@ impl TokenStore {
 
         sync_dir(&self.dir).map_err(map("write"))?;
         Ok(())
+    }
+}
+
+/// Reads one token file. A missing file is `Ok(None)`.
+fn read_session(path: &Path) -> Result<Option<StoredSession>, AuthError> {
+    let mut bytes = match std::fs::read(path) {
+        Ok(bytes) => bytes,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(source) => {
+            return Err(AuthError::Store {
+                operation: "read",
+                path: path.display().to_string(),
+                source,
+            });
+        }
+    };
+
+    let parsed = serde_json::from_slice::<Wire>(&bytes);
+    // The buffer held the tokens in plaintext; clear it before anything else
+    // can happen, including the error path.
+    bytes.zeroize();
+
+    let wire = parsed.map_err(|err| AuthError::Store {
+        operation: "parse",
+        path: path.display().to_string(),
+        source: std::io::Error::new(std::io::ErrorKind::InvalidData, err.to_string()),
+    })?;
+
+    if wire.version != WIRE_VERSION {
+        return Err(AuthError::Store {
+            operation: "read",
+            path: path.display().to_string(),
+            source: std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!(
+                    "unknown credential file version {} (this build understands {WIRE_VERSION})",
+                    wire.version
+                ),
+            ),
+        });
+    }
+
+    Ok(Some(wire.into_session()))
+}
+
+/// Removes a file, treating one that is already gone as removed.
+fn remove_if_present(path: &Path) -> Result<(), AuthError> {
+    match std::fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(source) => {
+            Err(AuthError::Store { operation: "remove", path: path.display().to_string(), source })
+        }
     }
 }
 
@@ -635,363 +720,4 @@ fn sync_dir(_path: &Path) -> std::io::Result<()> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn session() -> StoredSession {
-        StoredSession {
-            api_url: "https://prick.example.com".to_owned(),
-            issuer: "https://example.cloudflareaccess.com".to_owned(),
-            client_id: "client-123".to_owned(),
-            token_endpoint: "https://example.cloudflareaccess.com/token".to_owned(),
-            resource: Some("https://prick.example.com".to_owned()),
-            revocation_endpoint: Some("https://example.cloudflareaccess.com/revoke".to_owned()),
-            tokens: Tokens {
-                access_token: SecretString::from("access-abc"),
-                refresh_token: Some(SecretString::from("refresh-xyz")),
-                expires_at: Some(1_800_000_000),
-            },
-        }
-    }
-
-    fn store() -> (tempfile::TempDir, TokenStore) {
-        let dir = tempfile::tempdir().expect("a temporary directory");
-        let store = TokenStore::in_dir(dir.path().join("prick"), StorageBackend::File);
-        (dir, store)
-    }
-
-    #[test]
-    fn the_default_backend_works_without_a_session() {
-        assert_eq!(StorageBackend::default(), StorageBackend::File);
-        assert!(StorageBackend::default().works_headless());
-        assert!(!StorageBackend::Keyring.works_headless());
-    }
-
-    #[test]
-    fn the_token_file_is_owner_only() {
-        assert_eq!(TOKEN_FILE_MODE, 0o600);
-        assert_eq!(TOKEN_DIR_MODE, 0o700);
-        assert_eq!(TOKEN_FILE_MODE & 0o077, 0, "group and other must have no access");
-    }
-
-    #[test]
-    fn backend_names_are_stable() {
-        assert_eq!(StorageBackend::File.as_str(), "file");
-        assert_eq!(StorageBackend::Keyring.as_str(), "keyring");
-    }
-
-    #[test]
-    fn a_session_round_trips_through_the_file() {
-        let (_dir, store) = store();
-        assert!(store.load().expect("an absent file is not an error").is_none());
-
-        store.save(&session()).expect("saving must succeed");
-        let loaded = store.load().expect("loading must succeed").expect("a session was saved");
-
-        assert_eq!(loaded.api_url, "https://prick.example.com");
-        assert_eq!(loaded.client_id, "client-123");
-        assert_eq!(loaded.tokens.access_token.expose_secret(), "access-abc");
-        assert_eq!(
-            loaded.tokens.refresh_token.as_ref().map(SecretString::expose_secret),
-            Some("refresh-xyz")
-        );
-        assert_eq!(loaded.tokens.expires_at, Some(1_800_000_000));
-    }
-
-    #[test]
-    fn saving_twice_replaces_rather_than_appends() {
-        let (_dir, store) = store();
-        store.save(&session()).expect("first save");
-
-        let mut second = session();
-        second.tokens.access_token = SecretString::from("access-second");
-        store.save(&second).expect("second save");
-
-        let loaded = store.load().expect("load").expect("a session");
-        assert_eq!(loaded.tokens.access_token.expose_secret(), "access-second");
-    }
-
-    #[test]
-    fn the_written_file_is_owner_only() {
-        let (_dir, store) = store();
-        store.save(&session()).expect("save");
-        assert!(
-            store.is_owner_only().expect("the permissions must be readable"),
-            "the credentials file is readable by more than its owner"
-        );
-    }
-
-    #[test]
-    fn a_missing_file_is_reported_as_owner_only_rather_than_as_a_finding() {
-        let (_dir, store) = store();
-        assert!(store.is_owner_only().expect("no file is not an error"));
-    }
-
-    #[test]
-    fn no_temporary_file_is_left_behind() {
-        let (_dir, store) = store();
-        store.save(&session()).expect("save");
-
-        let leftovers: Vec<_> = std::fs::read_dir(store.dir())
-            .expect("the directory exists")
-            .filter_map(Result::ok)
-            .map(|entry| entry.file_name().to_string_lossy().into_owned())
-            .filter(|name| Path::new(name).extension().is_some_and(|ext| ext == "tmp"))
-            .collect();
-
-        assert!(leftovers.is_empty(), "a temporary file survived: {leftovers:?}");
-    }
-
-    #[test]
-    fn a_leftover_temporary_file_does_not_block_a_save() {
-        let (_dir, store) = store();
-        store.save(&session()).expect("first save");
-
-        let stale = store.dir().join(format!(".{TOKEN_FILE_NAME}.{}.tmp", std::process::id()));
-        std::fs::write(&stale, b"leftover from a crash").expect("write");
-
-        store.save(&session()).expect("a stale temporary file must not wedge the store");
-        assert!(!stale.exists());
-    }
-
-    #[test]
-    fn logging_out_twice_is_not_an_error() {
-        let (_dir, store) = store();
-        store.save(&session()).expect("save");
-        store.clear().expect("first clear");
-        store.clear().expect("clearing an absent file is success");
-        assert!(store.load().expect("load").is_none());
-    }
-
-    #[test]
-    fn a_corrupt_file_is_reported_rather_than_treated_as_absent() {
-        let (_dir, store) = store();
-        store.save(&session()).expect("save");
-        std::fs::write(store.path(), b"not json at all").expect("write");
-
-        let err = store.load().expect_err("a corrupt file is not an absent one");
-        assert!(matches!(err, AuthError::Store { operation: "parse", .. }));
-    }
-
-    #[test]
-    fn an_unknown_file_version_is_refused_rather_than_guessed_at() {
-        let (_dir, store) = store();
-        store.save(&session()).expect("save");
-        let raw = std::fs::read_to_string(store.path()).expect("read");
-        std::fs::write(store.path(), raw.replace("\"version\": 1", "\"version\": 99"))
-            .expect("write");
-
-        let err = store.load().expect_err("an unknown version is not readable");
-        assert!(err.to_string().contains("99"), "{err}");
-    }
-
-    #[test]
-    fn the_file_carries_a_version_so_a_future_shape_is_detectable() {
-        let (_dir, store) = store();
-        store.save(&session()).expect("save");
-        let raw = std::fs::read_to_string(store.path()).expect("read");
-        assert!(raw.contains("\"version\": 1"), "{raw}");
-    }
-
-    #[test]
-    fn a_session_with_no_refresh_token_round_trips() {
-        let (_dir, store) = store();
-        let mut without = session();
-        without.tokens.refresh_token = None;
-        without.tokens.expires_at = None;
-        store.save(&without).expect("save");
-
-        let loaded = store.load().expect("load").expect("a session");
-        assert!(loaded.tokens.refresh_token.is_none());
-        assert!(loaded.tokens.expires_at.is_none());
-        assert!(!loaded.is_refreshable());
-    }
-
-    #[test]
-    fn the_revocation_endpoint_survives_a_round_trip() {
-        let (_dir, store) = store();
-        store.save(&session()).expect("save");
-
-        let loaded = store.load().expect("load").expect("a session");
-        assert_eq!(
-            loaded.revocation_endpoint.as_deref(),
-            Some("https://example.cloudflareaccess.com/revoke")
-        );
-    }
-
-    #[test]
-    fn a_credential_written_before_revocation_existed_still_loads() {
-        // The compatibility case that matters: everyone signed in today has a
-        // file with no `revocation_endpoint` in it, and a logout that refused to
-        // read it would leave them unable to sign out at all.
-        let (_dir, store) = store();
-        store.save(&session()).expect("save");
-
-        let raw = std::fs::read_to_string(store.path()).expect("read");
-        let older: serde_json::Value = serde_json::from_str(&raw).expect("JSON");
-        let mut older = older.as_object().expect("an object").clone();
-        older.remove("revocation_endpoint");
-        std::fs::write(store.path(), serde_json::to_string(&older).expect("JSON"))
-            .expect("write the older shape back");
-
-        let loaded = store.load().expect("an older file still loads").expect("a session");
-        assert!(loaded.revocation_endpoint.is_none());
-        // And the rest of it is intact, so the fallback is the only difference.
-        assert_eq!(loaded.client_id, session().client_id);
-        assert!(loaded.is_refreshable());
-    }
-
-    #[test]
-    fn a_session_with_nowhere_to_revoke_writes_no_such_field() {
-        // `skip_serializing_if`, so a server that advertises no revocation
-        // endpoint does not get a null recorded for one.
-        let (_dir, store) = store();
-        let mut without = session();
-        without.revocation_endpoint = None;
-        store.save(&without).expect("save");
-
-        let raw = std::fs::read_to_string(store.path()).expect("read");
-        assert!(!raw.contains("revocation_endpoint"), "{raw}");
-    }
-
-    #[test]
-    fn the_keyring_backend_says_so_rather_than_writing_a_file() {
-        let dir = tempfile::tempdir().expect("a temporary directory");
-        let store = TokenStore::in_dir(dir.path(), StorageBackend::Keyring);
-
-        let err = store.save(&session()).expect_err("the keyring is not available");
-        assert!(matches!(err, AuthError::StorageUnavailable { backend: "keyring" }));
-        assert!(!store.path().exists(), "a keyring request silently wrote a file");
-    }
-
-    #[test]
-    fn availability_is_known_before_anything_is_saved() {
-        let dir = tempfile::tempdir().expect("a temporary directory");
-
-        let file = TokenStore::in_dir(dir.path(), StorageBackend::File);
-        file.check_available().expect("the file backend is available");
-
-        let keyring = TokenStore::in_dir(dir.path(), StorageBackend::Keyring);
-        let err = keyring.check_available().expect_err("the keyring is not available");
-        assert!(matches!(err, AuthError::StorageUnavailable { backend: "keyring" }));
-    }
-
-    #[test]
-    fn a_session_never_renders_its_tokens_through_debug() {
-        let rendered = format!("{:?}", session());
-        assert!(!rendered.contains("access-abc"), "an access token leaked: {rendered}");
-        assert!(!rendered.contains("refresh-xyz"), "a refresh token leaked: {rendered}");
-        assert!(rendered.contains("client-123"), "the client id is not secret");
-    }
-
-    #[test]
-    fn refresh_is_due_only_inside_the_skew_window() {
-        let session = session();
-        let expires_at = 1_800_000_000u64;
-
-        assert!(!session.needs_refresh(expires_at - 120, 60), "renewed far too early");
-        assert!(
-            session.needs_refresh(expires_at - 60, 60),
-            "a token expiring mid-request is stale"
-        );
-        assert!(session.needs_refresh(expires_at - 30, 60));
-        assert!(session.needs_refresh(expires_at + 1, 60));
-    }
-
-    #[test]
-    fn a_token_with_no_stated_expiry_is_used_until_it_is_refused() {
-        let mut session = session();
-        session.tokens.expires_at = None;
-        assert!(!session.needs_refresh(u64::MAX, 60));
-    }
-
-    #[test]
-    fn the_config_directory_can_be_overridden_outright() {
-        let dir =
-            config_dir_from(|name| (name == CONFIG_DIR_VAR).then(|| "/scratch/prick".to_owned()))
-                .expect("the override always resolves");
-        assert_eq!(dir, PathBuf::from("/scratch/prick"));
-    }
-
-    #[test]
-    fn an_empty_override_falls_through_to_the_platform_default() {
-        let resolved = config_dir_from(|name| {
-            Some(match name {
-                CONFIG_DIR_VAR => String::new(),
-                "HOME" => "/home/u".to_owned(),
-                "APPDATA" => r"C:\Users\u\AppData\Roaming".to_owned(),
-                _ => return None,
-            })
-        })
-        .expect("the platform default resolves");
-        assert!(resolved.ends_with("prick"), "{resolved:?}");
-    }
-
-    #[test]
-    fn a_container_with_no_home_reports_why_rather_than_panicking() {
-        let err = config_dir_from(|_| None).expect_err("nothing to resolve from");
-        assert!(matches!(err, AuthError::Store { operation: "locate", .. }));
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn the_platform_default_follows_the_xdg_specification() {
-        let resolved = config_dir_from(|name| match name {
-            "HOME" => Some("/home/u".to_owned()),
-            "XDG_CONFIG_HOME" => Some("/home/u/.cfg".to_owned()),
-            _ => None,
-        })
-        .expect("resolves");
-
-        if cfg!(target_os = "macos") {
-            assert!(resolved.starts_with("/home/u/Library"), "{resolved:?}");
-        } else {
-            assert_eq!(resolved, PathBuf::from("/home/u/.cfg/prick"));
-        }
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn the_directory_is_created_with_owner_only_permissions() {
-        use std::os::unix::fs::PermissionsExt as _;
-
-        let (_dir, store) = store();
-        store.save(&session()).expect("save");
-
-        let mode = std::fs::metadata(store.dir()).expect("metadata").permissions().mode();
-        assert_eq!(mode & 0o777, TOKEN_DIR_MODE, "the directory is not 0700");
-
-        let mode = std::fs::metadata(store.path()).expect("metadata").permissions().mode();
-        assert_eq!(mode & 0o777, TOKEN_FILE_MODE, "the credentials file is not 0600");
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn a_pre_existing_loose_directory_is_tightened() {
-        use std::os::unix::fs::PermissionsExt as _;
-
-        let dir = tempfile::tempdir().expect("a temporary directory");
-        let target = dir.path().join("prick");
-        std::fs::create_dir(&target).expect("create");
-        std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o755)).expect("chmod");
-
-        let store = TokenStore::in_dir(&target, StorageBackend::File);
-        store.save(&session()).expect("save");
-
-        let mode = std::fs::metadata(&target).expect("metadata").permissions().mode();
-        assert_eq!(mode & 0o777, TOKEN_DIR_MODE, "a world-readable directory was left alone");
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn a_loose_file_is_reported_as_a_finding() {
-        use std::os::unix::fs::PermissionsExt as _;
-
-        let (_dir, store) = store();
-        store.save(&session()).expect("save");
-        std::fs::set_permissions(store.path(), std::fs::Permissions::from_mode(0o644))
-            .expect("chmod");
-
-        assert!(!store.is_owner_only().expect("readable"), "0644 was not reported as a finding");
-    }
-}
+mod tests;

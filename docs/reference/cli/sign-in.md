@@ -126,7 +126,15 @@ The file is called `credentials.json` and lives here:
 | -------- | ---------------------------------------------- |
 | Linux    | `$XDG_CONFIG_HOME/prick`, or `~/.config/prick` |
 | macOS    | `~/Library/Application Support/prick`          |
-| Windows  | `%APPDATA%\prick`                              |
+| Windows  | `%LOCALAPPDATA%\prick`                         |
+
+On Windows that is the local half of the profile, because a session is bound to
+the machine that signed in, and the roaming half is copied to a file server at
+sign-out wherever roaming profiles or folder redirection are in force — outside
+the DACL above, and into every backup of that share. A session found in
+`%APPDATA%\prick` is moved to the local directory the first time `prk` reads it,
+and the roaming copy is deleted. `prk logout` removes both, and `prk doctor`
+warns about a roaming copy that survived.
 
 Set `PRK_CONFIG_DIR` to override that path outright — useful for a CI job that
 wants a scratch directory, or for keeping two servers' sessions apart:
@@ -320,6 +328,7 @@ tells you everything that is wrong at once.
 | --------------- | ---------------------------------------------------------------------------------------- |
 | `server url`    | The resolved URL, and whether it came from a flag/variable or the stored login           |
 | `token storage` | Whether the token file exists and is owner-only. Never its contents                      |
+| `roaming token` | Windows only, and only when present: a token file left in `%APPDATA%\prick`              |
 | `api`           | Whether `/api/v1/health` answers on the API's own path                                   |
 | `access`        | What is in front of the server: Access with managed OAuth, Access without it, or nothing |
 | `identity`      | The subject and kind `/whoami` resolved                                                  |
