@@ -263,7 +263,7 @@ If somebody else wrote to the environment in the meantime, the revision has
 moved and the write is refused:
 
 ```
-error: The environment has changed since you last read it.
+error: The environment has changed since you last read it. (PRECONDITION_FAILED)
   help: Re-read the environment and re-submit with its current `expected_rev`. Nothing was written.
 ```
 
@@ -352,17 +352,17 @@ parse as written.
 Every rejection names the line and the key, never the value:
 
 ```
-error: Line 12: the double-quoted value of "STRIPE_SECRET_KEY" is never closed.
+error: Line 12: the double-quoted value of "STRIPE_SECRET_KEY" is never closed. (VALIDATION_FAILED)
   help: Check for an unescaped double quote inside the value.
 ```
 
 ```
-error: Line 8: duplicate key "DATABASE_URL", already set on line 3.
+error: Line 8: duplicate key "DATABASE_URL", already set on line 3. (VALIDATION_FAILED)
   help: Remove one of the two declarations. This file does not say which value you meant.
 ```
 
 ```
-error: Line 4: the unquoted value of "PASSWORD" has a `#` after whitespace, so this line reads as a value containing a hash or as a value with a comment.
+error: Line 4: the unquoted value of "PASSWORD" has a `#` after whitespace, so this line reads as a value containing a hash or as a value with a comment. (VALIDATION_FAILED)
   help: Quote the value to keep the `#`, or delete the comment. A `#` with no whitespace in front of it is already part of the value.
 ```
 
@@ -527,16 +527,16 @@ will read back — that is `RESPONSE_TOO_LARGE`, exit 12.
 
 ## Common errors
 
-| Error                    | Exit | What happened                                                                       | What to do                                                   |
-| ------------------------ | ---- | ----------------------------------------------------------------------------------- | ------------------------------------------------------------ |
-| `NOT_FOUND`              | 5    | No such key, version, environment or project — or not visible to you                | Check `prk secrets list`                                     |
-| `PRECONDITION_FAILED`    | 6    | `--expected-rev` did not match                                                      | Re-read the revision and re-apply                            |
-| `CONFLICT`               | 6    | A concurrent writer took the same version number                                    | Re-run the command                                           |
-| `PAYLOAD_TOO_LARGE`      | 11   | The environment would exceed its cap, or a value is too large                       | Split across environments, or raise the limit                |
-| `VALIDATION_FAILED`      | 11   | A key name was rejected, or the uploaded document could not be parsed unambiguously | Fix the line the error names; the parser rules are above     |
-| `UNREPRESENTABLE_OUTPUT` | 9    | A value cannot be encoded in the chosen format                                      | Use `--format json` or `--format yaml`                       |
-| `RESPONSE_TOO_LARGE`     | 12   | The environment holds more secret data than one response can carry                  | `prk secrets list`, then delete or shrink the largest values |
-| `DECRYPT_FAILED`         | —    | Stored bytes were not sealed against the row they sit in                            | Treat as tampering; see [Key rotation](/guides/key-rotation) |
+| Error                    | Exit | What happened                                                                             | What to do                                                   |
+| ------------------------ | ---- | ----------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
+| `NOT_FOUND`              | 5    | No such key, version, environment or project — or not visible to you                      | Check `prk secrets list`                                     |
+| `PRECONDITION_FAILED`    | 6    | `--expected-rev` did not match                                                            | Re-read the revision and re-apply                            |
+| `CONFLICT`               | 6    | A concurrent writer took the same version number                                          | Re-run the command                                           |
+| `PAYLOAD_TOO_LARGE`      | 11   | The environment would exceed its cap, or a value is too large                             | Split across environments, or raise the limit                |
+| `VALIDATION_FAILED`      | 11   | A key name was rejected, or the uploaded document could not be parsed unambiguously       | Fix the line the error names; the parser rules are above     |
+| `UNREPRESENTABLE_OUTPUT` | 9    | A value cannot be encoded in the chosen format                                            | Use `--format json` or `--format yaml`                       |
+| `RESPONSE_TOO_LARGE`     | 12   | The environment holds more secret data than one response can carry                        | `prk secrets list`, then delete or shrink the largest values |
+| `SERVER_ERROR`           | 8    | Message ends `(DECRYPT_FAILED)`: stored bytes were not sealed against the row they sit in | Treat as tampering; see [Key rotation](/guides/key-rotation) |
 
 ## Next steps
 

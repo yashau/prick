@@ -26,7 +26,7 @@ Under `--json`, the same failure is one envelope on stderr, with stdout empty:
 ```json
 {
   "error": {
-    "code": "UNAUTHENTICATED",
+    "code": "NO_CREDENTIAL",
     "message": "no credentials were found for https://prick.example.com",
     "hint": "Run `prk login <url>`, or set PRK_ACCESS_CLIENT_ID and PRK_ACCESS_CLIENT_SECRET for a service token."
   }
@@ -81,7 +81,7 @@ The stable codes emitted under `--json`.
 
 | Code                     | Exit | Retryable | Meaning                                                                                      |
 | ------------------------ | ---- | --------- | -------------------------------------------------------------------------------------------- |
-| `UNAUTHENTICATED`        | 3    | no        | No credentials, or they expired and could not be refreshed                                   |
+| `UNAUTHENTICATED`        | 3    | no        | The server answered 401                                                                      |
 | `FORBIDDEN`              | 4    | no        | Authenticated, but not granted the role this operation needs                                 |
 | `NOT_FOUND`              | 5    | no        | The project, environment, secret or version does not exist — or is not visible to you        |
 | `CONFLICT`               | 6    | yes       | A concurrent writer won                                                                      |
@@ -102,14 +102,33 @@ The stable codes emitted under `--json`.
 
 Codes the client raises itself, rather than reading off a response:
 
-| Code                     | Exit        | Meaning                                                                                                              |
-| ------------------------ | ----------- | -------------------------------------------------------------------------------------------------------------------- |
-| `UNREPRESENTABLE_OUTPUT` | 9           | A value contains a control character the chosen format cannot encode                                                 |
-| `TRUNCATED_OUTPUT`       | 13          | stdout would not take the whole answer, and what it took carried secret material                                     |
-| `INVALID_SCOPE`          | 11          | A scope string could not be parsed                                                                                   |
-| `REDIRECT_UNREADABLE`    | 11          | What was pasted to complete a login carried no authorization response                                                |
-| `UNSAFE_ENVIRONMENT`     | 11          | A secret's name is one the loader interprets, and `--allow-unsafe-env` was not given                                 |
-| `LAUNCH_FAILED`          | 1, 126, 127 | `prk run` could not start the command — **127** not found, **126** found but not executable, **1** for anything else |
+| Code                     | Exit        | Meaning                                                                                                                                       |
+| ------------------------ | ----------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `UNREPRESENTABLE_OUTPUT` | 9           | A value contains a control character the chosen format cannot encode                                                                          |
+| `TRUNCATED_OUTPUT`       | 13          | stdout would not take the whole answer: a reader closed early on secret material, or the write failed for any reason other than a closed pipe |
+| `INVALID_SCOPE`          | 11          | A scope string could not be parsed                                                                                                            |
+| `REDIRECT_UNREADABLE`    | 11          | What was pasted to complete a login carried no authorization response                                                                         |
+| `UNSAFE_ENVIRONMENT`     | 11          | A secret's name is one the loader interprets, and `--allow-unsafe-env` was not given                                                          |
+| `LAUNCH_FAILED`          | 1, 126, 127 | `prk run` could not start the command — **127** not found, **126** found but not executable, **1** for anything else                          |
+| `NOT_IMPLEMENTED`        | 1           | The command exists in the CLI but is not available in this build                                                                              |
+| `ERROR`                  | 1           | Any other local failure, such as no project selected                                                                                          |
+
+Codes raised while signing in or loading credentials:
+
+| Code                     | Exit | Retryable | Meaning                                                                          |
+| ------------------------ | ---- | --------- | -------------------------------------------------------------------------------- |
+| `NO_CREDENTIAL`          | 3    | no        | No credentials were found for this server                                        |
+| `AUTH_EXPIRED`           | 3    | no        | The stored session expired and could not be refreshed                            |
+| `LOGIN_DENIED`           | 3    | no        | The authorization server refused the login                                       |
+| `STATE_MISMATCH`         | 4    | no        | The redirect belongs to a different login: a stale browser tab, or a forgery     |
+| `DISCOVERY_FAILED`       | 7    | no        | The server's OAuth discovery documents could not be read                         |
+| `REGISTRATION_FAILED`    | 7    | no        | Dynamic client registration was refused                                          |
+| `LOGIN_TIMEOUT`          | 7    | yes       | The browser did not complete the login in time                                   |
+| `MANAGED_OAUTH_DISABLED` | 8    | yes       | The server is behind Access, but managed OAuth is not enabled on its application |
+| `STORAGE_UNAVAILABLE`    | 8    | yes       | The requested credential storage backend is not available in this build          |
+| `BROWSER_FAILED`         | 1    | no        | The browser could not be opened                                                  |
+| `TOKEN_STORE_FAILED`     | 1    | no        | The credentials file could not be read or written                                |
+| `IO_ERROR`               | 1    | no        | Any other I/O failure during sign-in                                             |
 
 "Retryable" means retrying the identical request could plausibly succeed. It is
 deliberately conservative: a write that may have partially applied is not marked
@@ -207,8 +226,8 @@ reacts to datacenter IP ranges and non-browser clients — which is exactly what
 `prk` on a VPS looks like.
 
 A partial exception produces this too, and later than you would expect.
-`prk login` probes `/.well-known/` discovery paths before it uses `/api`, so a
-rule that skips only `/api` lets the health probe through and leaves discovery
+`prk login` probes `/api/v1/health` and then the `/.well-known/` discovery
+paths, so a rule that skips only `/api` lets the health probe through and leaves discovery
 challenged — the login then fails on a path nobody scoped.
 
 See [Cloudflare protections](/guides/cloudflare-protections) for the fix.

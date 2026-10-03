@@ -95,17 +95,17 @@ forwarding SSH session.
 
 ### Where the token is stored
 
-| Backend   | Default | Notes                                                                                        |
-| --------- | ------- | -------------------------------------------------------------------------------------------- |
-| `file`    | Yes     | A file at mode `0600` in a directory at mode `0700`. Works over SSH, in containers and in CI |
-| `keyring` | No      | The OS keyring. Opt-in only                                                                  |
+| Backend   | Default | Notes                                                                                             |
+| --------- | ------- | ------------------------------------------------------------------------------------------------- |
+| `file`    | Yes     | A file at mode `0600` in a directory at mode `0700`. Works over SSH, in containers and in CI      |
+| `keyring` | No      | The OS keyring. Not available in this build: `--storage keyring` fails with `STORAGE_UNAVAILABLE` |
 
 The file is written **atomically** — to a temporary file, then renamed — and
 created at mode `0600` on Unix, so there is never a window in which a token file
 exists world-readable. On Windows the DACL is replaced with a single entry for
 the current user.
 
-The keyring is opt-in because over SSH there is no session keyring to talk to,
+The keyring backend is not available yet. When it lands it stays opt-in, because over SSH there is no session keyring to talk to,
 and on macOS the Keychain ACL binds to the binary's code signature, so every
 update re-prompts — which is unusable from inside `prk run`.
 
@@ -174,10 +174,11 @@ credential. Mixing them is how a job authenticates as an identity nobody
 intended, so it is refused.
 :::
 
-### 4. Run the job, and expect a `403`
+### 4. Run the job, and expect a `404`
 
 Access lets it in; prick refuses it, because authentication is not authorization
-and the token has no grant yet. That denial is **recorded**, which is how the
+and the token has no grant yet. A project the token cannot see is reported as
+absent (`NOT_FOUND`, exit 5) rather than forbidden. That denial is **recorded**, which is how the
 token introduces itself:
 
 ```bash

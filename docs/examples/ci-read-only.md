@@ -6,7 +6,7 @@ sidebar:
 ---
 
 A deploy job needs to read `api:production` and nothing else. This walks the
-whole flow, including the `403` on the first run — which is not a mistake, it is
+whole flow, including the `404` on the first run — which is not a mistake, it is
 how the job introduces itself.
 
 ## Before you begin
@@ -78,15 +78,17 @@ jobs:
 `--no-input` makes a missing or rejected credential fail immediately rather than
 blocking on a prompt no CI job can answer.
 
-## 5. Run it, and expect a 403
+## 5. Run it, and expect a 404
 
 ```
-error: You do not have permission to perform this action.
-  help: An administrator can grant access from the Access screen; your subject now appears under "Seen but not granted".
+error: No such project. (NOT_FOUND)
+  help: It may not exist, or it may not be visible to you. Ask an administrator for a grant if you expected to see it.
 ```
 
 Access let the token through; prick refused it. Authentication is not
-authorization, and a brand-new service token holds no grant.
+authorization, and a brand-new service token holds no grant. A project you hold
+no grant on is reported as absent rather than forbidden, so that the status code
+cannot be used to discover which project names exist.
 
 That refusal is **recorded**, and it is the introduction.
 
@@ -166,7 +168,7 @@ anyone cleaning it up, and it stays in the table as a record that it existed.
 ```yaml title=".github/workflows/deploy.yml"
 - uses: yashau/prick/action@v2026.819.0
   with:
-    url: ${{ secrets.PRICK_URL }}
+    url: https://prick.example.com
     client-id: ${{ secrets.PRICK_CLIENT_ID }}
     client-secret: ${{ secrets.PRICK_CLIENT_SECRET }}
     project: api
@@ -184,12 +186,12 @@ job without it.
 
 ## Troubleshooting
 
-| What you see                                 | What it means                                                         |
-| -------------------------------------------- | --------------------------------------------------------------------- |
-| Access login page HTML instead of a response | The policy has no Service Auth rule, so the token never reaches prick |
-| `UNAUTHENTICATED`, exit 3                    | One half of the pair is missing, or they come from different prefixes |
-| `FORBIDDEN`, exit 4                          | The token authenticated and holds no grant — do step 6                |
-| `NOT_FOUND`, exit 5                          | Granted, but on a different project or environment than the job reads |
+| What you see                                 | What it means                                                                                                            |
+| -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| Access login page HTML instead of a response | The policy has no Service Auth rule, so the token never reaches prick                                                    |
+| `UNAUTHENTICATED`, exit 3                    | One half of the pair is missing, or they come from different prefixes                                                    |
+| `NOT_FOUND`, exit 5                          | The token holds no grant on this project — do step 6. Also what a grant on a different project or environment looks like |
+| `FORBIDDEN`, exit 4                          | The token can see the environment, but its role is too low for the operation                                             |
 
 Check the whole chain from the job itself:
 

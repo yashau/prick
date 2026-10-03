@@ -34,7 +34,7 @@ in prick.
 ```yaml title=".github/workflows/deploy.yml"
 - uses: yashau/prick/action@v2026.819.0
   with:
-    url: ${{ secrets.PRICK_URL }}
+    url: https://prick.example.com
     client-id: ${{ secrets.PRICK_CLIENT_ID }}
     client-secret: ${{ secrets.PRICK_CLIENT_SECRET }}
     project: api
@@ -114,10 +114,12 @@ runner already sets `CF_ACCESS_CLIENT_ID` / `CF_ACCESS_CLIENT_SECRET` for
 `--no-input` matters: it makes a missing or rejected credential fail immediately
 instead of blocking on a prompt no CI job can answer.
 
-## The first run will 403, and that is the flow
+## The first run will 404, and that is the flow
 
 Access will let the token through the edge, and prick will refuse it, because
-authentication is not authorization and a new service token has no grant.
+authentication is not authorization and a new service token has no grant. A
+project the token cannot see is reported as absent (`NOT_FOUND`, exit 5) rather
+than forbidden, so the status code does not reveal which project names exist.
 
 That denial is recorded. The subject then appears in the "seen but not granted"
 list, so an administrator can grant it without anyone copying an opaque
@@ -134,8 +136,8 @@ prk access grant e367826f93b8d71185e03fe518aff3b4.access --role reader --scope a
 Give CI the **narrowest** role that works. A deploy job that only reads secrets
 is a `reader` on one environment, not a global admin.
 
-:::note[A different 403 looks the same from here]
-The denial above is `FORBIDDEN`, and a grant fixes it. If the error is
+:::note[A different refusal can look similar from here]
+The denial above is `NOT_FOUND`, and a grant fixes it. If the error is
 `MITIGATED` instead, the request never reached prick at all: Cloudflare's bot
 products challenge datacenter IPs, and GitHub-hosted runners are datacenter IPs.
 No grant will fix that one — see

@@ -274,7 +274,7 @@ grammar exactly, and a single miss is either a command injection or a silently a
 
 <br>
 
-Point the job at prick and let it `403` on the first run. That refusal is not a mistake — it is how
+Point the job at prick and let it `404` on the first run. That refusal is not a mistake — it is how
 a service token introduces itself:
 
 ```bash
@@ -498,6 +498,8 @@ Deploy it to your own account. This repository never deploys it for you.
 ```bash
 git clone https://github.com/yashau/prick && cd prick
 mise trust && mise run bootstrap
+pnpm --filter @prick/app exec wrangler d1 create prick   # paste the database_id into wrangler.jsonc
+# set "routes" and the ACCESS_* vars in packages/app/wrangler.jsonc — see the Quickstart
 openssl rand -base64 32 | pnpm --filter @prick/app exec wrangler secret put MASTER_KEY
 pnpm --filter @prick/app exec wrangler d1 migrations apply prick --remote
 pnpm --filter @prick/app exec wrangler deploy
@@ -543,7 +545,7 @@ the dependency list is embedded in it. `mise run test` prints the current counts
 place they stay right.
 
 Migrations are additive only, the API is versioned at `/api/v1`, and a client and server on
-different versions is supported — `prk doctor` reports both.
+different versions is supported.
 
 ## 🛠️ Development
 

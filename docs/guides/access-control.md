@@ -115,9 +115,7 @@ prk access grant e367826f93b8d71185e03fe518aff3b4.access --role reader --scope a
 The scope is written `project:environment` and defaults to `*:*`, which is
 global. `*` is a wildcard, so `api:*` is the whole `api` project.
 
-The scope string is split on the **first** colon only, and the entire remainder
-is the environment. Splitting on every colon would truncate an environment
-component and grant access to the wrong thing.
+Slugs cannot contain a colon, so `project:environment` is unambiguous.
 
 `--expires-in` takes days. An expired grant is skipped during resolution — it
 does not need to be cleaned up to stop working, and it stays in the table as a
@@ -307,8 +305,9 @@ decisive one. See
 
 ## The service token flow
 
-A new service token gets a `403` on its first request, because Access
-authenticated it and no grant covers it yet. That denial is **recorded**, and it
+A new service token gets a `404` on its first request, because Access
+authenticated it and no grant covers it yet — a project it cannot see is
+reported as absent rather than forbidden. That denial is **recorded**, and it
 is the introduction:
 
 ```bash

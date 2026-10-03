@@ -64,7 +64,7 @@ Out of scope:
 Please do not report these:
 
 - **`MASTER_KEY` is a plain Worker secret, not Secrets Store.** Deliberate. See
-  `CONTRIBUTING.md`.
+  `docs/reference/configuration.md`.
 - **`BOOTSTRAP_ADMINS` is a plaintext `vars` list.** Deliberate: it anchors
   bootstrap to the same authority that deploys the Worker, which is strictly
   greater than any grant it can create.

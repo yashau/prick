@@ -59,8 +59,8 @@ builds lives in the repository-root `docs/` directory and is read **in place** b
 Astro's content loader. There is deliberately no symlink and no prebuild copy step,
 so "the docs" has exactly one meaning.
 
-The two workspaces never overlap: Cargo members are `crates/*`, pnpm packages are
-`packages/*`.
+The two workspaces never overlap: Cargo members are `crates/*` and `xtask`, pnpm
+packages are `packages/*` and `e2e`.
 
 Scripts are Node ESM rather than shell because a `.sh` would work in CI and fail
 for a Windows contributor. Node is guaranteed present because mise installed it.
@@ -69,22 +69,22 @@ for a Windows contributor. Node is guaranteed present because mise installed it.
 
 `mise tasks` lists everything. The ones you will use:
 
-| Task                     | Does                                                                       |
-| ------------------------ | -------------------------------------------------------------------------- |
-| `mise run dev`           | Worker + UI dev server                                                     |
-| `mise run demo`          | A signed-in, seeded copy of the app, for browsing                          |
-| `mise run fmt`           | Format everything in place                                                 |
-| `mise run lint`          | clippy, Oxlint, svelte-check, actionlint, zizmor, pinact, typos, file size |
-| `mise run typecheck`     | TypeScript across the workspace                                            |
-| `mise run test`          | Rust, doc, Worker, script, action and MCP suites                           |
-| `mise run openapi`       | Regenerate `docs/openapi.json` from the Hono router                        |
-| `mise run openapi:check` | Fail if `docs/openapi.json` is stale                                       |
-| `mise run miri`          | The purity proof for `prick-core`                                          |
-| `mise run e2e`           | Playwright                                                                 |
-| `mise run build`         | CLI, Worker bundle and MCP server                                          |
-| `mise run docs:dev`      | The documentation site, with hot reload                                    |
-| `mise run deny`          | Licences, bans, advisories, the git-source ban                             |
-| `mise run ci`            | **A superset of CI.** Run before opening a pull request                    |
+| Task                     | Does                                                                                    |
+| ------------------------ | --------------------------------------------------------------------------------------- |
+| `mise run dev`           | Worker + UI dev server                                                                  |
+| `mise run demo`          | A signed-in, seeded copy of the app, for browsing                                       |
+| `mise run fmt`           | Format everything in place                                                              |
+| `mise run lint`          | clippy, Oxlint, svelte-check, astro check, actionlint, zizmor, pinact, typos, file size |
+| `mise run typecheck`     | TypeScript across the workspace                                                         |
+| `mise run test`          | Rust, doc, Worker, script, action and MCP suites                                        |
+| `mise run openapi`       | Regenerate `docs/openapi.json` from the Hono router                                     |
+| `mise run openapi:check` | Fail if `docs/openapi.json` is stale                                                    |
+| `mise run miri`          | The purity proof for `prick-core`                                                       |
+| `mise run e2e`           | Playwright                                                                              |
+| `mise run build`         | CLI, Worker bundle and MCP server                                                       |
+| `mise run docs:dev`      | The documentation site, with hot reload                                                 |
+| `mise run deny`          | Licences, bans, advisories, the git-source ban                                          |
+| `mise run ci`            | **A superset of CI.** Run before opening a pull request                                 |
 
 `depends` fans out in parallel, and `sources`/`outputs` give content-hash
 skipping, so a repeat run is cheap.
@@ -106,7 +106,7 @@ the demo server as the cause.
 
 | Owns           | Scope                                                                               |
 | -------------- | ----------------------------------------------------------------------------------- |
-| mise           | Rust, Node, pnpm and the Rust dev tools. The only thing a contributor installs      |
+| mise           | Rust, Node, pnpm and every non-JS dev tool. The only thing a contributor installs   |
 | pnpm           | Package management, and the JS tools below, pinned in the root `package.json`       |
 | Oxlint / Oxfmt | Linting and formatting on the JS side. Formatting is configured in `.oxfmtrc.jsonc` |
 
@@ -127,8 +127,8 @@ If you need to print, add a helper to `output`. Do not widen the allow.
 
 ### `prick-core` is pure
 
-No I/O, no async, no `unsafe`, no FFI. `cargo miri test -p prick-core` is a
-machine-checked proof of that: it cannot pass if you add a file read, a clock
+No I/O, no async, no `unsafe`, no FFI. `mise run miri` (`cargo miri nextest run
+--package prick-core`) is a machine-checked proof of that: it cannot pass if you add a file read, a clock
 call, or a dependency with a C shim. Impure code belongs in `prick-api`,
 `prick-auth` or `prick-exec`.
 
@@ -136,7 +136,7 @@ call, or a dependency with a C shim. Impure code belongs in `prick-api`,
 
 `workers_dev` and `preview_urls` must be explicitly `false` in the wrangler
 config. The `workflows` job in `.github/workflows/ci.yml` greps for both on
-**every push**. It needs no secrets, so it runs on forks and on pull requests
+**every push to `main` and every pull request**, whatever paths changed. It needs no secrets, so it runs on forks and on pull requests
 from them.
 
 This is the only invariant in the repository that, if broken, exposes every

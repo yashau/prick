@@ -106,8 +106,8 @@ Three things happen on every authenticated request, in this order:
    a denied service token grantable at all — Access issues the tokens, so the
    first request from one is the only introduction there will ever be.
 
-:::note[Unknown endpoints answer 401, not 404]
-Authentication is mounted ahead of routing, so an anonymous caller is refused
+:::note[Unknown endpoints under `/api/v1` answer 401, not 404]
+Authentication is mounted ahead of routing for everything under `/api/v1`, so an anonymous caller is refused
 before the router decides whether a path exists. The alternative turns the status
 code into a route oracle: 404 versus 401 would map the entire surface, including
 endpoints added later, to an unauthenticated attacker.
@@ -648,16 +648,16 @@ layer accepts.
 
 ### Limits
 
-| Limit                   | Default                                               | Override           |
-| ----------------------- | ----------------------------------------------------- | ------------------ |
-| Secret value            | 65536 bytes of UTF-8                                  | `SECRET_MAX_BYTES` |
-| Secrets per environment | 500                                                   | `ENV_MAX_SECRETS`  |
-| Request body            | 1048576 bytes                                         | `BODY_MAX_BYTES`   |
-| Secret key name         | 256 characters, POSIX env var name                    | —                  |
-| Slug                    | 64 characters, lowercase with single interior hyphens | —                  |
-| Description             | 1024 characters                                       | —                  |
-| Audit `reason`          | 512 characters                                        | —                  |
-| Rekey page              | 1 to 100 rows                                         | —                  |
+| Limit                   | Default                                               | Override                                                                                                             |
+| ----------------------- | ----------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| Secret value            | 65536 bytes of UTF-8                                  | `SECRET_MAX_BYTES` (raising it does not lift the `secrets:batch` cap; see [Configuration](/reference/configuration)) |
+| Secrets per environment | 500                                                   | `ENV_MAX_SECRETS`                                                                                                    |
+| Request body            | 1048576 bytes                                         | `BODY_MAX_BYTES`                                                                                                     |
+| Secret key name         | 256 characters, POSIX env var name                    | —                                                                                                                    |
+| Slug                    | 64 characters, lowercase with single interior hyphens | —                                                                                                                    |
+| Description             | 1024 characters                                       | —                                                                                                                    |
+| Audit `reason`          | 512 characters                                        | —                                                                                                                    |
+| Rekey page              | 1 to 100 rows                                         | —                                                                                                                    |
 
 `ENV_MAX_SECRETS` is enforced against the **resulting** environment, not only
 against the request: two merges of 300 keys each are individually under the cap
@@ -672,8 +672,8 @@ atomicity, so an oversized write is refused rather than made non-atomic.
 | `CreateProjectBody`     | `{ slug, name, description? }`                                                                                                                       |
 | `UpdateProjectBody`     | `{ name?, description? }`                                                                                                                            |
 | `CreateEnvironmentBody` | `{ slug, name, description? }`                                                                                                                       |
-| `BatchBody`             | `{ mode: "merge" \| "replace", set?, descriptions?, delete?, expected_rev?, reason? }`                                                               |
-| `ImportBody`            | `{ format: "env" \| "json", content, mode, dry_run, expected_rev?, reason? }`                                                                        |
+| `BatchBody`             | `{ mode?: "merge"                                                                                                                                    | "replace" (default "merge"), set?, descriptions?, delete?, expected_rev?, reason? }`          |
+| `ImportBody`            | `{ format: "env"                                                                                                                                     | "json", content, mode? (default "merge"), dry_run? (default false), expected_rev?, reason? }` |
 | `RollbackBody`          | `{ key, to_version, reason? }`                                                                                                                       |
 | `RenameBody`            | `{ from, to }`                                                                                                                                       |
 | `RekeyBody`             | `{ limit }`                                                                                                                                          |

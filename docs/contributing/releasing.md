@@ -54,8 +54,8 @@ self-describing: `.0` is the first release of the day.
 
 ### The version lives in the tag, not in the tree
 
-Every manifest in the repository reads `0.0.0-dev` — `Cargo.toml`, all nine
-`package.json` files, `svelte.config.js`, the `/health` response. The **git tag
+Every manifest in the repository reads `0.0.0-dev` — `Cargo.toml`, `Cargo.lock`
+and all seven `package.json` files. The **git tag
 is the source of truth**, and `scripts/version.mjs set` stamps it into every
 manifest immediately before compiling, so `env!("CARGO_PKG_VERSION")` is correct
 by construction and there is no second representation to drift.
@@ -170,9 +170,9 @@ version → build (6 legs → 8 artefacts) → package → publish-npm ─┬─
 ```
 
 Everything left of `publish-npm` runs on a dispatched dry run too. Of the four
-jobs to its right, three of them do: `publish-crates` packages and verifies with
-`--dry-run`, and `publish-manifests` renders both files and prints them. Only
-`publish-winget` is push-only, for the reason given below.
+jobs to its right, two do: `publish-crates` packages and verifies with
+`--dry-run`, and `publish-manifests` renders both files and prints them.
+`github-release` and `publish-winget` are push-only.
 
 ### version
 

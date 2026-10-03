@@ -6,7 +6,7 @@ job as a masked environment variable.
 ```yaml
 - uses: yashau/prick/action@v2026.819.0
   with:
-    url: ${{ secrets.PRICK_URL }}
+    url: https://prick.example.com
     client-id: ${{ secrets.PRICK_ACCESS_CLIENT_ID }}
     client-secret: ${{ secrets.PRICK_ACCESS_CLIENT_SECRET }}
     project: api
@@ -39,11 +39,12 @@ for exactly this — a **service token**, a client id and client secret pair tha
    will reject the token at the edge, before prick ever sees the request.
 4. Grant the token a role **inside prick**. Access decides _who_ is calling; prick decides _what
    they may read_, and a brand-new token may read nothing. The easy way round is to run the workflow
-   once, let it fail with a 403, then open **Access → Seen but not granted** in the prick admin UI —
+   once, let it fail with a 404 (a project the token cannot see is reported as absent), then open **Access → Seen but not granted** in the prick admin UI —
    the denied client id is sitting there with a Grant button next to it. `reader` on the project (or
    on the single environment) is enough.
 
-Step 4 is the usual first-run failure, and the action's error message says so.
+Step 4 is the usual first-run failure. The action reports it as "no such project or environment"
+(exit 5), because prick does not reveal a project to a token with no grant on it.
 
 ## Inputs
 
@@ -77,7 +78,7 @@ without it — a build that silently loses `DATABASE_URL` fails later and far le
 ```yaml
 - uses: yashau/prick/action@v2026.819.0
   with:
-    url: ${{ secrets.PRICK_URL }}
+    url: https://prick.example.com
     client-id: ${{ secrets.PRICK_ACCESS_CLIENT_ID }}
     client-secret: ${{ secrets.PRICK_ACCESS_CLIENT_SECRET }}
     project: api
@@ -90,9 +91,25 @@ without it — a build that silently loses `DATABASE_URL` fails later and far le
 
 ```yaml
 - uses: yashau/prick/action@v2026.819.0
-  with: { url: ..., project: api, environment: staging, prefix: STAGING_ }
+  with:
+    {
+      url: ...,
+      client-id: ...,
+      client-secret: ...,
+      project: api,
+      environment: staging,
+      prefix: STAGING_,
+    }
 - uses: yashau/prick/action@v2026.819.0
-  with: { url: ..., project: api, environment: production, prefix: PROD_ }
+  with:
+    {
+      url: ...,
+      client-id: ...,
+      client-secret: ...,
+      project: api,
+      environment: production,
+      prefix: PROD_,
+    }
 ```
 
 **Passing a value to another action**, which needs a `with:` expression rather than an environment
@@ -101,7 +118,7 @@ variable:
 ```yaml
 - id: prick
   uses: yashau/prick/action@v2026.819.0
-  with: { url: ..., project: api, export-to: outputs }
+  with: { url: ..., client-id: ..., client-secret: ..., project: api, export-to: outputs }
 - uses: some/other-action@v1
   with:
     token: ${{ fromJSON(steps.prick.outputs.secrets).SOME_TOKEN }}

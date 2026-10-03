@@ -43,20 +43,20 @@ pushing a commit, so a CI job would turn unrelated pull requests red on a day no
 anything. `build` is left out because `lint:rust` compiles every target already, and the only thing
 `build:rust` adds is `--release`, which the release workflow does on a tag.
 
-| Gate            | Covers                                                                     | Narrow to                                                                                                     |
-| --------------- | -------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
-| `bootstrap`     | Workspace dependencies + git hooks                                         | `bootstrap:js`, `bootstrap:hooks`                                                                             |
-| `fmt:check`     | Fails if anything is unformatted                                           | `fmt:check:rust`, `fmt:check:js`                                                                              |
-| `lint`          | clippy, Oxlint, svelte-check, actionlint, zizmor, pinact, typos, file size | `lint:rust`, `lint:js`, `lint:svelte`, `lint:actions`, `lint:zizmor`, `lint:pinact`, `lint:typos`, `lint:loc` |
-| `typecheck`     | TypeScript across the workspace                                            | —                                                                                                             |
-| `test`          | Rust, doc, Worker, script, action and MCP suites                           | `test:rust`, `test:doc`, `test:js`, `test:scripts`, `test:action`, `test:mcp`                                 |
-| `openapi:check` | Fails if `docs/openapi.json` is stale                                      | regenerate with `openapi`                                                                                     |
-| `deny`          | Licences, bans, advisories, the git-source ban                             | —                                                                                                             |
-| `audit`         | Advisories against both dependency trees                                   | `audit:rust`, `audit:js`                                                                                      |
-| `miri`          | The purity proof for `prick-core`                                          | —                                                                                                             |
-| `build`         | CLI, Worker bundle and MCP server                                          | `build:rust`, `build:js`, `build:mcp`                                                                         |
-| `e2e`           | Playwright; `e2e:install` fetches the browsers first                       | `e2e:install`, `e2e:install:deps`                                                                             |
-| `version:check` | Every manifest carries the same version                                    | —                                                                                                             |
+| Gate            | Covers                                                                                  | Narrow to                                                                                                                  |
+| --------------- | --------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `bootstrap`     | Workspace dependencies + git hooks                                                      | `bootstrap:js`, `bootstrap:hooks`                                                                                          |
+| `fmt:check`     | Fails if anything is unformatted                                                        | `fmt:check:rust`, `fmt:check:js`                                                                                           |
+| `lint`          | clippy, Oxlint, svelte-check, astro check, actionlint, zizmor, pinact, typos, file size | `lint:rust`, `lint:js`, `lint:svelte`, `lint:docs`, `lint:actions`, `lint:zizmor`, `lint:pinact`, `lint:typos`, `lint:loc` |
+| `typecheck`     | TypeScript across the workspace                                                         | —                                                                                                                          |
+| `test`          | Rust, doc, Worker, script, action and MCP suites                                        | `test:rust`, `test:doc`, `test:js`, `test:scripts`, `test:action`, `test:mcp`                                              |
+| `openapi:check` | Fails if `docs/openapi.json` is stale                                                   | regenerate with `openapi`                                                                                                  |
+| `deny`          | Licences, bans, advisories, the git-source ban                                          | —                                                                                                                          |
+| `audit`         | Advisories against both dependency trees                                                | `audit:rust`, `audit:js`                                                                                                   |
+| `miri`          | The purity proof for `prick-core`                                                       | —                                                                                                                          |
+| `build`         | CLI, Worker bundle and MCP server                                                       | `build:rust`, `build:js`, `build:mcp`                                                                                      |
+| `e2e`           | Playwright; `e2e:install` fetches the browsers first                                    | `e2e:install`, `e2e:install:deps`                                                                                          |
+| `version:check` | Every manifest carries the same version                                                 | —                                                                                                                          |
 
 `e2e:install` downloads browser binaries and nothing else. `e2e:install:deps` installs the system
 libraries Chromium links against; it needs root, and CI deliberately does not run it, because the
@@ -121,8 +121,8 @@ Breaking these fails the build, not review.
 1. **No writes to stdout/stderr outside `crates/prk/src/output/`.** `print_stdout` and
    `print_stderr` are denied workspace-wide. This exists so that leaking a secret into a log line is
    a compile error. Add a helper to `output`; never widen the allow.
-2. **`prick-core` is pure** — no I/O, no async, no `unsafe`, no FFI. `cargo miri test -p prick-core`
-   is a machine-checked proof of that; it cannot pass if you add a file read, a clock call, or an FFI
+2. **`prick-core` is pure** — no I/O, no async, no `unsafe`, no FFI. `mise run miri`
+   (`cargo miri nextest run --package prick-core`) is a machine-checked proof of that; it cannot pass if you add a file read, a clock call, or an FFI
    dependency. Put impure code in `prick-api` / `prick-auth` / `prick-exec` instead.
 
 ## Rules that are not mechanically enforced — you must hold these yourself

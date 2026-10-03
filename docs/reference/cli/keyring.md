@@ -55,6 +55,12 @@ When the rotation is finished:
 Nothing references a retired key. `MASTER_KEY_OLD` can be removed; redeploy after you delete it.
 ```
 
+When no rotation is in progress at all:
+
+```
+No `MASTER_KEY_OLD` is set on this deployment, so there is nothing to remove and no rotation is in progress.
+```
+
 That line is the **only** thing to act on. The counts are taken live over
 `secret_versions` every time you ask, and they cover history as well as current
 versions — an earlier version stranded under a retired key id is a rollback that
@@ -81,6 +87,7 @@ prk keyring status --json
       "last_rekey_at": 1760000000000
     }
   ],
+  "old_key_loaded": true,
   "safe_to_remove_old_key": false
 }
 ```
