@@ -4,6 +4,8 @@ import { describeRoute, generateSpecs } from "hono-openapi";
 import type { OpenAPIV3_1 } from "openapi-types";
 import { z, type ZodType } from "zod";
 
+import { APP_VERSION } from "../../version.js";
+
 import type { ApiEnv } from "./env.js";
 import { ErrorResponse } from "./schemas.js";
 
@@ -267,7 +269,7 @@ export const DOCUMENT: GenerateSpecOptions["documentation"] = {
   openapi: "3.1.0",
   info: {
     title: "prick",
-    version: "0.0.0-dev",
+    version: APP_VERSION,
     description: [
       "A self-hosted secrets manager on Cloudflare Workers and D1.",
       "",

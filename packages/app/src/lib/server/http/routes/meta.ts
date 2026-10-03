@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 
+import { APP_VERSION } from "../../../version.js";
 import { resolveEffectiveRole } from "../../auth/authorize.js";
 import { core } from "../context.js";
 import type { ApiEnv } from "../env.js";
@@ -33,7 +34,8 @@ import { HealthResponse, WhoamiResponse } from "../schemas.js";
  *             secrets manager that cannot load its root of trust cannot read or
  *             write a single value, and reporting health would be reporting the
  *             opposite of the truth.
- *   version   the build's version string.
+ *   version   the web app's CalVer (`APP_VERSION`), stamped from an `app-v*`
+ *             tag by `mise run app:set`; `0.0.0-dev` when unstamped.
  */
 export function healthRoutes(): Hono<ApiEnv> {
   const app = new Hono<ApiEnv>();
@@ -50,7 +52,7 @@ export function healthRoutes(): Hono<ApiEnv> {
         200: jsonResponse("The server is listening and its key ring loaded.", HealthResponse),
       },
     }),
-    (c) => c.json({ service: "prick", status: "ok", version: "0.0.0-dev" } as const),
+    (c) => c.json({ service: "prick", status: "ok", version: APP_VERSION } as const),
   );
 
   return app;

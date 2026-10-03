@@ -101,6 +101,10 @@ pub fn login(args: &LoginArgs, global: &GlobalArgs, out: Output) -> Result<(), C
 
     let store = TokenStore::in_dir(context.store().dir(), args.storage.into());
 
+    // Before anything else: a backend that cannot hold the session must refuse
+    // now, not after the operator has finished a browser sign-in for nothing.
+    store.check_available()?;
+
     out.note(&format!("Signing in to {}", context.api_url()));
 
     let no_browser = args.no_browser || !prick_auth::browser::is_available();

@@ -16,10 +16,10 @@
 // UTC is mandatory. A maintainer in UTC+5 running this after 19:00 local would
 // otherwise compute tomorrow's date and be a day ahead of CI.
 //
-// There are two independent release lines, distinguished only by their tag
-// prefix: `v` for the CLI, `docs-v` for the documentation site. Each counts N
-// against its own prefix, so cutting docs three times in a day does not make the
-// next CLI release `.3`.
+// There are three independent release lines, distinguished only by their tag
+// prefix: `v` for the CLI, `docs-v` for the documentation site and `app-v` for
+// the web app. Each counts N against its own prefix, so cutting docs three times
+// in a day does not make the next CLI release `.3`.
 //
 // Subcommands:
 //   plan  [--github-output]      compute today's version, tag and human CalVer
@@ -48,17 +48,19 @@ export const VERSION_RE = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
 export const DEV_VERSION = '0.0.0-dev';
 
 /**
- * The two release lines. A tag prefix is the *whole* identity of a line: it
+ * The three release lines. A tag prefix is the *whole* identity of a line: it
  * selects which tags count towards N, which tag `cut` pushes, and which workflow
  * that push triggers.
  *
- * The two must not overlap in either direction, because the workflow triggers
- * are `push: tags: [<prefix>*]` globs. `docs-v2026.815.0` does not match `v*`
- * (it starts with `d`), and `v2026.815.0` does not match `docs-v*`. That
- * non-overlap is asserted in version.test.mjs rather than assumed.
+ * No two may overlap, because the workflow triggers are `push: tags:
+ * [<prefix>*]` globs: `docs-v…` and `app-v…` do not match `v*`, and no line's
+ * tag matches another's glob — asserted in version.test.mjs and app.test.mjs.
+ * The app line has no workflow; an `app-v*` tag only names a version (see
+ * scripts/app.mjs).
  */
 export const CLI_TAG_PREFIX = 'v';
 export const DOCS_TAG_PREFIX = 'docs-v';
+export const APP_TAG_PREFIX = 'app-v';
 
 /**
  * The `on.push.tags` glob a release line's workflow triggers on.

@@ -74,10 +74,10 @@ Nothing arriving over the wire can change it.
 | `PRICK_MCP_TIMEOUT_MS`    | no       | Per-request timeout, 1000–120000. Default `15000`                   |
 | `PRICK_MCP_LOG_LEVEL`     | no       | `debug`, `info`, `warn`, `error` or `silent`. Default `info`        |
 
-The credential pair carries over from an environment already set up for
-`cloudflared` or for `prk`: `PRK_ACCESS_CLIENT_ID` / `CF_ACCESS_CLIENT_ID` and
-their secret halves are read. The base URL does not: `prk`'s `PRK_API_URL` is
-not read, so set `PRICK_MCP_API_URL` (or `PRK_URL`).
+An environment already set up for `cloudflared` or for `prk` works unchanged:
+`PRK_API_URL` (or the older `PRK_URL`) is read for the base URL, and
+`PRK_ACCESS_CLIENT_ID` / `CF_ACCESS_CLIENT_ID` and their secret halves for the
+credential pair. The `PRICK_MCP_*` names win when both are set.
 
 Flags: `--api-url <url>`, `--allow-reveal`, `--workspace <dir>`, `--log-level <level>`, `--help`,
 `--version`. There is deliberately **no `--client-secret`** — arguments are

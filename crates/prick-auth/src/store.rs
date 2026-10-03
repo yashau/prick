@@ -333,7 +333,7 @@ impl TokenStore {
     /// [`AuthError::StorageUnavailable`] for the keyring backend,
     /// [`AuthError::Store`] for an unreadable or unparsable file.
     pub fn load(&self) -> Result<Option<StoredSession>, AuthError> {
-        self.require_file_backend()?;
+        self.check_available()?;
 
         let path = self.path();
         let mut bytes = match std::fs::read(&path) {
@@ -383,7 +383,7 @@ impl TokenStore {
     /// [`AuthError::StorageUnavailable`] for the keyring backend, and
     /// [`AuthError::Store`] for any filesystem failure.
     pub fn save(&self, session: &StoredSession) -> Result<(), AuthError> {
-        self.require_file_backend()?;
+        self.check_available()?;
         self.ensure_dir()?;
 
         let wire = Wire::from_session(session);
@@ -443,7 +443,15 @@ impl TokenStore {
     }
 
     /// Refuses a backend this build cannot serve.
-    fn require_file_backend(&self) -> Result<(), AuthError> {
+    ///
+    /// Public so a caller can ask before doing work whose result this store
+    /// will have to hold: a login that only discovers it cannot save at the very
+    /// end has already sent the operator through a browser sign-in for nothing.
+    ///
+    /// # Errors
+    ///
+    /// [`AuthError::StorageUnavailable`] for a backend this build cannot serve.
+    pub fn check_available(&self) -> Result<(), AuthError> {
         match self.backend {
             StorageBackend::File => Ok(()),
             // Named rather than silently downgraded to a file: an operator who
@@ -854,6 +862,18 @@ mod tests {
         let err = store.save(&session()).expect_err("the keyring is not available");
         assert!(matches!(err, AuthError::StorageUnavailable { backend: "keyring" }));
         assert!(!store.path().exists(), "a keyring request silently wrote a file");
+    }
+
+    #[test]
+    fn availability_is_known_before_anything_is_saved() {
+        let dir = tempfile::tempdir().expect("a temporary directory");
+
+        let file = TokenStore::in_dir(dir.path(), StorageBackend::File);
+        file.check_available().expect("the file backend is available");
+
+        let keyring = TokenStore::in_dir(dir.path(), StorageBackend::Keyring);
+        let err = keyring.check_available().expect_err("the keyring is not available");
+        assert!(matches!(err, AuthError::StorageUnavailable { backend: "keyring" }));
     }
 
     #[test]

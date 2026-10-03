@@ -144,10 +144,10 @@ edge before the request reaches the Worker. There is no login flow and no token 
 | `PRICK_MCP_TIMEOUT_MS`    | no       | Per-request timeout, 1000–120000. Default `15000`                   |
 | `PRICK_MCP_LOG_LEVEL`     | no       | `debug` \| `info` \| `warn` \| `error` \| `silent`. Default `info`  |
 
-Aliases are accepted so the credential pair carries over from an environment already set up for
-`cloudflared` or for the `prk` CLI: `PRK_ACCESS_CLIENT_ID` / `CF_ACCESS_CLIENT_ID` and
-`PRK_ACCESS_CLIENT_SECRET` / `CF_ACCESS_CLIENT_SECRET`. The base URL alias is `PRK_URL`; `prk`'s own
-`PRK_API_URL` is not read, so set `PRICK_MCP_API_URL`.
+Aliases are accepted so an environment already set up for `cloudflared` or for the `prk` CLI works
+unchanged: `PRK_API_URL` (or the older `PRK_URL`) for the base URL, and `PRK_ACCESS_CLIENT_ID` /
+`CF_ACCESS_CLIENT_ID` and `PRK_ACCESS_CLIENT_SECRET` / `CF_ACCESS_CLIENT_SECRET` for the credential
+pair. The `PRICK_MCP_*` names win when both are set.
 
 Flags: `--api-url <url>`, `--allow-reveal`, `--workspace <dir>`, `--log-level <level>`, `--help`,
 `--version`.

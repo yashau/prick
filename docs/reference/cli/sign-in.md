@@ -110,10 +110,10 @@ one of those cases without asking.
 
 ### Where the token is stored
 
-| Backend   | Default | Notes                                                                                                                                                                |
-| --------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `file`    | Yes     | A file at mode `0600` in a directory at mode `0700`                                                                                                                  |
-| `keyring` | No      | The OS keyring. Accepted by `--storage` but not available in this build: saving fails with `STORAGE_UNAVAILABLE` (exit 8) rather than quietly writing a file instead |
+| Backend   | Default | Notes                                                                                                                                                                                                  |
+| --------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `file`    | Yes     | A file at mode `0600` in a directory at mode `0700`                                                                                                                                                    |
+| `keyring` | No      | The OS keyring. Accepted by `--storage` but not available in this build: `prk login` refuses with `STORAGE_UNAVAILABLE` (exit 8) before it opens a browser, rather than quietly writing a file instead |
 
 The file is written atomically — temporary file, then rename — and the mode is
 set at creation, so there is never a window in which a token file exists

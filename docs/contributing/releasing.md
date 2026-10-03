@@ -5,14 +5,15 @@ sidebar:
   order: 3
 ---
 
-## Two release lines, one mechanism
+## Three release lines, one mechanism
 
-There are two things to release, and they work identically:
+There are three things to release, and they are cut identically:
 
 | Line          | Tasks    | Tag prefix | Workflow           | Ships                                                                      |
 | ------------- | -------- | ---------- | ------------------ | -------------------------------------------------------------------------- |
 | The `prk` CLI | `cli:*`  | `v`        | `cli-release.yml`  | Eight binaries, ten npm packages                                           |
 | The docs site | `docs:*` | `docs-v`   | `docs-release.yml` | The `prick-docs` Worker, at [docs.getprick.dev](https://docs.getprick.dev) |
+| The web app   | `app:*`  | `app-v`    | none               | Nothing. The tag names a release; self-hosters deploy it themselves        |
 
 **Cutting the version is what releases it.** `cli:cut` and `docs:cut` compute the
 next version, take a typed confirmation, then create an annotated tag and push
@@ -151,6 +152,44 @@ not.
 
 `docs:preview` is unrelated: it serves the built site locally, which is what
 `preview` means in every JS toolchain. The version preview is `docs:next`.
+
+## Cutting a web app release
+
+| Task                         | Does                                                                                      |
+| ---------------------------- | ----------------------------------------------------------------------------------------- |
+| `mise run app:next`          | Print the version and tag the next app release would take. Read-only                      |
+| `mise run app:cut`           | Tag and push an `app-v` tag. Deploys nothing                                              |
+| `mise run app:set [version]` | Stamp a version into the Worker. With no version, takes it from the `app-v` tag on `HEAD` |
+
+```bash
+mise run app:cut
+```
+
+The same typed-tag confirmation and the same tag lock as the other two lines,
+on the `app-v` prefix. What differs is that **nothing deploys**: this
+repository never deploys the Worker, every self-hoster does that from their own
+checkout, so there is no workflow and no `app-v*` trigger anywhere.
+`scripts/app.test.mjs` asserts that no workflow's tag glob matches an app tag.
+
+The version lives in one place, `packages/app/src/lib/version.js`, which
+`/api/v1/health`, the OpenAPI document and SvelteKit's `version.name` all read.
+It is `0.0.0-dev` in the tree. `app:set` stamps it, so deploying a release is:
+
+```bash
+git checkout app-v2026.815.0
+```
+
+```bash
+mise run app:set
+```
+
+```bash
+pnpm --dir packages/app exec wrangler deploy
+```
+
+Like `version:set`, the stamp is a working-tree change for the build. Never
+commit it. It is separate from `version:set` on purpose: `version:check` asserts
+every manifest carries the **CLI's** version, and the app line counts its own `N`.
 
 ## Local docs tasks
 

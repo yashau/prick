@@ -95,10 +95,10 @@ forwarding SSH session.
 
 ### Where the token is stored
 
-| Backend   | Default | Notes                                                                                             |
-| --------- | ------- | ------------------------------------------------------------------------------------------------- |
-| `file`    | Yes     | A file at mode `0600` in a directory at mode `0700`. Works over SSH, in containers and in CI      |
-| `keyring` | No      | The OS keyring. Not available in this build: `--storage keyring` fails with `STORAGE_UNAVAILABLE` |
+| Backend   | Default | Notes                                                                                                                     |
+| --------- | ------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `file`    | Yes     | A file at mode `0600` in a directory at mode `0700`. Works over SSH, in containers and in CI                              |
+| `keyring` | No      | The OS keyring. Not available in this build: `--storage keyring` refuses with `STORAGE_UNAVAILABLE` before sign-in starts |
 
 The file is written **atomically** — to a temporary file, then renamed — and
 created at mode `0600` on Unix, so there is never a window in which a token file
