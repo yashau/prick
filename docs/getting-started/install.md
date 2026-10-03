@@ -112,11 +112,11 @@ Download the archive for your platform from the
 the binary onto your `PATH`:
 
 ```bash
-tar xzf prk-x86_64-unknown-linux-gnu.tar.gz
+tar xzf prk-<version>-x86_64-unknown-linux-gnu.tar.gz
 ```
 
 ```bash
-sudo mv prk /usr/local/bin/prk
+sudo mv prk-<version>-x86_64-unknown-linux-gnu/prk /usr/local/bin/prk
 ```
 
 The Windows assets are `.zip` rather than `.tar.gz` — unpack one and put
@@ -183,7 +183,7 @@ prk doctor
 ```
 ok   server url     https://prick.example.com (from the stored login)
 ok   token storage  /home/you/.config/prick/credentials.json is owner-only
-ok   api            /api/v1/health answered, version 2026.819.0
+ok   api            /api/v1/health answered, version 0.0.0-dev
 ok   access         Cloudflare Access with managed OAuth is in front of this server
 ok   identity       you@example.com (user)
 ok   installation   running as a native binary
@@ -239,7 +239,8 @@ npm update -g @yashau/prick
 ```
 
 Or replace the binary. A client and a server on different versions is normal and
-supported — the API is versioned at `/api/v1`, and `prk doctor` reports both.
+supported — the API is versioned at `/api/v1`. `prk --version` reports the client; the
+Worker's `/health` reports `0.0.0-dev`, because the Worker is not version-stamped.
 
 ## Uninstalling
 

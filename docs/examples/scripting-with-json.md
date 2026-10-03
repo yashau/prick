@@ -13,7 +13,7 @@ guarantees and the patterns that fall out of it.
 | Outcome | stdout            | stderr                  | Exit |
 | ------- | ----------------- | ----------------------- | ---- |
 | Success | one JSON document | **empty**               | 0    |
-| Failure | **empty**         | one JSON error envelope | 1–11 |
+| Failure | **empty**         | one JSON error envelope | 1–13 |
 
 Both halves are guaranteed, which is what lets you do this without checking
 anything first:

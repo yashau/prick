@@ -196,8 +196,9 @@ For the service token:
 
 :::caution[Both halves must come from the same place]
 A `PRK_` client id paired with a `CF_` client secret is not a credential. Mixing
-them is how a job authenticates as an identity nobody intended, so it is refused
-rather than resolved.
+them is how a job authenticates as an identity nobody intended, so the pair is
+ignored rather than combined: prk falls back to your stored login, or fails with
+`NO_CREDENTIAL`.
 :::
 
 :::danger[`--access-client-secret` is visible to other processes]

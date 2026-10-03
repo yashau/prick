@@ -43,7 +43,8 @@ e2e/        Playwright.
 xtask/      Shell completions and man page generation.
 ```
 
-The two workspaces never overlap: Cargo members are `crates/*`, pnpm packages are `packages/*`.
+The two workspaces never overlap: Cargo members are `crates/*` and `xtask`, pnpm packages are
+`packages/*` and `e2e`.
 
 The documentation Markdown lives at the repository root in `docs/` and is read **in place** by
 `packages/docs`. There is no copy step and no symlink, so "the docs" has exactly one meaning.
@@ -52,23 +53,23 @@ The documentation Markdown lives at the repository root in `docs/` and is read *
 
 `mise tasks` lists everything. The ones you will use:
 
-| Task                     | Does                                                                       |
-| ------------------------ | -------------------------------------------------------------------------- |
-| `mise run dev`           | Worker + UI dev server                                                     |
-| `mise run test`          | Rust, doc, Worker, script, action and MCP suites                           |
-| `mise run lint`          | clippy, Oxlint, svelte-check, actionlint, zizmor, pinact, typos, file size |
-| `mise run fmt`           | format everything in place                                                 |
-| `mise run openapi:check` | fail if `docs/openapi.json` is stale                                       |
-| `mise run docs:dev`      | the documentation site, with hot reload                                    |
-| `mise run e2e`           | Playwright                                                                 |
-| `mise run ci`            | **exact mirror of CI** — run before opening a PR                           |
+| Task                     | Does                                                                                    |
+| ------------------------ | --------------------------------------------------------------------------------------- |
+| `mise run dev`           | Worker + UI dev server                                                                  |
+| `mise run test`          | Rust, doc, Worker, script, action and MCP suites                                        |
+| `mise run lint`          | clippy, Oxlint, svelte-check, astro check, actionlint, zizmor, pinact, typos, file size |
+| `mise run fmt`           | format everything in place                                                              |
+| `mise run openapi:check` | fail if `docs/openapi.json` is stale                                                    |
+| `mise run docs:dev`      | the documentation site, with hot reload                                                 |
+| `mise run e2e`           | Playwright                                                                              |
+| `mise run ci`            | **a superset of CI** — run before opening a PR                                          |
 
 `docs/openapi.json` is generated from the Hono router by `mise run openapi`. Never hand-edit it; if
 you changed a route, regenerate it in the same commit.
 
 ## 4. Code style
 
-Not debated: rustfmt, `clippy -D warnings`, prettier, oxlint. Hooks run automatically via lefthook.
+Not debated: rustfmt, `clippy -D warnings`, oxfmt, oxlint. Hooks run automatically via lefthook.
 `LEFTHOOK=0 git push` skips them; CI will still fail, so this only buys you a faster local loop.
 
 ### Two rules that are enforced by tooling, not review

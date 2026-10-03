@@ -92,8 +92,9 @@ but one.
 | `0x01` | Current. AES-256-GCM with full additional authenticated data |
 | `0x00` | v0 — legacy, no AAD. **Decrypt-only, never emitted**         |
 
-The v0 format exists so that a v0 export can be imported and immediately
-re-encrypted as `0x01`. Its body is `iv[12] ‖ ciphertext‖tag`: no algorithm byte
+The v0 format exists so that a v0 export could be imported and immediately
+re-encrypted as `0x01`. The decrypt path supports it when a caller opts in, but
+no import route uses it yet. Its body is `iv[12] ‖ ciphertext‖tag`: no algorithm byte
 and no key id, so decrypting one has to try every key in the ring. Accepting it
 is **opt-in per call**, defaulting to refuse — a v0 row is bound to nothing and is
 exactly as transplantable as the ciphertexts the AAD exists to stop being, so
@@ -203,7 +204,7 @@ the history of every secret you own.
 | Rename a key           | Decrypt under the old identity, re-encrypt under the new one at the next version, both in one transaction. There is no cheap rename |
 | Roll back to version N | Decrypt N, re-encrypt as `current + 1`. The old blob is never resurrected                                                           |
 | Rekey                  | Re-encrypt under the **identical** AAD with a new key id. Version unchanged                                                         |
-| Import a v0 row        | Accepted on decrypt only, then immediately re-encrypted as `0x01`                                                                   |
+| Import a v0 row        | Decrypt-side support only (opt-in per call); no import route uses it yet. When one does, it re-encrypts as `0x01`                   |
 
 ## Failure behaviour
 
@@ -217,8 +218,8 @@ which is how an environment quietly deploys without its `DATABASE_URL`.
 | `SERVER_MISCONFIGURED` | The master key material is absent, malformed or internally inconsistent. Raised while parsing configuration, so the Worker fails closed on every route |
 | `DECRYPT_FAILED`       | The bytes were not sealed against the identity they are being opened under                                                                             |
 | `UNKNOWN_KID`          | The envelope names a key id the ring does not hold. **Names the id**, and lists the ones loaded                                                        |
-| `CRYPTO_FORMAT`        | A stored blob is not parseable                                                                                                                         |
-| `CRYPTO_INPUT`         | A caller supplied an identity that cannot be encoded                                                                                                   |
+| `CRYPTO_FORMAT`        | A stored blob is not parseable. Internal: answered to clients as `DECRYPT_FAILED`                                                                      |
+| `CRYPTO_INPUT`         | A caller supplied an identity that cannot be encoded. Internal: answered to clients as `VALIDATION_FAILED`                                             |
 | `PAYLOAD_TOO_LARGE`    | The plaintext exceeds the configured byte ceiling                                                                                                      |
 
 An AEAD failure and a presented-under-the-wrong-identity failure are

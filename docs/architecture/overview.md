@@ -70,8 +70,9 @@ secrets, no access control. That is why a typo in a Markdown file cannot trigger
 production deploy of the secrets manager, and a schema migration cannot be blocked
 behind a docs build.
 
-Cargo members are `crates/*`; pnpm packages are `packages/*`. Neither glob
-crosses.
+Cargo members are `crates/*` plus `xtask`; pnpm packages are the explicit list
+in `pnpm-workspace.yaml` (the `packages/…` directories plus `e2e`). Neither
+crosses into the other.
 
 ## Data model
 
@@ -83,7 +84,7 @@ Conventions that hold throughout `packages/app/src/lib/server/db/schema.ts`:
 
 - **IDs are UUIDv7 text.** Not `crypto.randomUUID()`, which is v4. v7 embeds a
   millisecond timestamp in its high bits and therefore sorts lexicographically in
-  creation order, which is what makes `WHERE id > :cursor ORDER BY id` a correct,
+  creation order, which is what makes `WHERE id < :cursor ORDER BY id DESC` a correct,
   index-only keyset paginator for the audit log. With v4 ids the same query
   returns rows in arbitrary order and the cursor means nothing.
 - **Timestamps are integer epoch milliseconds.** Never ISO-8601 text: that
@@ -158,14 +159,18 @@ load-testing; if it does not hold, the fix is a lower cap, never a split batch.
 _error_, not on zero rows changed, so a non-matching update succeeds as a no-op
 and the rest of the batch commits anyway.
 
-The construct that works is a deliberate primary-key collision:
+The construct that works is a deliberate constraint collision:
 
 ```sql
-INSERT INTO environments SELECT * FROM environments WHERE id = ?1 AND rev != ?2
+INSERT INTO environments (id, project_id, slug, name, description, rev, created_at, updated_at, created_by)
+SELECT id, project_id, slug, name, description, rev, created_at, updated_at, created_by
+FROM environments WHERE id = ?1 AND rev != ?2
 ```
 
-Zero rows — a harmless no-op — when the revision matches; one row, and therefore
-a primary key violation that aborts the whole batch, when it does not. Mapped to
+The columns are listed on both sides rather than `SELECT *`, so a migration that
+adds a column in the middle cannot turn the guard into a corruption. Zero rows —
+a harmless no-op — when the revision matches; one row, and therefore a
+constraint violation that aborts the whole batch, when it does not. Mapped to
 `412`.
 
 ## The UI
@@ -177,8 +182,8 @@ The **secrets subtree only** sets `ssr = false`
 (`src/routes/(app)/p/[project]/[env]/+layout.ts`). It is client-rendered, and
 values are fetched from `/api/v1` in the browser. No server render means no
 serialised page payload, which means there is nothing there to leak. Form actions
-are used for projects, environments and grants only, never for anything that
-returns a value, because SvelteKit serialises an action's return into page data.
+are used for projects, environments, grants, groups, identities and the rekey
+control — never for anything that returns a value, because SvelteKit serialises an action's return into page data.
 
 :::note[That rule is enforced, not just held]
 `.github/workflows/ci.yml` greps every `+*.server.ts` under `src/routes` for

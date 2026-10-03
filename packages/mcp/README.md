@@ -144,9 +144,10 @@ edge before the request reaches the Worker. There is no login flow and no token 
 | `PRICK_MCP_TIMEOUT_MS`    | no       | Per-request timeout, 1000–120000. Default `15000`                   |
 | `PRICK_MCP_LOG_LEVEL`     | no       | `debug` \| `info` \| `warn` \| `error` \| `silent`. Default `info`  |
 
-Aliases are accepted so an environment already set up for `cloudflared` or for the `prk` CLI works
-unchanged: `PRK_URL` for the base URL, and `PRK_ACCESS_CLIENT_ID` / `CF_ACCESS_CLIENT_ID` and
-`PRK_ACCESS_CLIENT_SECRET` / `CF_ACCESS_CLIENT_SECRET` for the credential pair.
+Aliases are accepted so the credential pair carries over from an environment already set up for
+`cloudflared` or for the `prk` CLI: `PRK_ACCESS_CLIENT_ID` / `CF_ACCESS_CLIENT_ID` and
+`PRK_ACCESS_CLIENT_SECRET` / `CF_ACCESS_CLIENT_SECRET`. The base URL alias is `PRK_URL`; `prk`'s own
+`PRK_API_URL` is not read, so set `PRICK_MCP_API_URL`.
 
 Flags: `--api-url <url>`, `--allow-reveal`, `--workspace <dir>`, `--log-level <level>`, `--help`,
 `--version`.
@@ -168,7 +169,7 @@ the token to a policy on the Access application in front of your Worker.
 
 The token's `common_name` looks like `e367826f93b8d71185e03fe518aff3b4.access`, which nobody can map
 to "my laptop's assistant". The normal flow is: point this server at your install, watch it get a
-`403`, then find the identity under **Seen but not granted** in the admin UI and grant it there. Give
+`404`, then find the identity under **Seen but not granted** in the admin UI and grant it there. Give
 it the narrowest scope that does the job.
 
 ---

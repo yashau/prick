@@ -20,10 +20,10 @@ Sign in to a prick server through your browser.
 | -------- | ---------------------- |
 | `<URL>`  | Base URL of the server |
 
-| Flag           | Values            | Default | Meaning                              |
-| -------------- | ----------------- | ------- | ------------------------------------ |
-| `--storage`    | `file`, `keyring` | `file`  | Where to keep the resulting token    |
-| `--no-browser` |                   | off     | Print the URL instead of opening one |
+| Flag           | Values            | Default | Meaning                                                                     |
+| -------------- | ----------------- | ------- | --------------------------------------------------------------------------- |
+| `--storage`    | `file`, `keyring` | `file`  | Where to keep the resulting token. `keyring` is not available in this build |
+| `--no-browser` |                   | off     | Print the URL instead of opening one                                        |
 
 ### Sign in
 
@@ -110,14 +110,10 @@ one of those cases without asking.
 
 ### Where the token is stored
 
-```bash
-prk login https://prick.example.com --storage keyring
-```
-
-| Backend   | Default | Notes                                                        |
-| --------- | ------- | ------------------------------------------------------------ |
-| `file`    | Yes     | A file at mode `0600` in a directory at mode `0700`          |
-| `keyring` | No      | The OS keyring. Opt-in, because it breaks over SSH and in CI |
+| Backend   | Default | Notes                                                                                                                                                                |
+| --------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `file`    | Yes     | A file at mode `0600` in a directory at mode `0700`                                                                                                                  |
+| `keyring` | No      | The OS keyring. Accepted by `--storage` but not available in this build: saving fails with `STORAGE_UNAVAILABLE` (exit 8) rather than quietly writing a file instead |
 
 The file is written atomically — temporary file, then rename — and the mode is
 set at creation, so there is never a window in which a token file exists
@@ -139,10 +135,12 @@ wants a scratch directory, or for keeping two servers' sessions apart:
 PRK_CONFIG_DIR=~/.config/prick-staging prk login https://staging.prick.example.com
 ```
 
-:::caution[The keyring is opt-in for a reason]
-Over SSH there is no session keyring to unlock, and on macOS the Keychain ACL
+:::caution[The keyring backend is not available yet]
+`--storage keyring` is accepted, but this build cannot store a token there, and
+it refuses rather than falling back to a file. When it lands it stays opt-in:
+over SSH there is no session keyring to unlock, and on macOS the Keychain ACL
 binds to the binary's code signature — so every update re-prompts, which is
-unusable from inside `prk run`. Pick it only on a desktop you sit in front of.
+unusable from inside `prk run`.
 :::
 
 ### The warning you must not ignore
@@ -152,7 +150,7 @@ unusable from inside `prk run`. Pick it only on a desktop you sit in front of.
 suppresses every other diagnostic:
 
 ```
-warning: this server answered an unauthenticated request
+warning: this server answered an unauthenticated request, so it is NOT protected by Cloudflare Access: anyone who can reach this hostname can read every secret it holds
 warning: Put the application behind Cloudflare Access before storing anything in it.
 ```
 
@@ -338,9 +336,9 @@ advisories like "you installed this through npm".
 ```
 ok   server url     https://prick.example.com (from the stored login)
 FAIL token storage  /home/you/.config/prick/credentials.json is readable by more than its owner; delete it and run `prk login` again
-ok   api            /api/v1/health is reachable and refuses an anonymous caller
-FAIL access         this server answered an unauthenticated request
-warn credentials    no credentials configured
+ok   api            /api/v1/health answered, version 0.0.0-dev
+FAIL access         this server answered an unauthenticated request, so it is NOT protected by Cloudflare Access: anyone who can reach this hostname can read every secret it holds
+warn credentials    no credentials were found for https://prick.example.com
 ok   installation   running as a native binary
 ```
 

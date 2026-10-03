@@ -49,8 +49,7 @@ A scope is written `project:environment`, and `*` is a wildcard.
 `*:something` is not a scope the server has — an environment only exists inside
 a project.
 
-The scope string is split on the **first** colon only, so an environment
-component may itself contain colons.
+Slugs cannot contain a colon, so `project:environment` is unambiguous.
 
 ## `prk access grant`
 
@@ -62,11 +61,11 @@ prk access grant deploy@example.com --role reader --scope api:production
 Granted reader to `deploy@example.com` on `api:production`.
 ```
 
-| Flag                  | Values                      | Default       |
-| --------------------- | --------------------------- | ------------- |
-| `--role <ROLE>`       | `reader`, `writer`, `admin` | Required      |
-| `--scope <SCOPE>`     | `project:environment`, `*`  | `*:*`         |
-| `--expires-in <DAYS>` | A number of days            | Never expires |
+| Flag                  | Values                                        | Default       |
+| --------------------- | --------------------------------------------- | ------------- |
+| `--role <ROLE>`       | `reader`, `writer`, `admin`                   | Required      |
+| `--scope <SCOPE>`     | `project:environment`, either half may be `*` | `*:*`         |
+| `--expires-in <DAYS>` | A number of days                              | Never expires |
 
 Grant a whole project:
 

@@ -112,6 +112,11 @@ something else.
 `SECRET_MAX_BYTES` and `ENV_MAX_SECRETS` bound more than the server. `prk`
 derives the largest response it will read from those two defaults, so an
 environment written at the defaults always exports. **Lowering** either is free.
+**Raising** `SECRET_MAX_BYTES` above `65536` is only partly honoured: the
+shared request schema caps a value at `65536` bytes, so `secrets:batch` still
+refuses a larger one, while import, rename and rollback honour the higher limit.
+The same applies to `BODY_MAX_BYTES`: an import's `content` is capped at
+`1048576` bytes by the schema whatever the var says.
 **Raising** either lets an environment grow past what the CLI reads back:
 `prk secrets list` and `prk secrets get` keep working one value at a time, while
 `prk secrets download` and `prk run` fail with `RESPONSE_TOO_LARGE` (exit 12).

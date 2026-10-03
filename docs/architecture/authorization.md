@@ -122,11 +122,13 @@ system, and it reads as an optimisation on the way in.
 ## Denials are recorded
 
 `assertCan` writes an audit row with `outcome: 'denied'` **before** it throws.
-The action is recorded as `authz.<scope-type>.<required-role>`.
+The action is recorded as `access.denied`, with the scope and the required role
+in `detail`.
 
-One other path writes a denial: the audit log's own `?project=` filter, when the
-slug names a project the caller may not audit. That row is recorded as
-`access.denied`. Both carry `outcome: 'denied'`, which is what
+Every denial is recorded the same way, whichever answer the caller gets: a `403`
+from `assertCan`, a `404` from `assertVisible` (a project or environment the
+caller cannot see), or the audit log's own `?project=` filter naming a project
+the caller may not audit. All of them carry `outcome: 'denied'`, which is what
 `GET /access/unknown-identities` reads, so filtering on the outcome rather than on
 the action is the reliable way to find refusals.
 

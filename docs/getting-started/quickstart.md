@@ -199,8 +199,8 @@ When authenticated, the endpoint answers:
 { "service": "prick", "status": "ok", "version": "0.0.0-dev" }
 ```
 
-The version reads `0.0.0-dev` for an in-tree build; releases stamp the real
-value at build time.
+The version always reads `0.0.0-dev`: the Worker is deployed from your own
+checkout and is not version-stamped.
 
 ## 10. Install the CLI
 

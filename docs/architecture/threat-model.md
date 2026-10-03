@@ -131,8 +131,9 @@ and `--allow-unsafe-env` is the deliberate opt-out.
 
 ### Secrets leaking into logs and error messages
 
-- The CLI denies `print_stdout` and `print_stderr` workspace-wide; exactly one
-  module lifts the ban. A secret reaching stderr is a build failure, not a review
+- The CLI denies `print_stdout` and `print_stderr` workspace-wide, with no
+  exceptions: all output goes through `prk::output`, which writes to the stream
+  handles directly. A secret reaching stderr is a build failure, not a review
   outcome.
 - Secret values are held in types whose debug formatting is redacted.
 - The API's validation error formatter reads `issue.path` and `issue.message` and
@@ -149,7 +150,8 @@ Screens that display values are client-rendered only. There is no server render,
 so there is no serialised page payload for a value to sit in. Form actions never
 return values, because SvelteKit serialises an action's return into page data.
 
-Beyond that: a strict Content Security Policy with no host allowlist for scripts,
+Beyond that: a strict Content Security Policy with no host allowlist for scripts on the
+admin UI (the `/api/v1/docs` reference viewer is the documented exception),
 `frame-ancestors 'none'` delivered as a real header (meta-tag CSP ignores that
 directive), no service worker registered anywhere — a service worker cache is a
 plaintext secret store on disk — revealed values held only in memory with a
@@ -182,7 +184,7 @@ allowance.
   `preview_urls` are set to `false`, and CI asserts both on every push. An Access application
   with an over-broad policy is not something prick can detect at all. Verify it
   yourself, as in the [Quickstart](/getting-started/quickstart), and note that
-  `prk login` and `prk doctor` both fail loudly if `/health` answers `200`
+  `prk doctor` fails and `prk login` warns loudly if `/health` answers `200`
   unauthenticated.
 - **A compromised developer machine.** The token file is mode `0600`, which stops
   other users, not malware running as you.
