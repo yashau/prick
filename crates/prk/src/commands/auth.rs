@@ -99,7 +99,7 @@ pub fn login(args: &LoginArgs, global: &GlobalArgs, out: Output) -> Result<(), C
     with_url.api_url = Some(args.url.clone());
     let context = Context::new(&with_url)?;
 
-    let store = TokenStore::in_dir(context.store().dir(), args.storage.into());
+    let store = context.store().with_backend(args.storage.into());
 
     // Before anything else: a backend that cannot hold the session must refuse
     // now, not after the operator has finished a browser sign-in for nothing.

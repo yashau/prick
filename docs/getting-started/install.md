@@ -220,10 +220,14 @@ One file, holding the session `prk login` created:
 | -------- | ---------------------------------------------- |
 | Linux    | `$XDG_CONFIG_HOME/prick`, or `~/.config/prick` |
 | macOS    | `~/Library/Application Support/prick`          |
-| Windows  | `%APPDATA%\prick`                              |
+| Windows  | `%LOCALAPPDATA%\prick`                         |
 
 It is called `credentials.json`, and it is created owner-only — mode `0600` in a
 directory at `0700`, or on Windows a DACL with a single entry for you.
+
+On Windows the session stays in the local half of your profile, which is never
+copied to a file server by roaming profiles or folder redirection. A session
+signed in under `%APPDATA%\prick` is moved there the first time `prk` reads it.
 
 Set `PRK_CONFIG_DIR` to move it, which is how you keep sessions for two servers
 apart:
