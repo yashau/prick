@@ -21,7 +21,10 @@ import { findJwksKey, resolveCertsUrl } from "./jwks.js";
  *         resolved here first and pinned as the sole allowed algorithm, which
  *         is what rejects `alg: none` and RS256->HS256 confusion.
  *   iss   exact string equality with `https://<team>.cloudflareaccess.com`.
- *   aud   an ARRAY -- assert `.includes(ACCESS_AUD)`, not `===`.
+ *   aud   a string or an array of strings (RFC 7519 4.1.3). Access issues an
+ *         array to people and a bare string to service tokens. Either way
+ *         it is a LIST: a string is a list of one, and the check is an exact
+ *         `.includes(ACCESS_AUD)` -- never a substring or prefix match.
  *   exp   required, always checked, no skew allowance. Expired is expired.
  *   nbf   checked ONLY IF PRESENT. Service tokens have no `nbf`, and a verifier
  *         that requires one rejects every machine client.
@@ -52,7 +55,7 @@ const DEFAULT_CLOCK_SKEW_SECONDS = 30;
 export interface AccessVerifyOptions {
   /** The `<team>` in `https://<team>.cloudflareaccess.com`. */
   team: string;
-  /** The Access application's AUD tag. Matched against the `aud` ARRAY. */
+  /** The Access application's AUD tag. Matched exactly against the `aud` list. */
   aud: string;
   /** Overrides the team-derived certs URL. Configuration, not a code path. */
   certsUrl?: string | null | undefined;
@@ -328,15 +331,18 @@ export async function verifyAccessJwt(
   }
   const iss: string = payload.iss;
 
-  // --- aud: an ARRAY. `.includes`, never `===` ----------------------------
+  // --- aud: a list of exact tags. `.includes`, never a text search ---------
+  // A bare string is a list of one: service tokens arrive that way. Accepting
+  // it loosens nothing, because the match below is still exact membership.
+  const audList: unknown = typeof payload.aud === "string" ? [payload.aud] : payload.aud;
   if (
-    !Array.isArray(payload.aud) ||
-    payload.aud.length === 0 ||
-    !payload.aud.every((tag: unknown) => typeof tag === "string")
+    !Array.isArray(audList) ||
+    audList.length === 0 ||
+    !audList.every((tag: unknown) => typeof tag === "string")
   ) {
     throw unauthenticated("The access token carries no audience list.");
   }
-  const aud = payload.aud as string[];
+  const aud = audList as string[];
 
   if (!aud.includes(options.aud)) {
     throw unauthenticated("The access token was issued for a different Access application.");

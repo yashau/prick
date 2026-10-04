@@ -174,14 +174,57 @@ describe("verifyAccessJwt -- claim rejections", () => {
   });
 
   /**
-   * A bare-string `aud` is what a generic JWT library emits and what a verifier
-   * written against `aud === expected` would accept. Access never issues it.
+   * RFC 7519 lets `aud` be a single string or an array, and Access uses both:
+   * an array on the tokens it issues to people, a bare string on the tokens it
+   * issues to SERVICE TOKENS. This is the exact shape Access issued for a real
+   * service token. A verifier that only accepted the array refused every
+   * machine client with "carries no audience list".
+   *
+   * A string is one audience, matched exactly -- the same `.includes` as the
+   * array, so accepting it loosens nothing.
    */
-  it("rejects an aud that is a bare string rather than an array", async () => {
+  it("accepts a service token whose aud is a bare string naming ours", async () => {
+    const token = await serviceToken({
+      claims: { aud: AUD, sub: "", common_name: "11e1fe6504c884f07fec6c88a51d80df.access" },
+    });
+
+    const claims = await verifyAccessJwt(token, options());
+
+    expect(claims.aud).toEqual([AUD]);
+    expect(claims.common_name).toBe("11e1fe6504c884f07fec6c88a51d80df.access");
+  });
+
+  it("rejects a bare-string aud that is not ours", async () => {
     await rejectsWith(
-      async () => verifyAccessJwt(await userToken({ claims: { aud: AUD } }), options()),
+      async () =>
+        verifyAccessJwt(await serviceToken({ claims: { aud: "not-our-aud" } }), options()),
       "UNAUTHENTICATED",
     );
+  });
+
+  it("rejects a bare-string aud that merely contains ours", async () => {
+    // Exact match only: a string is one audience, never searched as text.
+    await rejectsWith(
+      async () =>
+        verifyAccessJwt(await serviceToken({ claims: { aud: `${AUD},other` } }), options()),
+      "UNAUTHENTICATED",
+    );
+  });
+
+  it("rejects an empty-string aud", async () => {
+    await rejectsWith(
+      async () => verifyAccessJwt(await serviceToken({ claims: { aud: "" } }), options()),
+      "UNAUTHENTICATED",
+    );
+  });
+
+  it("rejects an aud that is neither a string nor an array of strings", async () => {
+    for (const aud of [42, { aud: AUD }, [AUD, 7], null]) {
+      await rejectsWith(
+        async () => verifyAccessJwt(await serviceToken({ claims: { aud } }), options()),
+        "UNAUTHENTICATED",
+      );
+    }
   });
 
   it("rejects an empty aud array", async () => {

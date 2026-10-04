@@ -171,18 +171,20 @@ export async function mintUserToken(options: AccessTokenOptions): Promise<string
 }
 
 /**
- * A service Access token: EMPTY `sub`, a `common_name`, no `email`, NO `nbf`.
+ * A service Access token: EMPTY `sub`, a `common_name`, no `email`, NO `nbf`,
+ * and a BARE-STRING `aud`.
  *
- * This shape is the reason the verifier checks `nbf` only when present. A
- * verifier that requires it rejects every machine client in the estate with a
- * message that explains nothing.
+ * This is the shape Access issues to service tokens, and each part of it has
+ * broken a verifier written against the human shape: one that requires `nbf`,
+ * or one that accepts only an `aud` array, rejects every machine client in the
+ * estate with a message that explains nothing.
  */
 export async function mintServiceToken(options: AccessTokenOptions): Promise<string> {
   const seconds = Math.floor(options.now / 1000);
 
   const base: AccessPayloadSpec = {
     iss: `https://${options.team}.cloudflareaccess.com`,
-    aud: [options.aud],
+    aud: options.aud,
     sub: "",
     common_name: "e367826f93b8d71185e03fe518aff3b4.access",
     exp: seconds + 3600,
