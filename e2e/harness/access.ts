@@ -100,8 +100,8 @@ function encodePart(value: unknown): string {
 
 export interface AccessPayload {
   iss: string;
-  /** An ARRAY. Access issues an array and the verifier asserts `.includes()`. */
-  aud: string[];
+  /** An array for people, a bare string for service tokens -- as Access issues them. */
+  aud: string | string[];
   sub: string;
   exp: number;
   iat?: number;
@@ -163,8 +163,8 @@ export async function mintUserToken(
 /**
  * A service token.
  *
- * EMPTY `sub`, a `common_name`, no `email`, and deliberately NO `nbf` -- that
- * is the shape Access issues, and a verifier that requires `nbf` rejects every
+ * EMPTY `sub`, a `common_name`, no `email`, deliberately NO `nbf`, and a
+ * BARE-STRING `aud` -- that is the shape Access issues, and a verifier that requires `nbf` rejects every
  * machine client in the estate. Keeping the omission here means the negative
  * case is exercised by the whole service-role half of this suite rather than by
  * one unit test.
@@ -178,7 +178,7 @@ export async function mintServiceToken(
 
   return signJwt(material.privateJwk, {
     iss: issuer(),
-    aud: [ACCESS_AUD],
+    aud: ACCESS_AUD,
     sub: "",
     common_name: commonName,
     exp: seconds + (options.ttlSeconds ?? 3600),
