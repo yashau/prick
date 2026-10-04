@@ -258,7 +258,8 @@ rather than trusting that Access ran:
   from the token header. This is what rejects `alg: none` and RS256→HS256
   confusion.
 - `iss` must equal `https://<ACCESS_TEAM>.cloudflareaccess.com` exactly.
-- `aud` is an **array**; the check is `.includes(ACCESS_AUD)`.
+- `aud` is a list: an **array** on tokens issued to people, a single **string** on tokens issued
+  to service tokens. Either way the check is exact membership, `.includes(ACCESS_AUD)`.
 - `exp` is required and is checked with no skew allowance.
 - `nbf` is checked **only if present**. Service tokens do not carry one, and a
   verifier that requires it rejects every machine client.
