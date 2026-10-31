@@ -584,14 +584,16 @@ unsafe fn read_plain_ace(ace: *const c_void) -> Option<PlainAce> {
     if header.AceType != ACCESS_ALLOWED_ACE_TYPE && header.AceType != ACCESS_DENIED_ACE_TYPE {
         return None;
     }
-    let entry = ace.cast::<ACCESS_ALLOWED_ACE>();
-    // SAFETY: a plain entry has the `ACCESS_ALLOWED_ACE` layout. The field
-    // addresses are taken with `addr_of!`, never through a reference, and the
-    // mask is copied out unaligned.
+    // SAFETY: a plain entry has the `ACCESS_ALLOWED_ACE` layout, so both field
+    // offsets lie inside the entry the caller vouches for. The fields are
+    // located by offset rather than through the struct, and the mask is copied
+    // out unaligned, so nothing is dereferenced as an `ACCESS_ALLOWED_ACE`.
     let (mask, sid) = unsafe {
         (
-            std::ptr::addr_of!((*entry).Mask).read_unaligned(),
-            std::ptr::addr_of!((*entry).SidStart).cast::<c_void>().cast_mut(),
+            ace.byte_add(std::mem::offset_of!(ACCESS_ALLOWED_ACE, Mask))
+                .cast::<u32>()
+                .read_unaligned(),
+            ace.byte_add(std::mem::offset_of!(ACCESS_ALLOWED_ACE, SidStart)).cast_mut(),
         )
     };
     Some(PlainAce { mask, sid })
