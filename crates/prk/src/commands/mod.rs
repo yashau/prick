@@ -11,6 +11,7 @@
 //!   resolution, transparent token refresh and route construction happen once.
 
 pub mod access;
+pub mod access_token;
 pub mod auth;
 pub mod completions;
 pub mod doctor;

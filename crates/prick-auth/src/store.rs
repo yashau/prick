@@ -627,16 +627,46 @@ pub(crate) fn ensure_private_dir(dir: &Path) -> std::io::Result<()> {
 pub(crate) fn write_private_atomically(target: &Path, bytes: &[u8]) -> std::io::Result<()> {
     let dir = target.parent().unwrap_or_else(|| Path::new("."));
     ensure_private_dir(dir)?;
+    replace_with_private_file(dir, target, bytes)
+}
+
+/// Writes a file only its owner can read, atomically, into a directory the
+/// caller chose: temporary file beside the target, `fsync`, rename.
+///
+/// The directory itself is left exactly as it is. This is for a path an
+/// operator named -- `prk access token create --secret-file` -- and narrowing
+/// the permissions of their working directory would be a surprise with no
+/// benefit, since the file carries its own owner-only permissions from
+/// creation.
+///
+/// # Errors
+///
+/// The I/O error from creating, writing, restricting or renaming the file,
+/// including `NotFound` when the directory does not exist.
+pub fn write_owner_only_file(target: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    let dir = match target.parent() {
+        Some(parent) if !parent.as_os_str().is_empty() => parent,
+        _ => Path::new("."),
+    };
+    replace_with_private_file(dir, target, bytes)
+}
+
+/// The shared tail of both writers: temporary file in `dir`, `fsync`, narrow,
+/// rename over `target`.
+fn replace_with_private_file(dir: &Path, target: &Path, bytes: &[u8]) -> std::io::Result<()> {
     let name =
         target.file_name().map_or_else(String::new, |name| name.to_string_lossy().into_owned());
     let temporary = dir.join(format!(".{name}.{}.tmp", std::process::id()));
     let _ = std::fs::remove_file(&temporary);
     let mut file = create_private_file(&temporary)?;
-    file.write_all(bytes)?;
-    file.sync_all()?;
+    let written = file.write_all(bytes).and_then(|()| file.sync_all());
     drop(file);
-    restrict_file(&temporary)?;
-    if let Err(err) = std::fs::rename(&temporary, target) {
+    // Removed on every failure after creation, so a half-written secret is
+    // never left behind under a name nobody will look for.
+    let replaced = written
+        .and_then(|()| restrict_file(&temporary))
+        .and_then(|()| std::fs::rename(&temporary, target));
+    if let Err(err) = replaced {
         let _ = std::fs::remove_file(&temporary);
         return Err(err);
     }

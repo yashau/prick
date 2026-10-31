@@ -392,8 +392,12 @@ impl Output {
     }
 
     /// Emits a JSON document built out of secret material.
+    ///
+    /// Carries `destination` exactly as [`Output::json`] does, so a write that
+    /// answers with a secret -- a new service token's -- names the server it
+    /// went to. A read records no destination and is unchanged.
     pub fn secret_json(self, value: &serde_json::Value) {
-        write_stdout(&value.to_string(), true, Payload::Secret);
+        write_stdout(&with_destination(value).to_string(), true, Payload::Secret);
     }
 
     /// Emits an informational line on stderr.

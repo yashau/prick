@@ -464,3 +464,44 @@ fn a_loose_file_is_reported_as_a_finding() {
 
     assert!(!store.is_owner_only().expect("readable"), "0644 was not reported as a finding");
 }
+
+#[test]
+fn an_operator_named_file_is_owner_only_and_replaces_what_was_there() {
+    let dir = tempfile::tempdir().expect("a temporary directory");
+    let target = dir.path().join("client-secret");
+    std::fs::write(&target, b"the previous secret").expect("an existing file");
+
+    write_owner_only_file(&target, b"the new secret").expect("the write succeeds");
+
+    assert_eq!(std::fs::read(&target).expect("readable"), b"the new secret");
+    assert!(is_path_owner_only(&target).expect("metadata"), "the secret file is owner-only");
+    let leftovers: Vec<_> = std::fs::read_dir(dir.path())
+        .expect("listable")
+        .filter_map(Result::ok)
+        .filter(|entry| entry.file_name().to_string_lossy().ends_with(".tmp"))
+        .collect();
+    assert!(leftovers.is_empty(), "no temporary file is left behind: {leftovers:?}");
+}
+
+#[test]
+fn an_operator_named_file_leaves_its_directory_alone() {
+    let dir = tempfile::tempdir().expect("a temporary directory");
+    let before = is_path_owner_only(dir.path()).expect("metadata");
+
+    write_owner_only_file(&dir.path().join("secret"), b"x").expect("the write succeeds");
+
+    assert_eq!(
+        is_path_owner_only(dir.path()).expect("metadata"),
+        before,
+        "the directory's permissions are the operator's, not this function's"
+    );
+}
+
+#[test]
+fn an_operator_named_file_in_a_missing_directory_fails_without_creating_it() {
+    let dir = tempfile::tempdir().expect("a temporary directory");
+    let missing = dir.path().join("absent");
+    let err = write_owner_only_file(&missing.join("secret"), b"x").expect_err("no directory");
+    assert_eq!(err.kind(), std::io::ErrorKind::NotFound);
+    assert!(!missing.exists());
+}

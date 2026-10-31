@@ -262,6 +262,9 @@ fn server_checks(context: &mut Context, out: Output) -> Vec<Check> {
                         "the server reports no instance id, so profiles cannot be pinned to it",
                     ),
                 });
+                checks.extend(capability_checks(
+                    context.block_on(prick_api::ops::capabilities(context.client())),
+                ));
             }
             Err(err) => {
                 let request_id = match &err {
@@ -282,6 +285,81 @@ fn server_checks(context: &mut Context, out: Output) -> Vec<Check> {
 
     checks
 }
+
+/// The server's own account of what it runs and what it can do.
+///
+/// One line for the release and API version, then one per feature the server
+/// reports, with its hint when it gives one -- which it does for a global
+/// administrator, the person who can act on it. A `404` is a Worker that
+/// predates `/capabilities`: worth knowing, and no reason to fail a health
+/// check, since everything it does serve still works.
+pub(crate) fn capability_checks(
+    answer: Result<prick_api::models::Capabilities, prick_api::ApiError>,
+) -> Vec<Check> {
+    let capabilities = match answer {
+        Ok(capabilities) => capabilities,
+        Err(err) if err.kind() == ErrorKind::NotFound => {
+            return vec![Check::new(
+                "server",
+                Status::Warn,
+                "the server predates /api/v1/capabilities; a newer Worker release reports its \
+                 version and features here",
+            )];
+        }
+        Err(err) => return vec![Check::new("server", Status::Fail, err.to_string())],
+    };
+
+    let mut checks = vec![if capabilities.api == SUPPORTED_API {
+        Check::new(
+            "server",
+            Status::Ok,
+            format!("version {}, api {}", capabilities.version, capabilities.api),
+        )
+    } else {
+        Check::new(
+            "server",
+            Status::Warn,
+            format!(
+                "version {} speaks api {}; this prk speaks api {SUPPORTED_API}",
+                capabilities.version, capabilities.api
+            ),
+        )
+    }];
+
+    for (key, feature) in &capabilities.features {
+        let name = if key == prick_api::models::Capabilities::SERVICE_TOKENS {
+            "service tokens"
+        } else {
+            "feature"
+        };
+        let label = if name == "feature" { format!("{key}: ") } else { String::new() };
+        let hint = feature.hint.as_deref().map(|hint| format!(" ({hint})")).unwrap_or_default();
+        checks.push(match (feature.is_enabled(), feature.allowed) {
+            (true, true) => Check::new(name, Status::Ok, format!("{label}enabled")),
+            (true, false) => Check::new(
+                name,
+                Status::Skip,
+                format!("{label}enabled; this identity may not use it"),
+            ),
+            (false, _) if feature.reason.is_some() || feature.hint.is_some() => Check::new(
+                name,
+                Status::Warn,
+                format!(
+                    "{label}{} ({}){hint}",
+                    feature.state,
+                    feature.reason.as_deref().unwrap_or("no reason given")
+                ),
+            ),
+            (false, _) => {
+                Check::new(name, Status::Skip, format!("{label}{} to this identity", feature.state))
+            }
+        });
+    }
+    checks
+}
+
+/// The HTTP API major version this build speaks.
+const SUPPORTED_API: u32 = 1;
 
 /// Whether the API answers at all, at the path it is actually served from.
 ///
@@ -387,6 +465,57 @@ fn report(checks: &[Check], failed: bool, global: &GlobalArgs, out: Output) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn capabilities(features: &serde_json::Value) -> prick_api::models::Capabilities {
+        serde_json::from_value(serde_json::json!({
+            "api": 1, "version": "2026.10.31", "instance": null, "features": features,
+        }))
+        .expect("the shape matches")
+    }
+
+    #[test]
+    fn a_worker_without_capabilities_is_a_warning_rather_than_a_failure() {
+        let checks = capability_checks(Err(prick_api::ApiError::new(ErrorKind::NotFound, "404")));
+        assert_eq!(checks.len(), 1);
+        assert_eq!(checks[0].status, Status::Warn);
+        assert!(checks[0].detail.contains("predates"), "{}", checks[0].detail);
+    }
+
+    #[test]
+    fn the_server_section_shows_the_version_and_each_feature() {
+        let checks = capability_checks(Ok(capabilities(&serde_json::json!({
+            "serviceTokens": {"state": "enabled", "allowed": true, "reason": null, "hint": null},
+        }))));
+        assert_eq!(checks[0].name, "server");
+        assert!(checks[0].detail.contains("2026.10.31") && checks[0].detail.contains("api 1"));
+        assert_eq!(checks[1].name, "service tokens");
+        assert_eq!(checks[1].status, Status::Ok);
+    }
+
+    #[test]
+    fn an_unconfigured_feature_warns_with_the_servers_hint() {
+        let checks = capability_checks(Ok(capabilities(&serde_json::json!({
+            "serviceTokens": {"state": "unavailable", "allowed": false,
+                              "reason": "unconfigured", "hint": "set CF_API_TOKEN"},
+        }))));
+        assert_eq!(checks[1].status, Status::Warn);
+        assert!(checks[1].detail.contains("unconfigured"), "{}", checks[1].detail);
+        assert!(checks[1].detail.contains("set CF_API_TOKEN"), "{}", checks[1].detail);
+        assert!(checks.iter().all(|check| !check.status.is_failure()));
+    }
+
+    #[test]
+    fn a_feature_hidden_from_this_identity_is_skipped_and_a_later_one_is_named() {
+        let checks = capability_checks(Ok(capabilities(&serde_json::json!({
+            "serviceTokens": {"state": "unavailable", "allowed": false, "reason": null,
+                              "hint": null},
+            "laterFeature": {"state": "enabled", "allowed": true},
+        }))));
+        let later = checks.iter().find(|check| check.detail.starts_with("laterFeature"));
+        assert!(later.is_some_and(|check| check.status == Status::Ok), "{checks:?}");
+        let tokens = checks.iter().find(|check| check.name == "service tokens").expect("listed");
+        assert_eq!(tokens.status, Status::Skip);
+    }
 
     #[test]
     fn only_a_failure_makes_the_command_exit_non_zero() {

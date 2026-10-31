@@ -275,6 +275,27 @@ impl Client {
         decode(&received)
     }
 
+    /// Sends a request exactly once and deserialises a successful JSON response.
+    ///
+    /// For a request whose repeat is a second, different action: one that mints
+    /// a credential. A `502` after Cloudflare has already created a token means
+    /// a retry creates another one, and the secret of the first is gone with the
+    /// response that carried it. The failure is reported instead, and the
+    /// operator decides.
+    ///
+    /// # Errors
+    ///
+    /// See [`Client::request_json`].
+    pub async fn request_json_once<T: DeserializeOwned>(
+        &self,
+        method: reqwest::Method,
+        url: &str,
+        body: Body<'_>,
+    ) -> Result<T, ApiError> {
+        let received = self.fetch_once(method, url, body).await?;
+        decode(&received)
+    }
+
     /// Sends a request that is not expected to answer with a document.
     ///
     /// A `204`, or a `200` with an empty body, is success. Anything else goes
