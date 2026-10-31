@@ -201,6 +201,13 @@ the new secret, then rotate everything it could read (step 4) all the same: the
 old secret worked until now. Never pass `--grace` here. An overlap window suits a
 scheduled rotation and keeps a leaked secret working for its length.
 
+When Cloudflare itself reported the secret as leaked, it has already disabled the
+token and discards the old secret at rotation, so the server refuses `--grace`
+with a `CONFLICT` that says why. Rotating is also what lets Cloudflare re-enable
+the token, and the server does that as part of the same command. If Cloudflare
+does not re-enable it, the rotation still succeeds and `prk` prints a warning
+saying the token cannot authenticate yet; rotate again.
+
 A token made in the dashboard and never adopted is deleted under **Zero Trust →
 Access controls → Service credentials → Service Tokens** instead.
 

@@ -495,9 +495,11 @@ so it can be rotated, refreshed and revoked here. Its identity is created if the
 token has never authenticated, and reused, grants and all, if it has. `--name`
 sets the display name. No secret is involved.
 
-Adopting changes nothing in Cloudflare, so the token keeps its name there and any
-policy that names it keeps working. Adopting a token already managed here is a
-`CONFLICT`.
+Adopting changes nothing in Cloudflare: the token keeps its name and any policy
+that names it. Once adopted, though, the token's life is managed here, and
+**revoking it deletes it in Cloudflare** — which also ends its access to every
+other Access application that admits it. `revoke` warns before doing that to an
+adopted token. Adopting a token already managed here is a `CONFLICT`.
 
 ### `prk access token reconcile`
 
@@ -518,6 +520,20 @@ Without `--apply` nothing changes. `--apply` repairs each entry, with its own
 audit row, after asking for confirmation; `--yes` answers it. Tokens whose
 Cloudflare name does not start with `prick:` were made by hand and are not
 considered; adopt one to bring it in.
+
+Reconcile is safe to run while tokens are being created or revoked:
+
+- An entry less than five minutes old is reported as **skipped**, with the
+  reason, and never repaired. A create or revoke may still be in flight, and
+  judging it would delete a token another request is recording.
+- `--apply` re-checks each entry immediately before repairing it, and skips any
+  that has stopped being eligible since the listing — a row that committed, a
+  token Cloudflare now answers for, a revoke that landed — saying so.
+- `--apply` refuses, changing nothing, when more than ten live tokens read as
+  `missing`, or when two or more do and that is every live token. That pattern
+  is far more often `CF_ACCOUNT_ID` naming the wrong account than tokens
+  deleted in the dashboard. The answer is a `CONFLICT` naming the account id;
+  retire tokens that really are gone one at a time with `revoke`.
 
 ## Groups
 

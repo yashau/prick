@@ -295,7 +295,9 @@ and `prk` says so before sending anything. Tokens then come from the dashboard:
 
 Once the Worker has `CF_API_TOKEN`, `prk access token adopt <CLIENT_ID>` brings
 a dashboard-made token under management, so it rotates, refreshes and revokes
-like one prick created. Its own policy keeps working.
+like one prick created. Its own policy keeps working. Revoking an adopted token
+deletes it in Cloudflare, which ends its access to every other application that
+admits it too.
 
 ### Rotating the secret
 
