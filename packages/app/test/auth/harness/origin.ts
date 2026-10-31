@@ -32,6 +32,7 @@ import { fileURLToPath } from "node:url";
 
 import { readD1Migrations } from "@cloudflare/vitest-plugin";
 
+import { createFakeCloudflare } from "./cloudflare.js";
 import { generateAccessKey, jwksDocument, type AccessKeyMaterial } from "./keys.js";
 import {
   HARNESS_ORIGIN,
@@ -104,6 +105,8 @@ export async function createAccessHarness(): Promise<AccessHarness> {
     fileURLToPath(new URL("../../../drizzle/migrations", import.meta.url)),
   );
 
+  const cloudflare = createFakeCloudflare();
+
   return {
     fetch(request: Request): Promise<Response> {
       const url = new URL(request.url);
@@ -124,6 +127,10 @@ export async function createAccessHarness(): Promise<AccessHarness> {
       }
 
       const segments = url.pathname.split("/").filter((segment) => segment !== "");
+
+      if (segments[0] === "cloudflare" || segments[0] === "cloudflare-control") {
+        return cloudflare.fetch(request, url);
+      }
 
       if (url.pathname === "/keys") {
         return Promise.resolve(json(keysResponse));

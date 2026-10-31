@@ -34,6 +34,7 @@ const TABLES = [
   "secrets",
   "environments",
   "projects",
+  "service_tokens",
   "identities",
   "keyring_state",
 ];
