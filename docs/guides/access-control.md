@@ -36,18 +36,19 @@ runs into first:
 
 ## Identities
 
-An identity is a subject prick has seen authenticate. There are exactly two
-kinds, and neither is created by prick:
+An identity is a subject prick has seen authenticate, or a service token prick
+created. There are exactly two kinds:
 
-| Kind      | Subject                           | Comes from              |
-| --------- | --------------------------------- | ----------------------- |
-| `user`    | The lower-cased email address     | An Access SSO session   |
-| `service` | The service token's `common_name` | An Access service token |
+| Kind      | Subject                           | Comes from                                            |
+| --------- | --------------------------------- | ----------------------------------------------------- |
+| `user`    | The lower-cased email address     | An Access SSO session                                 |
+| `service` | The service token's `common_name` | An Access service token, or `prk access token create` |
 
-A service token subject looks like `e367826f93b8d71185e03fe518aff3b4.access`.
-Give it a display name as soon as you grant it — `prk access rename <SUBJECT>
-<NAME>` — because nobody maps that string to "the staging deploy job" from
-memory.
+A service token subject looks like `e367826f93b8d71185e03fe518aff3b4.access`,
+which is also the token's client id. A token created with `prk access token
+create` carries the name it was given as its display name; give any other one a
+name as soon as you grant it — `prk access rename <SUBJECT> <NAME>` — because
+nobody maps that string to "the staging deploy job" from memory.
 
 Every identity has a `disabled` flag. It is a kill switch: it is checked before
 grants are resolved, so disabling an identity is one write rather than a hunt
@@ -303,20 +304,96 @@ source that conferred it, then every source underneath with `->` against the
 decisive one. See
 [`prk access explain`](/reference/cli/access#prk-access-explain).
 
-## The service token flow
+## Service tokens
 
-A new service token gets a `404` on its first request, because Access
-authenticated it and no grant covers it yet — a project it cannot see is
-reported as absent rather than forbidden. That denial is **recorded**, and it
-is the introduction:
+The Worker manages Cloudflare Access service tokens itself, with the
+`CF_API_TOKEN` secret it holds; see
+[Configuration](/reference/configuration#service-token-management). Every
+operation is **global admin** only, and each writes an audit row.
+
+| Command                      | Does                                                               | Audit action              |
+| ---------------------------- | ------------------------------------------------------------------ | ------------------------- |
+| `prk access token create`    | A new token, its identity and an optional first grant              | `service_token.create`    |
+| `prk access token list`      | The tokens this deployment manages, with Cloudflare's view of each | —                         |
+| `prk access token rotate`    | A new secret for the same client id                                | `service_token.rotate`    |
+| `prk access token refresh`   | Extends the expiry by the token's duration                         | `service_token.refresh`   |
+| `prk access token revoke`    | Disables the identity, then deletes the token in Cloudflare        | `service_token.revoke`    |
+| `prk access token adopt`     | Brings a dashboard-made token under management                     | `service_token.adopt`     |
+| `prk access token reconcile` | Reports disagreements with Cloudflare; `--apply` repairs them      | `service_token.reconcile` |
+
+A grant made at create time is audited as `grant.create` as well. Every flag is
+in [`prk access token`](/reference/cli/access#prk-access-token). The admin UI
+has the same operations under **Access → Service tokens**, and shows a new
+secret once, in a panel that does not come back.
+
+Project admins do not create tokens. They grant an existing one within their
+project with `prk access grant`, exactly as they grant a person.
+
+### The service token flow
+
+```bash
+prk access token create "staging deploy" --role reader --scope api:production
+```
+
+The Worker asks Cloudflare for the token, then records its identity (subject =
+the client id, display name = the name given) and the grant in one transaction.
+The token's first request is already authorized: there is no refused request to
+introduce it, and no identifier to copy between two consoles. If recording
+fails, the Worker deletes the Cloudflare token again, so nothing usable is left
+behind.
+
+The client secret is in that one response and nowhere else. prick stores no copy
+of it and nothing derived from it.
+
+In Cloudflare the token is named `prick:<instance id>:<id>`. Two deployments
+sharing one account each recognise their own tokens by that name, and neither
+touches the other's.
+
+### Rotate, refresh, revoke
+
+- **Rotate** issues a new secret for the same client id, so the identity and its
+  grants are unchanged. `--grace` keeps the old secret valid for up to 30 days
+  while jobs move over; without it the old secret stops at once, which is right
+  for a leak.
+- **Refresh** extends the token's expiry by its duration. Nothing else changes.
+- **Revoke** disables the identity — [the kill
+  switch](#revoking-is-per-scope-the-kill-switch-is-not) — and marks the record
+  revoked in one transaction, then deletes the token in Cloudflare. Access is
+  gone the moment the transaction commits. The grants stay, as the record of
+  what the token held. Revoking a token that is the last usable global
+  administrator is refused with `409 LAST_ADMIN`, like every other route that
+  could remove one.
+
+### Reconcile
+
+The dashboard can change a token behind prick's back, and a Cloudflare outage
+can interrupt an operation half way. `prk access token reconcile` compares the
+two sides:
+
+| Kind                | Means                                                              | `--apply`                     |
+| ------------------- | ------------------------------------------------------------------ | ----------------------------- |
+| `orphan`            | A `prick:<this instance>:` token in Cloudflare with no record here | Deletes it from Cloudflare    |
+| `missing`           | A live record whose token was deleted in the dashboard             | Retires it: identity disabled |
+| `revoke_incomplete` | A revoked record whose token still exists in Cloudflare            | Deletes it from Cloudflare    |
+| `foreign`           | Another deployment's `prick:` token in the same account            | Nothing, ever                 |
+
+Every operation is ordered so that a failure part way leaves access narrower
+than intended, never wider, and reconcile finishes the job.
+
+### Tokens made in the dashboard
+
+A token created by hand in the Zero Trust dashboard, with its own Service Token
+policy, keeps working. It reaches prick holding no grant, so its first request
+gets a `404` — a project it cannot see is reported as absent rather than
+forbidden. That denial is **recorded**, and it is the introduction:
 
 ```bash
 prk access identities --denied
 ```
 
 The subject appears in a "seen but not granted" list, and you grant it from
-there. The normal flow is: point CI at prick, watch it 403, grant it. No copying
-opaque identifiers between two consoles.
+there. `prk access token adopt <CLIENT_ID>` then brings it under management, so
+it rotates, refreshes and revokes like a token prick created.
 
 ### One token per deployment
 

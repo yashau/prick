@@ -517,6 +517,13 @@ tells you everything that is wrong at once.
 | `credentials`   | Warns when no credential could be resolved                                                                                  |
 | `installation`  | Whether the binary is running through the npm shim rather than natively                                                     |
 
+Once authenticated, `prk doctor` also reports what the server supports, read
+from `/api/v1/capabilities`: its version, and whether
+[service-token management](/reference/cli/access#prk-access-token) is available
+to you. To a global admin on a server without it, the line names what the Worker
+is missing; see
+[Configuration](/reference/configuration#service-token-management).
+
 `token storage` checks every profile's file, not only the selected one's, and
 `credentials.json` as well when no profile uses it. With no credential file
 at all, it is a single `skip`.

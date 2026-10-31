@@ -165,15 +165,24 @@ reports its problem to a language model instead of to the person who can fix it.
 
 ### Getting a service token
 
-In the Cloudflare Zero Trust dashboard: **Access controls → Service credentials → Service Tokens →
-Create Service Token**. Then, under **Access controls → Policies**, add a reusable policy with the
-action **Service Auth** and an include rule using the **Service Token** selector set to that token,
-and attach it to the Access application in front of your Worker, next to the people's Allow policy.
+A global admin creates one, already granted, with the `prk` CLI:
 
-The token's `common_name` looks like `e367826f93b8d71185e03fe518aff3b4.access`, which nobody can map
-to "my laptop's assistant". The normal flow is: point this server at your install, watch it get a
-`404`, then find the identity under **Seen but not granted** in the admin UI and grant it there. Give
-it the narrowest scope that does the job.
+```bash
+prk access token create "laptop assistant" --role writer --scope api:staging --secret-file ~/.config/prick-mcp/secret
+```
+
+The secret lands in an owner-only file and `prk` prints the client id; set them as
+`PRICK_MCP_CLIENT_SECRET` and `PRICK_MCP_CLIENT_ID`. The secret is shown once and prick keeps no
+copy. This needs a server whose Worker holds `CF_API_TOKEN` — see
+[Authentication](https://docs.getprick.dev/guides/authentication#authenticate-a-machine). The admin
+UI does the same under **Access → Service tokens**. Give it the narrowest scope that does the job.
+
+On a server without `CF_API_TOKEN`, create it in the Cloudflare Zero Trust dashboard instead:
+**Access controls → Service credentials → Service Tokens → Create Service Token**, admitted by a
+**Service Auth** policy on the Access application in front of your Worker. That token's
+`common_name` looks like `e367826f93b8d71185e03fe518aff3b4.access`, which nobody can map to "my
+laptop's assistant", and it holds no grant: point this server at your install, watch it get a
+`404`, then find the identity under **Seen but not granted** in the admin UI and grant it there.
 
 ---
 

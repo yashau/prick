@@ -90,8 +90,8 @@ The stable codes emitted under `--json`.
 | `PAYLOAD_TOO_LARGE`      | 11   | no        | The environment would exceed its secret cap                                                  |
 | `UNSUPPORTED_MEDIA_TYPE` | 11   | no        | A request body was not declared `application/json`                                           |
 | `RATE_LIMITED`           | 10   | yes       | The server asked the client to slow down                                                     |
-| `SERVER_ERROR`           | 8    | yes       | The server failed internally                                                                 |
-| `SERVICE_UNAVAILABLE`    | 8    | yes       | Up but temporarily refusing work, or no admins configured yet                                |
+| `SERVER_ERROR`           | 8    | yes       | The server failed internally, or the Cloudflare API it called failed                         |
+| `SERVICE_UNAVAILABLE`    | 8    | yes       | Up but temporarily refusing work, no admins configured yet, or service tokens not configured |
 | `UNREACHABLE`            | 7    | yes       | DNS, connection refused, or no route                                                         |
 | `TLS_FAILURE`            | 7    | no        | The TLS handshake failed — typically a corporate proxy with a private certificate authority  |
 | `TIMEOUT`                | 7    | yes       | The request exceeded `--timeout`                                                             |
@@ -295,6 +295,39 @@ between, and an exit code that said otherwise would send you to look.
 Nobody can administer this install yet. Set `BOOTSTRAP_ADMINS` in
 `wrangler.jsonc` and redeploy — see
 [Access control](/guides/access-control).
+
+### `SERVICE_UNAVAILABLE` with `SERVICE_TOKENS_UNCONFIGURED` (exit 8)
+
+A [`prk access token`](/reference/cli/access#prk-access-token) command reached a
+server that cannot manage service tokens. The server answers `503` with this
+code, and the hint names what is wrong:
+
+- the `CF_API_TOKEN` secret, the `CF_ACCOUNT_ID` var, or both, are not set;
+- `CF_ACCOUNT_ID` is not a 32-character hex account id;
+- Cloudflare refused the token, because it lacks the one permission it needs,
+  **Access: Service Tokens → Edit** on that account.
+
+`prk` reads `/api/v1/capabilities` before a `token` command and stops before
+sending anything when the server reports the feature unavailable, so the first
+two usually surface there. A refused token surfaces only when Cloudflare is
+asked. Retrying does not help; the fix is on the Worker — see
+[Configuration](/reference/configuration#service-token-management). Nothing else
+on the server is affected, and a token made in the Cloudflare dashboard still
+works.
+
+The hint goes to global admins only. Anyone else is refused with `FORBIDDEN`
+before the configuration is consulted.
+
+### `SERVER_ERROR` with `UPSTREAM_FAILED` (exit 8)
+
+The Cloudflare API failed while the server was managing a service token. The
+server answers `502` with this code. It is usually transient, so retrying is
+reasonable, and the hint says whether anything was left half done.
+
+A revoke that fails here has already taken effect inside prick: the identity is
+disabled, and only the Cloudflare delete is outstanding.
+`prk access token reconcile --apply` finishes it, and any other operation an
+outage interrupted.
 
 ### `TLS_FAILURE` (exit 7)
 

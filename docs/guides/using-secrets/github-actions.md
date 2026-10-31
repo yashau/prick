@@ -20,17 +20,31 @@ repository at `action/` with its own test suite (`mise run test:action`).
 The only thing your repository stores is the service token. Everything else lives
 in prick.
 
-1. Create a service token under **Zero Trust → Access controls → Service
-   credentials → Service Tokens**. The client secret starts with `cfast_` and is
-   shown once; the client id ends in `.access`.
-2. Under **Access controls → Policies**, add a reusable policy with the action
-   **Service Auth** and an **include** rule using the **Service Token**
-   selector, set to that token, and attach it to your prick application next to
-   the people's Allow policy. The Allow policy rejects a service token at the
-   edge, before prick ever sees the request, and must stay on Allow so that
-   `prk login` keeps working.
-3. Store the pair as GitHub Actions secrets, e.g. `PRICK_CLIENT_ID` and
-   `PRICK_CLIENT_SECRET`.
+A global admin creates the token, grants it, and stores its secret in GitHub in
+one command:
+
+```bash
+prk access token create "api deploy job" --role reader --scope api:production --secret-file - | gh secret set PRK_ACCESS_CLIENT_SECRET
+```
+
+`--secret-file -` writes the client secret alone to stdout, so it goes straight
+into GitHub and never appears on a terminal; prick keeps no copy of it. The
+client id is printed outside the pipe. It ends in `.access` and is not secret:
+
+```bash
+gh secret set PRK_ACCESS_CLIENT_ID --body e367826f93b8d71185e03fe518aff3b4.access
+```
+
+The token holds `reader` on `api:production` before its first request, so the
+first run works. This needs the server set up for service tokens once — the
+Worker holding `CF_API_TOKEN`, and a Service Auth policy for **Any Access
+Service Token** on the Access application; see
+[Authentication](/guides/authentication#once-per-deployment-set-up-service-tokens).
+
+On a server without `CF_API_TOKEN`, create the token in the dashboard instead,
+under **Zero Trust → Access controls → Service credentials → Service Tokens**,
+and grant it after its first run; see
+[The first run of a dashboard-made token](#the-first-run-of-a-dashboard-made-token).
 
 ## The action
 
@@ -38,8 +52,8 @@ in prick.
 - uses: yashau/prick/action@v2026.819.0
   with:
     url: https://prick.example.com
-    client-id: ${{ secrets.PRICK_CLIENT_ID }}
-    client-secret: ${{ secrets.PRICK_CLIENT_SECRET }}
+    client-id: ${{ secrets.PRK_ACCESS_CLIENT_ID }}
+    client-secret: ${{ secrets.PRK_ACCESS_CLIENT_SECRET }}
     project: api
     environment: production
 
@@ -120,8 +134,8 @@ jobs:
       PRK_API_URL: https://prick.example.com
       PRK_PROJECT: api
       PRK_ENV: production
-      PRK_ACCESS_CLIENT_ID: ${{ secrets.PRICK_CLIENT_ID }}
-      PRK_ACCESS_CLIENT_SECRET: ${{ secrets.PRICK_CLIENT_SECRET }}
+      PRK_ACCESS_CLIENT_ID: ${{ secrets.PRK_ACCESS_CLIENT_ID }}
+      PRK_ACCESS_CLIENT_SECRET: ${{ secrets.PRK_ACCESS_CLIENT_SECRET }}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -142,12 +156,14 @@ instead of blocking on a prompt no CI job can answer.
 `PRK_EXPECT_INSTANCE` works here too: add it to the job's `env` and every `prk`
 command in the job refuses a server whose instance id differs.
 
-## The first run will 404, and that is the flow
+## The first run of a dashboard-made token
 
-Access will let the token through the edge, and prick will refuse it, because
-authentication is not authorization and a new service token has no grant. A
-project the token cannot see is reported as absent (`NOT_FOUND`, exit 5) rather
-than forbidden, so the status code does not reveal which project names exist.
+A token from `prk access token create` was granted before its first request.
+A token made in the Cloudflare dashboard was not: Access lets it through the
+edge, and prick refuses it, because authentication is not authorization and a
+new service token has no grant. A project the token cannot see is reported as
+absent (`NOT_FOUND`, exit 5) rather than forbidden, so the status code does not
+reveal which project names exist.
 
 That denial is recorded. The subject then appears in the "seen but not granted"
 list, so an administrator can grant it without anyone copying an opaque
@@ -164,8 +180,12 @@ prk access grant e367826f93b8d71185e03fe518aff3b4.access --role reader --scope a
 Give CI the **narrowest** role that works. A deploy job that only reads secrets
 is a `reader` on one environment, not a global admin.
 
+Once the server holds `CF_API_TOKEN`, `prk access token adopt <CLIENT_ID>`
+brings a dashboard-made token under management, so it rotates and revokes from
+`prk`.
+
 :::note[A different refusal can look similar from here]
-The denial above is `NOT_FOUND`, and a grant fixes it. If the error is
+A `NOT_FOUND` is a missing grant, and a grant fixes it. If the error is
 `MITIGATED` instead, the request never reached prick at all: Cloudflare's bot
 products challenge datacenter IPs, and GitHub-hosted runners are datacenter IPs.
 No grant will fix that one — see
