@@ -75,7 +75,7 @@
     },
 
     {
-      // The Cloudflare local-runtime stack. `@cloudflare/vitest-pool-workers`
+      // The Cloudflare local-runtime stack. `@cloudflare/vitest-plugin`
       // pins its own wrangler and miniflare; bumping vitest or wrangler
       // independently produces failures inside miniflare that read as
       // application bugs and cost hours to trace back to a version skew.

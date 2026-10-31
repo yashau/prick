@@ -24,6 +24,6 @@
     // declared in the package's `./types` SUBPATH, not at its root -- the root
     // entry is the pool implementation and declares nothing. Naming the bare
     // package here typechecks as a no-op and leaves the test files broken.
-    "types": ["node", "@cloudflare/vitest-pool-workers/types"]
+    "types": ["node", "@cloudflare/vitest-plugin/types"]
   }
 }

@@ -223,7 +223,7 @@ function mediaTypeOf(header: string): string {
  * `c.req.raw.body !== null`. That expression is not the same fact in the two
  * places this Worker runs:
  *
- *   in-process   `vitest-pool-workers`, and any `SELF.fetch` -- a bodiless
+ *   in-process   `vitest-plugin`, and any `SELF.fetch` -- a bodiless
  *                DELETE has `body === null`, so the check passed.
  *   over the wire workerd hands the Worker a non-null, empty body stream for
  *                the SAME bodiless DELETE, so the check answered 415.

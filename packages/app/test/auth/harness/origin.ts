@@ -14,8 +14,8 @@
  *
  * WHICH INTERCEPTION MECHANISM
  *
- * `@cloudflare/vitest-pool-workers` 0.21 (the Vitest 4 / miniflare 5 line) no
- * longer exports `fetchMock` from `cloudflare:test` -- the undici `MockAgent`
+ * `@cloudflare/vitest-plugin` does not export `fetchMock` from
+ * `cloudflare:test` -- the undici `MockAgent`
  * types are still in the .d.ts, but nothing exports an instance, and miniflare
  * 5's worker options have no `fetchMock` field either. `outboundService` is
  * what exists, so that is what this is built on.
@@ -30,7 +30,7 @@
 
 import { fileURLToPath } from "node:url";
 
-import { readD1Migrations } from "@cloudflare/vitest-pool-workers";
+import { readD1Migrations } from "@cloudflare/vitest-plugin";
 
 import { generateAccessKey, jwksDocument, type AccessKeyMaterial } from "./keys.js";
 import {

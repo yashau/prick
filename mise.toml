@@ -303,7 +303,7 @@ description = "Doc tests — nextest cannot run these, so they need their own pa
 run = "cargo test --workspace --doc --locked"
 
 [tasks."test:js"]
-description = "Vitest against packages/app (vitest-pool-workers)"
+description = "Vitest against packages/app (@cloudflare/vitest-plugin)"
 # Scoped to packages/app for two reasons: at the workspace root Vitest would
 # sweep up scripts/*.test.mjs (those are node:test files, owned by
 # test:scripts); and e2e's own `test` script is Playwright, which must not run

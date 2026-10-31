@@ -1,4 +1,4 @@
-import { cloudflareTest } from "@cloudflare/vitest-pool-workers";
+import { cloudflareTest } from "@cloudflare/vitest-plugin";
 import { defineConfig } from "vitest/config";
 
 import { createAccessHarness } from "./test/auth/harness/origin.js";
@@ -16,12 +16,11 @@ const accessHarness = await createAccessHarness();
 /**
  * Worker integration tests: the real Hono app, against a real D1, in miniflare.
  *
- * API NOTE: as of @cloudflare/vitest-pool-workers 0.21 (the Vitest 4 line) the
- * `@cloudflare/vitest-pool-workers/config` subpath and `defineWorkersConfig()`
- * no longer exist. The pool is now a Vite PLUGIN -- `cloudflareTest(options)`
- * -- taking what used to be `test.poolOptions.workers`. The package ships a
- * codemod (`@cloudflare/vitest-pool-workers/codemods/vitest-v3-to-v4`) that
- * performs exactly this rewrite; every tutorial still shows the old shape.
+ * API NOTE: the pool is a Vite PLUGIN -- `cloudflareTest(options)` from
+ * `@cloudflare/vitest-plugin` -- taking what older releases read from
+ * `test.poolOptions.workers`. Many tutorials still show the older
+ * `@cloudflare/vitest-pool-workers/config` + `defineWorkersConfig()` shape,
+ * which no longer exists.
  *
  * `main` points at the Hono-only test entry rather than at the deployed
  * `.svelte-kit/cloudflare/_worker.js`, so the server suite never needs a

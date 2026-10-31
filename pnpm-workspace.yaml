@@ -99,14 +99,15 @@ ignoredOptionalDependencies:
 # tools. Move the whole workspace at once when they support 7, rather than
 # splitting it across two compilers.
 #
-# vitest is held on the 4.x line: @cloudflare/vitest-pool-workers has no Vitest
-# 5 release yet (cloudflare/workers-sdk#15618). The two move together.
+# @cloudflare/vitest-plugin pins its own wrangler and miniflare. Keep the
+# catalog's wrangler on the exact version the plugin release pins, so the Worker
+# suite and `wrangler dev` run one miniflare rather than two.
 # -----------------------------------------------------------------------------
 catalog:
-  "@cloudflare/vitest-pool-workers": 0.22.0
+  "@cloudflare/vitest-plugin": 1.4.9
   typescript: 6.0.3
   vite: 8.3.5
-  vitest: 4.1.11
+  vitest: 5.0.5
   wrangler: 4.154.0
 
 # -----------------------------------------------------------------------------
@@ -143,19 +144,7 @@ catalog:
 #     `tsx` and will not be released again, so the pin is permanent and only an
 #     override moves it. drizzle-kit's own direct dependency is already 0.25.12;
 #     this collapses the stale second copy onto it.
-#
-#   undici >=7.0.0 <7.29.1 -- GHSA-* (DoS via WebSocket subprotocol, TLS
-#   validation bypass in BalancedPool, and seven lower-severity advisories)
-#   sharp <0.35.4 -- GHSA-g89c-p67h-r497, GHSA-2jg2-4ch7-h545 (libheif)
-#     Test tooling only. @cloudflare/vitest-pool-workers 0.22.0 pins its OWN
-#     wrangler and miniflare (4.124 / 5.20260815), whose undici and sharp are
-#     older than the top-level wrangler's. Neither ships: miniflare is the
-#     local runtime the Worker suite runs in. Both targets are the versions the
-#     top-level wrangler 4.145.0 already resolves. Delete these two once a
-#     vitest-pool-workers release depends on a current miniflare.
 # -----------------------------------------------------------------------------
 overrides:
   "cookie@<0.7.0": "0.7.2"
   "esbuild@<0.25.0": "0.25.12"
-  "undici@>=7.0.0 <7.29.1": "7.29.1"
-  "sharp@<0.35.4": "0.35.4"
