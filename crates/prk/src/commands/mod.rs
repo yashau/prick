@@ -18,6 +18,7 @@ pub mod env;
 pub mod explain;
 pub mod identity;
 pub mod keyring;
+pub mod profile;
 pub mod projects;
 pub mod run;
 pub mod secrets;
@@ -27,13 +28,14 @@ use std::future::Future;
 use std::io::Read as _;
 use std::path::Path;
 
-use prick_auth::{ServiceToken, StorageBackend, TokenSource, TokenStore};
+use prick_auth::{ServiceToken, TokenSource, TokenStore};
 use prick_core::slug::{SLUG_MAX_LEN, is_slug, slugify};
 use secrecy::{ExposeSecret, SecretString};
 
 use crate::cli::{Cli, Command, GlobalArgs};
 use crate::error::CliError;
 use crate::output::Output;
+use crate::target::Target;
 
 /// Everything a command needs to reach the server.
 ///
@@ -49,6 +51,13 @@ pub struct Context {
     /// Resolved once, at construction, so that `--access-client-secret-file -`
     /// reads stdin exactly one time however many requests follow.
     service_token: Option<ServiceToken>,
+    /// Which server, and why. Fixed for the life of the invocation: there is
+    /// no setter, so nothing can point a context at a second server.
+    target: Target,
+    /// Whether the command changes data on the server.
+    writes: bool,
+    /// The server's answer to `/whoami`, once asked.
+    identity: Option<prick_api::models::Whoami>,
 }
 
 impl Context {
@@ -60,7 +69,17 @@ impl Context {
     /// secret file could not be read, and [`CliError::Api`] if the HTTP stack
     /// or the platform trust store cannot be set up.
     pub fn new(global: &GlobalArgs) -> Result<Self, CliError> {
-        let api_url = resolve_api_url(global)?;
+        let target = crate::target::resolve(global)?;
+        Self::with_target(global, target)
+    }
+
+    /// Builds a context for a target already resolved.
+    ///
+    /// # Errors
+    ///
+    /// See [`Context::new`].
+    pub fn with_target(global: &GlobalArgs, target: Target) -> Result<Self, CliError> {
+        let api_url = target.api_url.clone();
         let service_token = resolve_service_token(global)?;
 
         let config = prick_api::Config::new(&api_url)
@@ -77,10 +96,18 @@ impl Context {
         Ok(Self {
             api_url,
             client,
-            store: TokenStore::new(StorageBackend::File)?,
+            store: target.tokens(),
             runtime,
             service_token,
+            target,
+            writes: global.writes,
+            identity: None,
         })
+    }
+
+    /// The server this invocation talks to, and why.
+    pub fn target(&self) -> &Target {
+        &self.target
     }
 
     /// The resolved server URL.
@@ -114,6 +141,13 @@ impl Context {
     /// [`CliError::Auth`] when nothing is configured or the session has expired
     /// beyond renewal.
     pub fn authenticate(&mut self, out: Output) -> Result<(), CliError> {
+        for note in &self.target.notes {
+            out.note(note);
+        }
+
+        // Everything that can be refused without a request is refused first.
+        self.target.check_before_credentials(self.writes, self.service_token.as_ref())?;
+
         let resolved = self.runtime.block_on(prick_auth::resolve(
             &self.client,
             &self.store,
@@ -127,55 +161,53 @@ impl Context {
         out.debug(2, &format!("authenticating from the {}", resolved.source.as_str()));
 
         self.client.set_credential(resolved.credential);
+
+        // The server says who it is before the command sends anything of its
+        // own. `/whoami` carries no secret, so a server that turns out to be
+        // the wrong deployment has received nothing but the credential that
+        // was issued for its own URL.
+        if self.target.needs_verification() {
+            let identity = self.runtime.block_on(prick_api::ops::whoami(&self.client))?;
+            self.target.verify(identity.instance.as_deref())?;
+            if self.target.pinned_now {
+                out.note(&format!(
+                    "pinned {} to {}",
+                    self.target.selection.profile().unwrap_or("this profile"),
+                    self.target.instance_label()
+                ));
+            }
+            self.identity = Some(identity);
+        }
+        out.debug(
+            1,
+            &format!(
+                "talking to {} ({}, {})",
+                self.target.host(),
+                crate::target::describe_source(self.target.selection.source(), &self.target),
+                self.target.instance_label()
+            ),
+        );
+
+        if self.writes {
+            out.note(&self.target.destination_line());
+            crate::output::set_destination(self.target.destination_json());
+        }
         Ok(())
     }
-}
 
-/// Resolves the server URL from the flags, the environment, or a stored login.
-///
-/// # Errors
-///
-/// [`CliError::Other`] naming both ways to supply it.
-fn resolve_api_url(global: &GlobalArgs) -> Result<String, CliError> {
-    // Built leniently: a platform that cannot name a configuration directory
-    // has no stored login to find either, and "no server URL is configured" is
-    // a better answer to that than a failure to locate the directory.
-    let store = TokenStore::new(StorageBackend::File).ok();
-    resolve_api_url_from(global, store.as_ref())
-}
-
-/// [`resolve_api_url`] with an injectable store, for tests.
-///
-/// The store is a parameter because the alternative is a test that reads the
-/// developer's own credential file and then passes or fails on whether they
-/// happen to be logged in. `None` stands for "no configuration directory could
-/// be determined", which is the one way building the default store fails.
-///
-/// The store is consulted only when nothing more explicit was supplied, so the
-/// `--api-url` and `PRK_API_URL` path still touches no files.
-///
-/// # Errors
-///
-/// [`CliError::Other`] naming both ways to supply it.
-fn resolve_api_url_from(
-    global: &GlobalArgs,
-    store: Option<&TokenStore>,
-) -> Result<String, CliError> {
-    if let Some(url) = global.api_url.as_deref().filter(|url| !url.is_empty()) {
-        return Ok(url.trim_end_matches('/').to_owned());
+    /// The server's answer to `/whoami`, asking only if it has not been asked.
+    ///
+    /// # Errors
+    ///
+    /// [`CliError::Api`] for anything the server reported.
+    pub fn identity(&mut self) -> Result<prick_api::models::Whoami, CliError> {
+        if let Some(identity) = &self.identity {
+            return Ok(identity.clone());
+        }
+        let identity = self.runtime.block_on(prick_api::ops::whoami(&self.client))?;
+        self.identity = Some(identity.clone());
+        Ok(identity)
     }
-
-    // A previous `prk login` recorded which server it logged in to, so the
-    // common case needs neither a flag nor an environment variable.
-    if let Some(session) = store.and_then(|store| store.load().ok().flatten()) {
-        return Ok(session.api_url);
-    }
-
-    Err(CliError::Other(
-        "no server URL is configured; pass --api-url <URL>, set PRK_API_URL, or run \
-         `prk login <URL>` once"
-            .to_owned(),
-    ))
 }
 
 /// Resolves the service token, if one is configured.
@@ -272,23 +304,68 @@ fn read_secret_file(path: &Path) -> Result<SecretString, CliError> {
 pub fn dispatch(cli: &Cli, out: Output) -> Result<(), CliError> {
     out.debug(1, &format!("dispatching `prk {}`", cli.command.path()));
 
+    let global = &effective_global(cli)?;
+
     match &cli.command {
         Command::Completions(args) => completions::run(args, out),
         Command::Version => version::run(out),
 
-        Command::Login(args) => auth::login(args, &cli.global, out),
-        Command::Logout(args) => auth::logout(args, &cli.global, out),
-        Command::Whoami => auth::whoami(&cli.global, out),
-        Command::Doctor => doctor::run(&cli.global, out),
+        Command::Login(args) => auth::login(args, global, out),
+        Command::Logout(args) => auth::logout(args, global, out),
+        Command::Whoami => auth::whoami(global, out),
+        Command::Doctor => doctor::run(global, out),
+        Command::Profile(sub) => profile::run(sub, global, out),
 
-        Command::Run(args) => run::run(args, &cli.global, out),
+        Command::Run(args) => run::run(args, global, out),
 
-        Command::Projects(sub) => projects::run(sub, &cli.global, out),
-        Command::Env(sub) => env::run(sub, &cli.global, out),
-        Command::Secrets(sub) => secrets::run(sub, &cli.global, out),
-        Command::Access(sub) => access::run(sub, &cli.global, out),
-        Command::Keyring(sub) => keyring::run(sub, &cli.global, out),
+        Command::Projects(sub) => projects::run(sub, global, out),
+        Command::Env(sub) => env::run(sub, global, out),
+        Command::Secrets(sub) => secrets::run(sub, global, out),
+        Command::Access(sub) => access::run(sub, global, out),
+        Command::Keyring(sub) => keyring::run(sub, global, out),
     }
+}
+
+/// The global flags as the command sees them.
+///
+/// Two things are filled in here, once, rather than in every command: whether
+/// the command writes to the server, and the project and environment a
+/// project file or the selected profile supplies when neither a flag nor
+/// `PRK_PROJECT` / `PRK_ENV` did. The resolution is lenient: if no server can
+/// be chosen, the command's own [`Context::new`] reports why -- except for a
+/// broken project file, which is reported here.
+fn effective_global(cli: &Cli) -> Result<GlobalArgs, CliError> {
+    let mut global = cli.global.clone();
+    global.writes = cli.command.writes_server();
+
+    let uses_scope = !matches!(
+        cli.command,
+        Command::Completions(_)
+            | Command::Version
+            | Command::Login(_)
+            | Command::Logout(_)
+            | Command::Profile(_)
+    );
+    let unset = |value: &Option<String>| value.as_deref().is_none_or(str::is_empty);
+    if uses_scope && (unset(&global.project) || unset(&global.env)) {
+        match crate::target::peek(&global) {
+            Ok(target) => {
+                if unset(&global.project) {
+                    global.project = target.default_project();
+                }
+                if unset(&global.env) {
+                    global.env = target.default_env();
+                }
+            }
+            // A broken project file is the reason no project was found, so it
+            // is reported instead of "no project selected".
+            Err(CliError::Target(err)) if Target::is_project_error(&err) => {
+                return Err(err.into());
+            }
+            Err(_) => {}
+        }
+    }
+    Ok(global)
 }
 
 /// Rejects a name that no route could address.
@@ -375,6 +452,9 @@ mod tests {
             no_input: true,
             yes: false,
             api_url: None,
+            profile: None,
+            expect_instance: None,
+            writes: false,
             access_client_id: None,
             access_client_secret: None,
             access_client_secret_file: None,
@@ -394,27 +474,41 @@ mod tests {
 
     /// An empty store, so that the assertion is about the argument and not
     /// about whether whoever is running the tests has logged in.
-    fn empty_store() -> (tempfile::TempDir, TokenStore) {
+    fn empty_store() -> (tempfile::TempDir, prick_auth::profiles::ProfileStore) {
         let dir = tempfile::tempdir().expect("a temporary directory");
-        let store = TokenStore::in_dir(dir.path().join("prick"), StorageBackend::File);
+        let store = prick_auth::profiles::ProfileStore::in_dir(dir.path().join("prick"));
         (dir, store)
+    }
+
+    fn resolve_url(
+        global: &GlobalArgs,
+        store: prick_auth::profiles::ProfileStore,
+    ) -> Result<String, crate::target::TargetError> {
+        crate::target::resolve_in(global, &crate::target::EnvVars::default(), None, None, store)
+            .map(|target| target.api_url)
     }
 
     #[test]
     fn a_command_with_no_server_configured_says_how_to_configure_one() {
         let global = global_with(None, None);
         let (_dir, store) = empty_store();
-        let err = resolve_api_url_from(&global, Some(&store)).unwrap_err();
+        let err = resolve_url(&global, store).unwrap_err();
         let message = err.to_string();
         assert!(message.contains("--api-url"), "{message}");
         assert!(message.contains("PRK_API_URL"), "{message}");
         assert!(message.contains("prk login"), "{message}");
+        assert_eq!(
+            CliError::from(err).exit_code(),
+            1,
+            "the exit code an unconfigured run always had"
+        );
     }
 
     #[test]
     fn a_stored_login_supplies_the_url_when_nothing_else_does() {
         let (_dir, store) = empty_store();
         store
+            .legacy_tokens()
             .save(&prick_auth::StoredSession {
                 api_url: "https://prick.example.com".to_owned(),
                 issuer: "https://example.cloudflareaccess.com".to_owned(),
@@ -431,18 +525,15 @@ mod tests {
             .expect("a session is stored");
 
         let global = global_with(None, None);
-        assert_eq!(
-            resolve_api_url_from(&global, Some(&store)).unwrap(),
-            "https://prick.example.com"
-        );
+        assert_eq!(resolve_url(&global, store).unwrap(), "https://prick.example.com");
     }
 
     #[test]
     fn an_explicit_url_wins_and_is_normalised() {
         let mut global = global_with(None, None);
         global.api_url = Some("https://prick.example.com/".to_owned());
-        // Explicitly with no store to fall back on: the flag is the answer.
-        assert_eq!(resolve_api_url_from(&global, None).unwrap(), "https://prick.example.com");
+        let (_dir, store) = empty_store();
+        assert_eq!(resolve_url(&global, store).unwrap(), "https://prick.example.com");
     }
 
     #[test]

@@ -93,6 +93,13 @@ pub struct Whoami {
     /// providers that supply no name, and against a server predating the field.
     #[serde(default)]
     pub display_name: Option<String>,
+    /// The deployment's permanent instance id: 32 lowercase hex digits.
+    ///
+    /// What a CLI profile pins, because it is the one thing that tells two
+    /// deployments of the same application apart. `None` against a server
+    /// that does not report one.
+    #[serde(default)]
+    pub instance: Option<String>,
 }
 
 /// A project.

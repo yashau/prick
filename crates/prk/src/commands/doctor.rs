@@ -10,6 +10,7 @@
 //! So every check runs, each records a status, and the exit code is decided at
 //! the end.
 
+use prick_auth::profiles::ProfileStore;
 use prick_auth::{StorageBackend, TokenStore};
 use prick_core::classify::ErrorKind;
 
@@ -106,16 +107,21 @@ pub fn run(global: &GlobalArgs, out: Output) -> Result<(), CliError> {
     // 1. Where are we pointed, and did that come from a flag or a login.
     let context = match Context::new(global) {
         Ok(context) => {
-            let source = if global.api_url.is_some() {
-                "from --api-url or PRK_API_URL"
-            } else {
-                "from the stored login"
-            };
+            let target = context.target();
+            let source = crate::target::describe_source(target.selection.source(), target);
             checks.push(Check::new(
                 "server url",
                 Status::Ok,
                 format!("{} ({source})", context.api_url()),
             ));
+            checks.push(match target.selection.profile() {
+                Some(name) => Check::new(
+                    "profile",
+                    Status::Ok,
+                    format!("{name} ({})", target.instance_label()),
+                ),
+                None => Check::new("profile", Status::Skip, "no profile is for this server"),
+            });
             Some(context)
         }
         Err(err) => {
@@ -125,7 +131,7 @@ pub fn run(global: &GlobalArgs, out: Output) -> Result<(), CliError> {
     };
 
     // 2. Token storage, whether or not the server is reachable.
-    checks.push(token_file_check());
+    checks.extend(token_file_checks());
     checks.extend(roaming_copy_check());
 
     // 3. Reachability and identity, which need the server.
@@ -147,35 +153,54 @@ pub fn run(global: &GlobalArgs, out: Output) -> Result<(), CliError> {
     Ok(())
 }
 
-/// Checks the credentials file's permissions.
+/// Checks every credential file's permissions: each profile's, and the
+/// legacy file if no profile uses it.
 ///
 /// A token readable by group or other is a finding on Unix; on Windows the
 /// equivalent is a DACL that grants anyone but the owner, which is what
-/// `prick_exec::winsec` verifies.
-fn token_file_check() -> Check {
-    let store = match TokenStore::new(StorageBackend::File) {
-        Ok(store) => store,
-        Err(err) => return Check::new("token storage", Status::Fail, err.to_string()),
+/// `prick_exec::winsec` verifies. The legacy file in use by a profile is a
+/// normal state and is reported as such.
+fn token_file_checks() -> Vec<Check> {
+    let profiles = match ProfileStore::new() {
+        Ok(profiles) => profiles,
+        Err(err) => return vec![Check::new("token storage", Status::Fail, err.to_string())],
     };
-
-    let path = store.path();
-    if !path.exists() {
-        return Check::new(
-            "token storage",
-            Status::Skip,
-            format!("{} does not exist", path.display()),
-        );
+    let mut stores: Vec<(Option<String>, TokenStore)> = match profiles.load() {
+        Ok(loaded) => loaded
+            .config
+            .profiles
+            .iter()
+            .map(|(name, profile)| (Some(name.clone()), profiles.tokens(profile)))
+            .collect(),
+        Err(err) => return vec![Check::new("token storage", Status::Fail, err.to_string())],
+    };
+    let legacy = profiles.legacy_tokens().clone();
+    if !stores.iter().any(|(_, store)| store.path() == legacy.path()) {
+        stores.push((None, legacy));
     }
 
+    let present: Vec<_> = stores.into_iter().filter(|(_, store)| store.path().exists()).collect();
+    if present.is_empty() {
+        return vec![Check::new("token storage", Status::Skip, "no credential file exists yet")];
+    }
+    present.into_iter().map(|(name, store)| token_file_check(name.as_deref(), &store)).collect()
+}
+
+/// One credential file's permissions.
+fn token_file_check(profile: Option<&str>, store: &TokenStore) -> Check {
+    let path = store.path();
+    let owner = profile.map(|name| format!(" (profile {name})")).unwrap_or_default();
     match store.is_owner_only() {
-        Ok(true) => {
-            Check::new("token storage", Status::Ok, format!("{} is owner-only", path.display()))
-        }
+        Ok(true) => Check::new(
+            "token storage",
+            Status::Ok,
+            format!("{}{owner} is owner-only", path.display()),
+        ),
         Ok(false) => Check::new(
             "token storage",
             Status::Fail,
             format!(
-                "{} is readable by more than its owner; delete it and run `prk login` again",
+                "{}{owner} is readable by more than its owner; delete it and run `prk login` again",
                 path.display()
             ),
         ),
@@ -210,18 +235,38 @@ fn server_checks(context: &mut Context, out: Output) -> Vec<Check> {
 
     // Then with a credential, if there is one.
     match context.authenticate(out) {
-        Ok(()) => match context.block_on(prick_api::ops::whoami(context.client())) {
-            Ok(identity) => checks.push(Check::new(
-                "identity",
-                Status::Ok,
-                format!("{} ({})", identity.subject, identity.kind),
-            )),
+        Ok(()) => match context.identity() {
+            Ok(identity) => {
+                checks.push(Check::new(
+                    "identity",
+                    Status::Ok,
+                    format!("{} ({})", identity.subject, identity.kind),
+                ));
+                checks.push(match identity.instance {
+                    Some(_) => {
+                        Check::new("instance", Status::Ok, context.target().instance_label())
+                    }
+                    None => Check::new(
+                        "instance",
+                        Status::Warn,
+                        "the server reports no instance id, so profiles cannot be pinned to it",
+                    ),
+                });
+            }
             Err(err) => {
-                let request_id =
-                    err.request_id().map(|id| format!(" [request {id}]")).unwrap_or_default();
+                let request_id = match &err {
+                    CliError::Api(api) => api.request_id().map(|id| format!(" [request {id}]")),
+                    _ => None,
+                }
+                .unwrap_or_default();
                 checks.push(Check::new("identity", Status::Fail, format!("{err}{request_id}")));
             }
         },
+        // The server is not the deployment it must be. Not a missing
+        // credential: a failure, and the most important line in the report.
+        Err(err @ CliError::Target(_)) => {
+            checks.push(Check::new("instance", Status::Fail, err.to_string()));
+        }
         Err(err) => checks.push(Check::new("credentials", Status::Warn, err.to_string())),
     }
 

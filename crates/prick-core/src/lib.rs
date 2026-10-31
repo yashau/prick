@@ -32,6 +32,7 @@ pub mod dotenv;
 pub mod format;
 pub mod keyname;
 pub mod pkce;
+pub mod profile;
 pub mod redact;
 pub mod scope;
 pub mod slug;

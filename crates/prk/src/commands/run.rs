@@ -41,6 +41,15 @@ pub struct RunArgs {
     #[arg(long)]
     pub allow_unsafe_env: bool,
 
+    /// Inject secrets named like the variables prk itself reads.
+    ///
+    /// Without this, a secret called `PRK_API_URL`, `PRK_PROFILE`,
+    /// `PRK_CONFIG_DIR`, `PRK_EXPECT_INSTANCE` or one of the service-token
+    /// variables is skipped with a warning, because a `prk` run inside the
+    /// child would read it and could be pointed at another server.
+    #[arg(long)]
+    pub allow_prk_vars: bool,
+
     /// The command to run, followed by its arguments.
     ///
     /// Captured as raw OS strings and passed straight to the process API, so
@@ -74,7 +83,7 @@ pub fn run(args: &RunArgs, global: &GlobalArgs, out: Output) -> Result<(), CliEr
     // export is a single decision at a single instant, and a row per secret
     // would make the log worse rather than more complete.
     let export = context.block_on(ops::export_secrets(context.client(), project, environment))?;
-    let secrets = export.into_pairs();
+    let secrets = skip_prk_vars(export.into_pairs(), args.allow_prk_vars, out);
 
     out.debug(1, &format!("injecting {} secrets into the child environment", secrets.len()));
 
@@ -95,6 +104,46 @@ pub fn run(args: &RunArgs, global: &GlobalArgs, out: Output) -> Result<(), CliEr
     }
 }
 
+/// The variables `prk` reads to decide which server it talks to and as whom.
+///
+/// Exactly these names, not a `PRK_` prefix, so an application's own
+/// `PRK_`-prefixed secrets are injected as usual.
+pub const PRK_VARS: &[&str] = &[
+    "PRK_API_URL",
+    "PRK_PROFILE",
+    "PRK_CONFIG_DIR",
+    "PRK_EXPECT_INSTANCE",
+    "PRK_ACCESS_CLIENT_ID",
+    "PRK_ACCESS_CLIENT_SECRET",
+    "CF_ACCESS_CLIENT_ID",
+    "CF_ACCESS_CLIENT_SECRET",
+];
+
+/// Drops secrets named like [`PRK_VARS`], warning with the name and never the
+/// value.
+///
+/// A secret is data from the server; one of these names in a child's
+/// environment would make a nested `prk` take its server or its identity from
+/// that data. The operator's own environment is passed through untouched.
+fn skip_prk_vars<V>(secrets: Vec<(String, V)>, allow: bool, out: Output) -> Vec<(String, V)> {
+    if allow {
+        return secrets;
+    }
+    secrets
+        .into_iter()
+        .filter(|(name, _)| {
+            let reserved = PRK_VARS.contains(&name.as_str());
+            if reserved {
+                out.warn(&format!(
+                    "not injecting `{name}`: prk reads it, so a prk inside the command would follow it; \
+                     pass --allow-prk-vars to inject it anyway"
+                ));
+            }
+            !reserved
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use clap::Parser as _;
@@ -109,6 +158,23 @@ mod tests {
             }
             other => panic!("expected run, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn secrets_named_like_prks_own_variables_are_not_injected() {
+        let out = crate::output::Output::new(false, true, 0, crate::cli::ColorChoice::Never);
+        let secrets = vec![
+            ("PRK_API_URL".to_owned(), "https://elsewhere.example"),
+            ("CF_ACCESS_CLIENT_SECRET".to_owned(), "x"),
+            ("PRK_FEATURE_FLAG".to_owned(), "on"),
+            ("DATABASE_URL".to_owned(), "postgres://"),
+        ];
+        let kept: Vec<_> = super::skip_prk_vars(secrets.clone(), false, out)
+            .into_iter()
+            .map(|(name, _)| name)
+            .collect();
+        assert_eq!(kept, ["PRK_FEATURE_FLAG", "DATABASE_URL"], "only prk's own names are skipped");
+        assert_eq!(super::skip_prk_vars(secrets, true, out).len(), 4);
     }
 
     #[test]

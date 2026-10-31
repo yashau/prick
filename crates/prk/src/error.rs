@@ -77,6 +77,10 @@ pub enum CliError {
     #[error(transparent)]
     Auth(#[from] prick_auth::AuthError),
 
+    /// The server could not be chosen, or is not the one it must be.
+    #[error(transparent)]
+    Target(#[from] crate::target::TargetError),
+
     /// stdout would not take the whole answer.
     ///
     /// Raised after the command has returned, from [`crate::run`], because that
@@ -119,6 +123,13 @@ impl From<prick_exec::LaunchError> for CliError {
     }
 }
 
+/// A profile file that could not be read or written is a target failure.
+impl From<prick_auth::profiles::ProfileStoreError> for CliError {
+    fn from(err: prick_auth::profiles::ProfileStoreError) -> Self {
+        Self::Target(crate::target::TargetError::Store(err))
+    }
+}
+
 impl CliError {
     /// The process exit code for this failure.
     ///
@@ -129,6 +140,7 @@ impl CliError {
         match self {
             Self::Api(err) => err.exit_code(),
             Self::Auth(err) => err.exit_code(),
+            Self::Target(err) => err.exit_code(),
             // 126 and 127 are outside the taxonomy on purpose: they are the
             // shell's, and reproducing them exactly is what makes `prk run`
             // transparent to a script.
@@ -145,6 +157,7 @@ impl CliError {
         match self {
             Self::Api(err) => err.kind().code(),
             Self::Auth(err) => err.code(),
+            Self::Target(err) => err.code(),
             Self::Launch(_) => "LAUNCH_FAILED",
             Self::Format(_) => "UNREPRESENTABLE_OUTPUT",
             Self::TruncatedOutput(_) => "TRUNCATED_OUTPUT",
@@ -165,6 +178,7 @@ impl CliError {
         match self {
             Self::Api(err) => err.server_hint().or_else(|| err.hint()),
             Self::Auth(err) => err.hint(),
+            Self::Target(err) => err.hint(),
             Self::Launch(err) => err.hint(),
             Self::Format(_) => Some(
                 "The value contains a control character this format cannot encode. \

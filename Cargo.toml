@@ -92,6 +92,8 @@ open = "5"
 # never contend for the same stream.
 rpassword = "7"
 url = "2.5"
+# Profiles and project files are TOML because people read and hand-edit them.
+toml = "1"
 
 libc = "0.2"
 which = "8"
