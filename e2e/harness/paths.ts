@@ -52,6 +52,17 @@ export const PATHS = {
   handoff: join(WORK_ROOT, "harness.json"),
   /** `wrangler dev` stdout and stderr, so a boot failure is readable. */
   devLog: join(WORK_ROOT, "wrangler-dev.log"),
+  /**
+   * The second Worker, configured to manage service tokens against the fake
+   * Cloudflare API. Its own directory, so its `.dev.vars` (which carries the
+   * fake `CF_API_TOKEN`) sits beside its own config and nowhere else, and its
+   * own D1 state.
+   */
+  cloudflareRoot: join(WORK_ROOT, "cloudflare"),
+  cloudflareWorkerConfig: join(WORK_ROOT, "cloudflare", "wrangler.json"),
+  cloudflareDevVars: join(WORK_ROOT, "cloudflare", ".dev.vars"),
+  cloudflarePersist: join(WORK_ROOT, "cloudflare", "state"),
+  cloudflareDevLog: join(WORK_ROOT, "wrangler-dev-cloudflare.log"),
   /** The seed applied before the Worker starts. */
   seedSql: join(E2E_ROOT, "seed.sql"),
   /** The built Worker and its assets. */

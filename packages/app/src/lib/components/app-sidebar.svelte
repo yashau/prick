@@ -1,6 +1,7 @@
 <script lang="ts">
   import ChevronsUpDownIcon from '@lucide/svelte/icons/chevrons-up-down';
   import FolderIcon from '@lucide/svelte/icons/folder';
+  import KeySquareIcon from '@lucide/svelte/icons/key-square';
   import KeyRoundIcon from '@lucide/svelte/icons/key-round';
   import LayersIcon from '@lucide/svelte/icons/layers';
   import LogOutIcon from '@lucide/svelte/icons/log-out';
@@ -13,7 +14,7 @@
 
   import { initialsFor } from '#lib/client/format.js';
   import { page } from '$app/state';
-  import type { ProjectSummary, Viewer } from '#lib/client/api.js';
+  import type { FeatureCapability, ProjectSummary, Viewer } from '#lib/client/api.js';
   import ProjectSwitcher from '#lib/components/project-switcher.svelte';
   import * as Avatar from '#lib/components/ui/avatar/index.js';
   import { Badge } from '#lib/components/ui/badge/index.js';
@@ -24,10 +25,18 @@
   let {
     projects,
     viewer,
+    serviceTokens = null,
     unknownIdentityCount = 0
   }: {
     projects: ProjectSummary[];
     viewer: Viewer;
+    /**
+     * Whether this viewer may manage service tokens here. The link is offered
+     * on `allowed` alone: the server sets it for a global administrator on a
+     * Worker that holds a Cloudflare API token, which is exactly who the
+     * screen works for.
+     */
+    serviceTokens?: FeatureCapability | null;
     /** Drives the "seen but not granted" badge. */
     unknownIdentityCount?: number;
   } = $props();
@@ -157,7 +166,10 @@
             </Sidebar.MenuItem>
 
             <Sidebar.MenuItem>
-              <Sidebar.MenuButton isActive={isActive('/access')} tooltipContent="Access">
+              <Sidebar.MenuButton
+                isActive={isActive('/access') && !isActive('/access/tokens')}
+                tooltipContent="Access"
+              >
                 {#snippet child({ props })}
                   <a {...props} href="/access">
                     <UsersIcon aria-hidden="true" />
@@ -172,6 +184,22 @@
                 </Sidebar.MenuBadge>
               {/if}
             </Sidebar.MenuItem>
+
+            {#if serviceTokens?.allowed}
+              <Sidebar.MenuItem>
+                <Sidebar.MenuButton
+                  isActive={isActive('/access/tokens')}
+                  tooltipContent="Service tokens"
+                >
+                  {#snippet child({ props })}
+                    <a {...props} href="/access/tokens">
+                      <KeySquareIcon aria-hidden="true" />
+                      <span>Service tokens</span>
+                    </a>
+                  {/snippet}
+                </Sidebar.MenuButton>
+              </Sidebar.MenuItem>
+            {/if}
 
             <!--
               Users and Groups sit beside Access rather than inside it, because

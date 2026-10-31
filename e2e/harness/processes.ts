@@ -136,29 +136,58 @@ function diagnoseBuildFailure(error: unknown): string {
 // D1
 // ---------------------------------------------------------------------------
 
-const wranglerArgs = (extra: string[]): string[] => [
+/**
+ * One Worker the harness runs: its config, its D1 state, the directory Wrangler
+ * runs in (where it finds `.dev.vars`), and the log its `wrangler dev` writes.
+ *
+ * Two exist. `PRIMARY_WORKER` is the one every spec talks to by default and has
+ * no Cloudflare API token; `CLOUDFLARE_WORKER` manages service tokens against
+ * the fake Cloudflare API. Separate state means neither sees the other's rows.
+ */
+export interface WorkerTarget {
+  config: string;
+  persist: string;
+  cwd: string;
+  log: string;
+}
+
+export const PRIMARY_WORKER: WorkerTarget = {
+  config: PATHS.workerConfig,
+  persist: PATHS.persist,
+  cwd: WORK_ROOT,
+  log: PATHS.devLog,
+};
+
+export const CLOUDFLARE_WORKER: WorkerTarget = {
+  config: PATHS.cloudflareWorkerConfig,
+  persist: PATHS.cloudflarePersist,
+  cwd: PATHS.cloudflareRoot,
+  log: PATHS.cloudflareDevLog,
+};
+
+const wranglerArgs = (target: WorkerTarget, extra: string[]): string[] => [
   ...extra,
   "--config",
-  PATHS.workerConfig,
+  target.config,
   "--persist-to",
-  PATHS.persist,
+  target.persist,
 ];
 
-export async function applyMigrations(): Promise<void> {
+export async function applyMigrations(target: WorkerTarget = PRIMARY_WORKER): Promise<void> {
   await runToCompletion(
     "wrangler d1 migrations apply",
     PATHS.wranglerBin,
-    wranglerArgs(["d1", "migrations", "apply", "prick", "--local"]),
-    { cwd: WORK_ROOT, env: { CI: "1" } },
+    wranglerArgs(target, ["d1", "migrations", "apply", "prick", "--local"]),
+    { cwd: target.cwd, env: { CI: "1" } },
   );
 }
 
-export async function applySeed(): Promise<void> {
+export async function applySeed(target: WorkerTarget = PRIMARY_WORKER): Promise<void> {
   await runToCompletion(
     "wrangler d1 execute (seed)",
     PATHS.wranglerBin,
-    wranglerArgs(["d1", "execute", "prick", "--local", "--file", PATHS.seedSql]),
-    { cwd: WORK_ROOT, env: { CI: "1" } },
+    wranglerArgs(target, ["d1", "execute", "prick", "--local", "--file", PATHS.seedSql]),
+    { cwd: target.cwd, env: { CI: "1" } },
   );
 }
 
@@ -216,12 +245,15 @@ export async function findFreePort(): Promise<number> {
 export async function startDevServer(options: {
   port: number;
   certificatePath: string;
+  target?: WorkerTarget;
 }): Promise<{ server: DevServer; child: ChildProcess }> {
-  const log = createWriteStream(PATHS.devLog, { flags: "a" });
+  const target = options.target ?? PRIMARY_WORKER;
+  const devLog = target.log;
+  const log = createWriteStream(devLog, { flags: "a" });
 
   const child = runNode(
     PATHS.wranglerBin,
-    wranglerArgs([
+    wranglerArgs(target, [
       "dev",
       "--local",
       "--ip",
@@ -232,7 +264,7 @@ export async function startDevServer(options: {
       "info",
     ]),
     {
-      cwd: WORK_ROOT,
+      cwd: target.cwd,
       env: {
         SSL_CERT_FILE: options.certificatePath,
         NODE_EXTRA_CA_CERTS: options.certificatePath,
@@ -280,7 +312,7 @@ export async function startDevServer(options: {
   child.once("exit", (code, signal) => {
     exited = { code, signal };
     appendFileSync(
-      PATHS.devLog,
+      devLog,
       `\n# wrangler dev EXITED — code=${String(code)} signal=${String(signal)} at ` +
         `${new Date().toISOString()}\n`,
     );
@@ -293,12 +325,12 @@ export async function startDevServer(options: {
       const { code, signal } = exited as { code: number | null; signal: NodeJS.Signals | null };
       throw new Error(
         `wrangler dev exited before it was ready (code=${String(code)} signal=${String(signal)}). ` +
-          `See ${PATHS.devLog}.`,
+          `See ${devLog}.`,
       );
     }
 
     if (Date.now() > deadline) {
-      throw new Error(`wrangler dev did not answer ${baseUrl}/api/v1/health. See ${PATHS.devLog}.`);
+      throw new Error(`wrangler dev did not answer ${baseUrl}/api/v1/health. See ${devLog}.`);
     }
 
     try {
@@ -410,5 +442,6 @@ export async function resetWorkDirectory(): Promise<void> {
   }
 
   await mkdir(PATHS.storage, { recursive: true });
+  await mkdir(PATHS.cloudflareRoot, { recursive: true });
   await appendFile(PATHS.devLog, `# wrangler dev — ${new Date().toISOString()}\n`);
 }

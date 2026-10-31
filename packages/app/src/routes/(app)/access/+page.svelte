@@ -1,5 +1,6 @@
 <script lang="ts">
   import KeyRoundIcon from '@lucide/svelte/icons/key-round';
+  import KeySquareIcon from '@lucide/svelte/icons/key-square';
   import TriangleAlertIcon from '@lucide/svelte/icons/triangle-alert';
   import UserIcon from '@lucide/svelte/icons/user';
   import { toast } from 'svelte-sonner';
@@ -60,6 +61,22 @@
     />
   {/snippet}
 </PageHeader>
+
+<!--
+  A global administrator on a Worker that cannot manage service tokens yet sees
+  the server's configuration hint here, because the sidebar offers the service
+  tokens screen only once it works. `hint` is filled in for global
+  administrators alone, so everyone else sees nothing.
+-->
+{#if data.serviceTokens.hint}
+  <Alert.Root data-testid="service-tokens-unconfigured">
+    <KeySquareIcon aria-hidden="true" />
+    <Alert.Title>Service tokens can be managed from prick</Alert.Title>
+    <Alert.Description>
+      <p>{data.serviceTokens.hint}</p>
+    </Alert.Description>
+  </Alert.Root>
+{/if}
 
 {#if formError.form}
   <Alert.Root variant="destructive">

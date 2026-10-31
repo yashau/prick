@@ -285,6 +285,119 @@ export interface BatchInput {
   reason?: string;
 }
 
+/**
+ * Whether a configuration-dependent feature is usable, and by whom. Mirrors
+ * `core.FeatureCapability`.
+ *
+ * `reason` and `hint` are filled in for global administrators only: whether the
+ * Worker holds a Cloudflare API token is operational detail about the
+ * deployment, so everyone else sees `unavailable` and nothing more.
+ */
+export interface FeatureCapability {
+  state: "enabled" | "unavailable";
+  /** Whether THIS caller may use the feature. */
+  allowed: boolean;
+  reason: "unconfigured" | null;
+  hint: string | null;
+}
+
+/** Cloudflare's live view of a service token. Epoch ms throughout. */
+export interface ServiceTokenCloudflareView {
+  expiresAt: number | null;
+  lastSeenAt: number | null;
+  enabled: boolean;
+  duration: string | null;
+  /** Set when a secret scanner reported this token's secret as leaked. */
+  leakReportedAt: number | null;
+}
+
+/**
+ * A Cloudflare Access service token this deployment manages. Mirrors
+ * `core.ServiceTokenRecord`.
+ *
+ * No secret, ever: the client secret exists only in the response to a create
+ * or a rotate, and those have their own shapes below.
+ *
+ * `cloudflare` is `null` when Cloudflare could not be asked, and for a token
+ * Cloudflare no longer has.
+ */
+export interface ServiceTokenRecord {
+  id: string;
+  identityId: string;
+  clientId: string;
+  name: string | null;
+  cloudflareId: string;
+  cloudflareName: string;
+  /** Made in the Cloudflare dashboard and brought under prick's management. */
+  adopted: boolean;
+  disabled: boolean;
+  status: "active" | "revoked" | "missing";
+  createdAt: number;
+  createdBy: string;
+  rotatedAt: number | null;
+  revokedAt: number | null;
+  revokedBy: string | null;
+  cloudflare: ServiceTokenCloudflareView | null;
+}
+
+export interface ServiceTokenList {
+  tokens: ServiceTokenRecord[];
+  /** `"unavailable"`: Cloudflare could not be reached, and the records are prick's alone. */
+  cloudflare: "ok" | "unavailable";
+}
+
+/** The first grant a new token is created holding, in the same transaction. */
+export type ServiceTokenGrantInput =
+  | { scope_type: "global"; role: Role; expires_at: number | null }
+  | { scope_type: "project"; project: string; role: Role; expires_at: number | null }
+  | {
+      scope_type: "environment";
+      project: string;
+      environment: string;
+      role: Role;
+      expires_at: number | null;
+    };
+
+export interface CreateServiceTokenInput {
+  name: string;
+  /** `"8760h"`, any whole number of hours, or `"forever"`. */
+  duration?: string;
+  grant?: ServiceTokenGrantInput;
+}
+
+/**
+ * The response to a create. `clientSecret` appears here and nowhere else, ever;
+ * the screen holds it in component state for as long as its panel is open.
+ */
+export interface IssuedServiceToken {
+  token: ServiceTokenRecord;
+  grant: GrantRecord | null;
+  clientId: string;
+  clientSecret: string;
+}
+
+export interface RotatedServiceToken {
+  token: ServiceTokenRecord;
+  clientId: string;
+  clientSecret: string;
+  /** When the previous secret stops working; `null` means it already has. */
+  previousSecretExpiresAt: number | null;
+}
+
+export interface ReconcileEntry {
+  kind: "orphan" | "missing" | "revoke_incomplete" | "foreign";
+  cloudflareId: string;
+  clientId: string;
+  name: string | null;
+  applied: boolean;
+  error: string | null;
+}
+
+export interface ReconcileResult {
+  applied: boolean;
+  entries: ReconcileEntry[];
+}
+
 // ---------------------------------------------------------------------------
 // The interface both backends satisfy
 // ---------------------------------------------------------------------------
@@ -379,6 +492,13 @@ export interface PrickApi {
 
   getKeyringStatus(): Promise<KeyringStatus>;
   rekeyPage(limit: number): Promise<{ rekeyed: number; remaining: number }>;
+
+  listServiceTokens(): Promise<ServiceTokenList>;
+  createServiceToken(input: CreateServiceTokenInput): Promise<IssuedServiceToken>;
+  rotateServiceToken(id: string, graceSeconds: number): Promise<RotatedServiceToken>;
+  refreshServiceToken(id: string): Promise<ServiceTokenRecord>;
+  revokeServiceToken(id: string): Promise<void>;
+  reconcileServiceTokens(apply: boolean): Promise<ReconcileResult>;
 }
 
 // ---------------------------------------------------------------------------
@@ -544,6 +664,20 @@ export const httpApi: PrickApi = {
   // admin prefix; there is no route at the bare path and there never was.
   getKeyringStatus: () => request("/admin/keyring"),
   rekeyPage: (limit) => request("/admin/rekey", { method: "POST", ...json({ limit }) }),
+
+  listServiceTokens: () => request("/service-tokens"),
+  createServiceToken: (input) => request("/service-tokens", { method: "POST", ...json(input) }),
+  // The body is required even when it carries only the default: the route
+  // validates a JSON body, so `{grace_seconds: 0}` is sent rather than nothing.
+  rotateServiceToken: (id, graceSeconds) =>
+    request(`/service-tokens/${seg(id)}/rotate`, {
+      method: "POST",
+      ...json({ grace_seconds: graceSeconds }),
+    }),
+  refreshServiceToken: (id) => request(`/service-tokens/${seg(id)}/refresh`, { method: "POST" }),
+  revokeServiceToken: (id) => request(`/service-tokens/${seg(id)}`, { method: "DELETE" }),
+  reconcileServiceTokens: (apply) =>
+    request("/service-tokens/reconcile", { method: "POST", ...json({ apply }) }),
 };
 
 /**
