@@ -251,6 +251,19 @@ export async function startDevServer(options: {
   const devLog = target.log;
   const log = createWriteStream(devLog, { flags: "a" });
 
+  /*
+   * The inspector port is chosen here, never left to wrangler.
+   *
+   * Wrangler's own inspector proxy binds it (the `direct:1:default` socket),
+   * and its default is a fixed 9229. Two `wrangler dev` processes booting at
+   * once both see 9229 free, both claim it, and the loser exits with
+   * `Address already in use (socket "direct:1:default")` before it is ready.
+   * `--port` and `--inspector-port` are the two ports `wrangler dev` takes as
+   * flags; every other socket it opens asks the OS for an ephemeral one. Giving
+   * each process both is what lets the suite run two side by side.
+   */
+  const inspectorPort = await findFreePort();
+
   const child = runNode(
     PATHS.wranglerBin,
     wranglerArgs(target, [
@@ -260,6 +273,8 @@ export async function startDevServer(options: {
       "127.0.0.1",
       "--port",
       String(options.port),
+      "--inspector-port",
+      String(inspectorPort),
       "--log-level",
       "info",
     ]),
