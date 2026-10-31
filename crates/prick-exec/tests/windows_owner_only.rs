@@ -14,7 +14,7 @@ use std::path::Path;
 use std::process::Command;
 
 use prick_exec::winsec::{
-    create_owner_only_file, current_user_sid_string, dacl_sddl, is_restricted_to_current_user,
+    create_owner_only_file, dacl_sddl, dacl_summary, is_restricted_to_current_user,
 };
 
 /// Grants `Everyone` (S-1-1-0) read on `dir`, inherited by files and
@@ -53,11 +53,15 @@ fn a_file_is_born_owner_only_in_a_directory_that_grants_everyone_read() {
     let mut file = create_owner_only_file(&path).expect("created");
     // Checked while the handle is still open, before anything is written: the
     // DACL is right from creation, not fixed up afterwards.
-    let sddl = dacl_sddl(&path).expect("the new file's DACL");
-    let sid = current_user_sid_string().expect("the process has a user");
-    assert_eq!(sddl, format!("D:P(A;;FA;;;{sid})"), "the DACL is exactly the owner, protected");
-    assert!(!sddl.contains("ID;"), "an inherited entry survived: {sddl}");
-    assert!(!sddl.contains("WD"), "Everyone can read the file: {sddl}");
+    // Compared structurally, never as SDDL: SDDL spells some SIDs as aliases
+    // (`LA` for the built-in Administrator a CI runner may run as), so the
+    // same correct descriptor reads differently by account.
+    let summary = dacl_summary(&path).expect("the new file's DACL");
+    assert!(
+        summary.is_owner_only(),
+        "the DACL must be exactly one protected, non-inherited full-access entry for the current user: {summary:?} ({})",
+        dacl_sddl(&path).unwrap_or_default()
+    );
 
     file.write_all(b"value").expect("the owner can write");
     file.sync_all().expect("and flush");

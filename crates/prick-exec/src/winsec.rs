@@ -54,11 +54,13 @@ use windows_sys::Win32::Security::Authorization::{
 };
 use windows_sys::Win32::Security::{
     ACCESS_ALLOWED_ACE, ACL, ACL_SIZE_INFORMATION, AclSizeInformation, DACL_SECURITY_INFORMATION,
-    EqualSid, GetAce, GetAclInformation, GetSecurityDescriptorDacl,
-    PROTECTED_DACL_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, PSID, SECURITY_ATTRIBUTES,
-    TOKEN_QUERY, TOKEN_USER, TokenUser,
+    EqualSid, GetAce, GetAclInformation, GetSecurityDescriptorControl, GetSecurityDescriptorDacl,
+    INHERITED_ACE, PROTECTED_DACL_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, PSID,
+    SE_DACL_PROTECTED, SECURITY_ATTRIBUTES, TOKEN_QUERY, TOKEN_USER, TokenUser,
 };
-use windows_sys::Win32::Storage::FileSystem::{CREATE_NEW, CreateFileW, FILE_ATTRIBUTE_NORMAL};
+use windows_sys::Win32::Storage::FileSystem::{
+    CREATE_NEW, CreateFileW, FILE_ALL_ACCESS, FILE_ATTRIBUTE_NORMAL,
+};
 use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
 
 /// Whether the entry should propagate to things created inside it.
@@ -537,6 +539,172 @@ pub fn is_restricted_to_current_user(path: &Path) -> io::Result<bool> {
     }
 
     Ok(true)
+}
+
+/// `ACCESS_ALLOWED_ACE_TYPE`: an entry that grants rather than denies or audits.
+const ACCESS_ALLOWED_ACE_TYPE: u8 = 0;
+
+/// One entry of a DACL, decoded far enough to judge it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DaclEntry {
+    /// The entry grants access, rather than denying or auditing it.
+    pub allows: bool,
+    /// The entry's ACE flags, e.g. whether it was inherited.
+    pub flags: u8,
+    /// The access mask the entry carries.
+    pub mask: u32,
+    /// The entry names the current process's user, compared with `EqualSid`.
+    pub current_user: bool,
+}
+
+impl DaclEntry {
+    /// The entry was inherited from a parent rather than set on the object.
+    #[must_use]
+    pub fn inherited(&self) -> bool {
+        u32::from(self.flags) & INHERITED_ACE != 0
+    }
+
+    /// The entry grants `FILE_ALL_ACCESS` exactly.
+    #[must_use]
+    pub fn full_access(&self) -> bool {
+        self.mask == FILE_ALL_ACCESS
+    }
+}
+
+/// A path's DACL as data rather than SDDL.
+///
+/// For tests that must not depend on how SDDL spells a SID: rendering a SID
+/// substitutes a well-known alias where one exists (`LA` for the built-in
+/// Administrator, `BA`, `SY` and others), so the same descriptor reads
+/// differently depending on which account the process runs as. This compares
+/// SIDs with `EqualSid` instead.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DaclSummary {
+    /// Inheritance from the parent is blocked (`SE_DACL_PROTECTED`).
+    pub protected: bool,
+    /// The entries, in order. Empty for an empty DACL.
+    pub entries: Vec<DaclEntry>,
+    /// The DACL is null, which grants everyone everything.
+    pub null: bool,
+}
+
+impl DaclSummary {
+    /// Exactly one entry, granting the current user full access, set on the
+    /// object itself, with inheritance from the parent blocked.
+    #[must_use]
+    pub fn is_owner_only(&self) -> bool {
+        self.protected
+            && !self.null
+            && matches!(
+                self.entries.as_slice(),
+                [entry] if entry.allows
+                    && !entry.inherited()
+                    && entry.full_access()
+                    && entry.current_user
+            )
+    }
+}
+
+/// Decode a path's DACL. See [`DaclSummary`].
+///
+/// # Errors
+///
+/// Whatever the underlying Windows security API reported.
+pub fn dacl_summary(path: &Path) -> io::Result<DaclSummary> {
+    let sid_buffer = current_user_sid_buffer()?;
+    // SAFETY: `sid_buffer` was produced by `current_user_sid_buffer` and
+    // outlives every use of `expected` below.
+    let expected = unsafe { sid_from_buffer(&sid_buffer) };
+
+    let mut dacl: *mut ACL = std::ptr::null_mut();
+    let mut descriptor: PSECURITY_DESCRIPTOR = std::ptr::null_mut();
+    let mut object = wide(path.as_os_str());
+
+    // SAFETY: `object` is a NUL-terminated wide path alive for the call. The
+    // owner, group and SACL out-parameters are null, which the API documents as
+    // "not requested", matching the information flags. On success `descriptor`
+    // is a `LocalAlloc` allocation the caller must free, which `LocalPtr` does.
+    let status = unsafe {
+        GetNamedSecurityInfoW(
+            object.as_mut_ptr(),
+            SE_FILE_OBJECT,
+            DACL_SECURITY_INFORMATION,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            &raw mut dacl,
+            std::ptr::null_mut(),
+            &raw mut descriptor,
+        )
+    };
+    if status != ERROR_SUCCESS {
+        return Err(io::Error::from_raw_os_error(i32::try_from(status).unwrap_or(i32::MAX)));
+    }
+    let _owned = LocalPtr(descriptor.cast());
+
+    let mut control: u16 = 0;
+    let mut revision: u32 = 0;
+    // SAFETY: `descriptor` is valid and kept alive by `_owned`; both
+    // out-parameters are live locals of the documented types.
+    let ok =
+        unsafe { GetSecurityDescriptorControl(descriptor, &raw mut control, &raw mut revision) };
+    if ok == FALSE {
+        return Err(io::Error::last_os_error());
+    }
+    let protected = control & SE_DACL_PROTECTED != 0;
+
+    if dacl.is_null() {
+        return Ok(DaclSummary { protected, entries: Vec::new(), null: true });
+    }
+
+    // SAFETY: `dacl` points into `descriptor`, which `_owned` keeps alive. The
+    // information class matches the `ACL_SIZE_INFORMATION` layout, and the size
+    // passed is that struct's exact size.
+    let mut info: ACL_SIZE_INFORMATION = unsafe { std::mem::zeroed() };
+    let size = u32::try_from(size_of::<ACL_SIZE_INFORMATION>())
+        .map_err(|_| io::Error::other("access control list size structure is implausibly large"))?;
+    // SAFETY: as above; `info` is a live local of the matching type.
+    let ok = unsafe { GetAclInformation(dacl, (&raw mut info).cast(), size, AclSizeInformation) };
+    if ok == FALSE {
+        return Err(io::Error::last_os_error());
+    }
+
+    let mut entries = Vec::new();
+    for index in 0..info.AceCount {
+        let mut ace: *mut c_void = std::ptr::null_mut();
+        // SAFETY: `index` is below `AceCount`, which the API just reported, and
+        // `dacl` is still alive.
+        let ok = unsafe { GetAce(dacl, index, &raw mut ace) };
+        if ok == FALSE {
+            return Err(io::Error::last_os_error());
+        }
+
+        // SAFETY: every ACE type this can return begins with an `ACE_HEADER`
+        // followed by a mask and an inline SID, which is the prefix of
+        // `ACCESS_ALLOWED_ACE`. Only the header, the mask and the address of
+        // `SidStart` are read, all of which are in that common prefix.
+        let (ace_type, ace_flags, mask, sid) = unsafe {
+            let ace = &*ace.cast::<ACCESS_ALLOWED_ACE>();
+            (
+                ace.Header.AceType,
+                ace.Header.AceFlags,
+                ace.Mask,
+                (&raw const ace.SidStart).cast::<c_void>().cast_mut(),
+            )
+        };
+
+        // SAFETY: `sid` points into the ACE, which points into `descriptor`,
+        // and `expected` points into `sid_buffer`. Both are alive here.
+        let current_user = unsafe { EqualSid(sid, expected) } != FALSE;
+
+        entries.push(DaclEntry {
+            allows: ace_type == ACCESS_ALLOWED_ACE_TYPE,
+            flags: ace_flags,
+            mask,
+            current_user,
+        });
+    }
+
+    Ok(DaclSummary { protected, entries, null: false })
 }
 
 #[cfg(test)]

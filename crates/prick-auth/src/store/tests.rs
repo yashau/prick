@@ -514,7 +514,7 @@ fn an_operator_named_file_in_a_missing_directory_fails_without_creating_it() {
 #[cfg(windows)]
 #[test]
 fn an_operator_named_file_ignores_a_directory_that_grants_everyone_read() {
-    use prick_exec::winsec::{current_user_sid_string, dacl_sddl};
+    use prick_exec::winsec::{dacl_sddl, dacl_summary};
 
     let dir = tempfile::tempdir().expect("a temporary directory");
     let granted = std::process::Command::new("icacls")
@@ -533,8 +533,10 @@ fn an_operator_named_file_ignores_a_directory_that_grants_everyone_read() {
     let target = dir.path().join("client-secret");
     write_owner_only_file(&target, b"the secret").expect("the write succeeds");
 
-    let sid = current_user_sid_string().expect("the process has a user");
-    assert_eq!(dacl_sddl(&target).expect("the secret's DACL"), format!("D:P(A;;FA;;;{sid})"));
+    // Structural, not SDDL: SDDL renders some SIDs as aliases (`LA`, `BA`, ...)
+    // depending on the account the test runs as.
+    let summary = dacl_summary(&target).expect("the secret's DACL");
+    assert!(summary.is_owner_only(), "{summary:?} ({})", dacl_sddl(&target).unwrap_or_default());
     let names: Vec<String> = std::fs::read_dir(dir.path())
         .expect("listable")
         .filter_map(Result::ok)
