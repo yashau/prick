@@ -9,7 +9,7 @@ sidebar:
 environment block, and becomes that process.
 
 ```
-prk run [--allow-unsafe-env] -- <COMMAND> [ARGS...]
+prk run [--allow-unsafe-env] [--allow-prk-vars] -- <COMMAND> [ARGS...]
 ```
 
 ```bash
@@ -23,6 +23,11 @@ to disk.
 | Flag                 | Meaning                                                                                              |
 | -------------------- | ---------------------------------------------------------------------------------------------------- |
 | `--allow-unsafe-env` | Permit secrets whose names the dynamic loader or a language runtime reads before your program starts |
+| `--allow-prk-vars`   | Inject secrets named like the variables `prk` itself reads to choose a server and a credential       |
+
+`prk run` is a read: with several profiles it uses the default profile like
+any other read, and a project's `.prick.toml` selects and checks the server
+as it does for every command. See [`prk profile`](/reference/cli/profile).
 
 ## Everything after `--` belongs to the child
 
@@ -131,6 +136,40 @@ With it, anyone who can write a secret in that environment can execute arbitrary
 code in the child. Reach for it only when you control the write side as tightly
 as you control the machine.
 :::
+
+## Names `prk run` does not inject
+
+A secret named like a variable `prk` reads to choose its server or its
+credential is skipped, with a warning naming the key and never the value:
+
+`PRK_API_URL`, `PRK_PROFILE`, `PRK_CONFIG_DIR`, `PRK_EXPECT_INSTANCE`,
+`PRK_ACCESS_CLIENT_ID`, `PRK_ACCESS_CLIENT_SECRET`, `CF_ACCESS_CLIENT_ID`,
+`CF_ACCESS_CLIENT_SECRET`
+
+```bash
+prk run -P api -E production -- ./deploy.sh
+```
+
+```
+warning: not injecting `PRK_API_URL`: prk reads it, so a prk inside the command would follow it; pass --allow-prk-vars to inject it anyway
+```
+
+A secret is data from the server. With one of these names in the child's
+environment, a `prk` the child runs — a deploy script that fetches another
+environment, say — would take its server or its identity from that data, and
+could be sent somewhere the operator never chose.
+
+The match is by exact name. Every other `PRK_`-prefixed secret, such as
+`PRK_FEATURE_FLAG`, is injected as usual. Your own environment passes through
+to the child untouched, including any of these variables you set yourself;
+only secrets are skipped.
+
+The run continues without them: this is a skip, not a refusal. Inject them
+anyway with `--allow-prk-vars`:
+
+```bash
+prk run --allow-prk-vars -P api -E production -- ./deploy.sh
+```
 
 ## Seeing what was injected
 

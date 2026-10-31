@@ -284,6 +284,31 @@ fn error_styled(message: &str, styled: bool) {
     write_stderr(&format!("{} {message}", paint("error:", RED, styled)));
 }
 
+/// Where this run's write went, once the server has been verified.
+static DESTINATION: OnceLock<serde_json::Value> = OnceLock::new();
+
+/// Records where this run's write is going, for its `--json` document.
+///
+/// Set once, by [`crate::commands::Context::authenticate`], after the server
+/// has proved which deployment it is. The human-readable form is a `note`
+/// printed at the same moment.
+pub fn set_destination(value: serde_json::Value) {
+    let _ = DESTINATION.set(value);
+}
+
+/// Adds `destination` to a top-level object, if one was recorded and the
+/// document does not already carry the key.
+fn with_destination(value: &serde_json::Value) -> std::borrow::Cow<'_, serde_json::Value> {
+    match (DESTINATION.get(), value) {
+        (Some(destination), serde_json::Value::Object(map)) if !map.contains_key("destination") => {
+            let mut map = map.clone();
+            map.insert("destination".to_owned(), destination.clone());
+            std::borrow::Cow::Owned(serde_json::Value::Object(map))
+        }
+        _ => std::borrow::Cow::Borrowed(value),
+    }
+}
+
 /// Verbosity and format settings, resolved once from the global flags.
 ///
 /// Passed by value into every command. It is `Copy`, so threading it through
@@ -341,8 +366,12 @@ impl Output {
     }
 
     /// Emits a JSON document on stdout, as the sole output of the run.
+    ///
+    /// A write's document carries a `destination` object naming the server,
+    /// profile and instance it went to, added here once rather than by every
+    /// command. See [`set_destination`].
     pub fn json(self, value: &serde_json::Value) {
-        data(&value.to_string());
+        data(&with_destination(value).to_string());
     }
 
     /// Emits program output that carries secret material.
@@ -477,6 +506,9 @@ mod tests {
             no_input: true,
             yes: false,
             api_url: None,
+            profile: None,
+            expect_instance: None,
+            writes: false,
             access_client_id: None,
             access_client_secret: None,
             access_client_secret_file: None,

@@ -98,9 +98,37 @@ pub struct GlobalArgs {
     #[arg(short = 'y', long, global = true)]
     pub yes: bool,
 
-    /// Base URL of the prick server.
-    #[arg(long, global = true, value_name = "URL", env = "PRK_API_URL")]
+    /// Base URL of the prick server, instead of a saved profile.
+    ///
+    /// Also read from `PRK_API_URL`. A flag wins over any environment
+    /// variable; `--profile` and `--api-url` together are refused, as are
+    /// `PRK_PROFILE` and `PRK_API_URL` together. If exactly one profile is
+    /// for this URL, its stored session is used.
+    #[arg(long, global = true, value_name = "URL")]
     pub api_url: Option<String>,
+
+    /// Saved profile to use. See `prk profile --help`.
+    ///
+    /// Also read from `PRK_PROFILE`. The order is `--profile` or `--api-url`,
+    /// then `PRK_PROFILE` or `PRK_API_URL`, then a project's `.prick.toml`,
+    /// then the default profile.
+    #[arg(long, global = true, value_name = "NAME")]
+    pub profile: Option<String>,
+
+    /// Refuse to run unless the server reports this instance id.
+    ///
+    /// Also read from `PRK_EXPECT_INSTANCE`. A script that sets it is immune to
+    /// profile renames, a changed default, and a name reused for another
+    /// deployment: it reaches the one deployment it names or nothing.
+    #[arg(long, global = true, value_name = "ID")]
+    pub expect_instance: Option<String>,
+
+    /// Whether the command being run changes data on the server.
+    ///
+    /// Not a flag: set from the parsed command before dispatch, so the
+    /// server-selection rules for writes are applied in one place.
+    #[arg(skip)]
+    pub writes: bool,
 
     /// Access service-token client id, for machine authentication.
     ///
@@ -183,6 +211,10 @@ pub enum Command {
     /// Check connectivity, credentials and configuration.
     Doctor,
 
+    /// Manage saved server profiles.
+    #[command(subcommand)]
+    Profile(commands::profile::ProfileCommand),
+
     /// Manage projects.
     #[command(subcommand)]
     Projects(commands::projects::ProjectsCommand),
@@ -221,6 +253,7 @@ impl Command {
             Self::Logout(_) => "logout",
             Self::Whoami => "whoami",
             Self::Doctor => "doctor",
+            Self::Profile(sub) => sub.path(),
             Self::Projects(sub) => sub.path(),
             Self::Env(sub) => sub.path(),
             Self::Secrets(sub) => sub.path(),
@@ -229,6 +262,57 @@ impl Command {
             Self::Keyring(sub) => sub.path(),
             Self::Completions(_) => "completions",
             Self::Version => "version",
+        }
+    }
+
+    /// Whether this command changes data on the server.
+    ///
+    /// With more than one profile, a write must name its server deliberately
+    /// -- a flag, an environment variable or a project file -- rather than
+    /// reaching whichever profile was made the default last. This list is what
+    /// that rule is only as good as, so it is exhaustive by construction: every
+    /// subcommand is matched by name, and a new one does not compile until it
+    /// is classified.
+    pub fn writes_server(&self) -> bool {
+        use commands::access::AccessCommand as A;
+        use commands::env::EnvCommand as E;
+        use commands::keyring::KeyringCommand as K;
+        use commands::projects::ProjectsCommand as P;
+        use commands::secrets::SecretsCommand as S;
+
+        match self {
+            Self::Login(_)
+            | Self::Logout(_)
+            | Self::Whoami
+            | Self::Doctor
+            | Self::Profile(_)
+            | Self::Run(_)
+            | Self::Completions(_)
+            | Self::Version => false,
+            Self::Projects(sub) => match sub {
+                P::List | P::Get { .. } => false,
+                P::Create { .. } | P::Rename { .. } | P::Remove { .. } => true,
+            },
+            Self::Env(sub) => match sub {
+                E::List => false,
+                E::Create { .. } | E::Remove { .. } => true,
+            },
+            Self::Secrets(sub) => match sub {
+                S::List | S::Get { .. } | S::Download(_) | S::History { .. } => false,
+                S::Set(_) | S::Remove { .. } | S::Upload(_) | S::Rollback { .. } => true,
+            },
+            Self::Access(sub) => match sub {
+                A::List | A::Identities { .. } | A::Explain { .. } => false,
+                A::Grant { .. }
+                | A::Revoke { .. }
+                | A::Disable { .. }
+                | A::Enable { .. }
+                | A::Rename { .. } => true,
+            },
+            Self::Keyring(sub) => match sub {
+                K::Status => false,
+                K::Rekey(_) => true,
+            },
         }
     }
 }
@@ -399,6 +483,20 @@ mod tests {
             &["prk", "keyring", "rekey", "--until-done"],
             &["prk", "completions", "bash"],
             &["prk", "version"],
+            &["prk", "login"],
+            &["prk", "login", "--profile", "acme"],
+            &["prk", "logout", "--all"],
+            &["prk", "profile", "list"],
+            &["prk", "profile", "show"],
+            &["prk", "profile", "add", "acme", "https://prick.acme.example", "--default"],
+            &["prk", "profile", "use", "acme"],
+            &["prk", "profile", "rename", "acme", "acme-eu"],
+            &["prk", "profile", "forget", "acme"],
+            &["prk", "profile", "set", "acme", "--default-project", "api"],
+            &["prk", "profile", "rm", "acme", "--yes"],
+            &["prk", "profile", "pin", "--local"],
+            &["prk", "--profile", "acme", "--expect-instance", "x", "whoami"],
+            &["prk", "run", "--allow-prk-vars", "--", "env"],
         ];
 
         for argv in invocations {
@@ -450,6 +548,120 @@ mod tests {
         ] {
             let cli = Cli::try_parse_from(&argv).unwrap();
             assert!(!cli.command.path().is_empty(), "{argv:?} has no path");
+        }
+    }
+
+    /// Command lines printed in `docs/reference/cli/profile.md`,
+    /// `sign-in.md`, `run.md` and `docs/guides/multiple-servers.md`, character
+    /// for character, so a documented invocation cannot drift into a clap
+    /// error.
+    #[test]
+    fn the_documented_profile_invocations_parse() {
+        let invocations: &[&[&str]] = &[
+            &["prk", "profile", "list", "--json"],
+            &["prk", "--profile", "globex", "profile", "show", "--json"],
+            &["prk", "profile", "add", "globex", "https://prick.globex.example"],
+            &["prk", "profile", "rename", "prod", "acme"],
+            &["prk", "--profile", "prod", "whoami"],
+            &["prk", "profile", "forget", "prod"],
+            &[
+                "prk",
+                "profile",
+                "set",
+                "acme",
+                "--default-project",
+                "api",
+                "--default-env",
+                "production",
+            ],
+            &[
+                "prk",
+                "profile",
+                "set",
+                "acme",
+                "--service-token-client-id",
+                "e367826f93b8d71185e03fe518aff3b4.access",
+            ],
+            &["prk", "profile", "set", "acme", "--default-env", ""],
+            &["prk", "profile", "rm", "globex", "--yes"],
+            &["prk", "profile", "remove", "acme"],
+            &["prk", "login", "https://prick.acme.example", "--profile", "acme"],
+            &["prk", "profile", "pin", "--profile", "acme"],
+            &["prk", "login", "https://prick.example.com", "--no-browser"],
+            &["prk", "logout", "--profile", "globex"],
+            &["prk", "logout", "--all"],
+            &[
+                "prk",
+                "run",
+                "--api-url",
+                "https://prick.example.com",
+                "-P",
+                "api",
+                "-E",
+                "production",
+                "--",
+                "./deploy.sh",
+            ],
+            &[
+                "prk",
+                "run",
+                "--expect-instance",
+                "3f9c01ab3f9c01ab3f9c01ab3f9c01ab",
+                "-P",
+                "api",
+                "-E",
+                "production",
+                "--",
+                "./deploy.sh",
+            ],
+            &[
+                "prk",
+                "run",
+                "--allow-prk-vars",
+                "-P",
+                "api",
+                "-E",
+                "production",
+                "--",
+                "./deploy.sh",
+            ],
+        ];
+        for argv in invocations {
+            assert!(Cli::try_parse_from(*argv).is_ok(), "failed to parse {argv:?}");
+        }
+    }
+
+    #[test]
+    fn writes_are_classified_and_reads_are_not() {
+        for (argv, writes) in [
+            (vec!["prk", "secrets", "set", "KEY"], true),
+            (vec!["prk", "secrets", "upload", ".env"], true),
+            (vec!["prk", "secrets", "rollback", "KEY", "--to", "1"], true),
+            (vec!["prk", "projects", "create", "api"], true),
+            (vec!["prk", "access", "grant", "ci@example.com", "--role", "writer"], true),
+            (vec!["prk", "keyring", "rekey"], true),
+            (vec!["prk", "secrets", "list"], false),
+            (vec!["prk", "secrets", "download"], false),
+            (vec!["prk", "run", "--", "env"], false),
+            (vec!["prk", "whoami"], false),
+            (vec!["prk", "profile", "list"], false),
+        ] {
+            let cli = Cli::try_parse_from(&argv).unwrap_or_else(|err| panic!("{argv:?}: {err}"));
+            assert_eq!(cli.command.writes_server(), writes, "{argv:?}");
+        }
+    }
+
+    #[test]
+    fn the_server_selection_flags_say_where_else_they_are_read() {
+        let command = Cli::command();
+        for (id, variable) in [
+            ("api_url", "PRK_API_URL"),
+            ("profile", "PRK_PROFILE"),
+            ("expect_instance", "PRK_EXPECT_INSTANCE"),
+        ] {
+            let arg = command.get_arguments().find(|arg| arg.get_id() == id).expect(id);
+            let help = arg.get_long_help().map(ToString::to_string).unwrap_or_default();
+            assert!(help.contains(variable), "--{id} does not mention {variable}: {help}");
         }
     }
 

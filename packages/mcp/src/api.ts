@@ -73,6 +73,11 @@ export interface BatchResult {
   removed: string[];
 }
 
+export interface WhoamiResult {
+  /** The deployment's permanent instance id, or `null` if the server reports none. */
+  instance: string | null;
+}
+
 export interface RequestContext {
   project?: string;
   environment?: string;
@@ -88,6 +93,23 @@ export class PrickApiClient {
     this.#config = config;
     this.#logger = logger;
     this.#fetch = fetchImpl ?? ((input, init) => fetch(input, init));
+  }
+
+  /**
+   * The deployment's instance id, and nothing else from the identity document.
+   *
+   * Only `instance` is read: it is what the write pin compares, and projecting
+   * the one field means nothing else in the response can reach a tool result.
+   * A missing or non-string `instance` comes back as `null`, which the pin
+   * treats as a mismatch.
+   */
+  async whoami(): Promise<WhoamiResult> {
+    const body = await this.#request("GET", routes.whoami(), undefined, {});
+    const instance: unknown =
+      typeof body === "object" && body !== null && "instance" in body
+        ? (body as { instance: unknown }).instance
+        : null;
+    return { instance: typeof instance === "string" ? instance : null };
   }
 
   async listProjects(): Promise<ProjectSummary[]> {

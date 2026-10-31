@@ -192,6 +192,68 @@ That `yes | head -1` case is not decoration. Rust sets `SIGPIPE` to `SIG_IGN` at
 startup, and without resetting it to `SIG_DFL` before `exec` the pipeline hangs
 forever.
 
+### Profiles and server selection
+
+Choosing a server is the CLI's main security decision, so it has three suites
+of its own, one per layer:
+
+| Suite                                           | Covers                                                                                                               |
+| ----------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `crates/prick-core/src/profile/tests.rs`        | Name, URL and instance-id grammar; `config.toml` validation; automatic names; project-file rules                     |
+| `crates/prick-core/src/profile/select/tests.rs` | The precedence table, exhaustively: tiers, conflicts, empty values, renamed and unknown names, selection by instance |
+| `crates/prick-auth/src/profiles/tests.rs`       | The files on disk: the update path, per-profile credential files, the lock, version refusal, the project-file search |
+| `crates/prk/src/target/tests.rs`                | Every check that holds a command to its server, against real files in a temporary configuration directory            |
+
+The first two run under miri with the rest of `prick-core`. The properties
+they exist to keep:
+
+- **Updating writes nothing.** A configuration directory holding only a
+  `credentials.json` from a single-server install resolves to the profile
+  `default`, and a snapshot of every file under the directory, bytes included,
+  is identical afterwards. A read never creates the directory.
+- **The legacy file stays byte-identical.** When something new is recorded —
+  the first instance a server reports — `config.toml` is written and
+  `credentials.json` keeps its exact bytes, so an older build on the same
+  machine keeps reading it.
+- **Concurrent configuration writes all land.** Eight threads each add a
+  profile under the lock; all eight persist, and the lock file is gone
+  afterwards.
+- **Identical deployments are refused.** The fixture in `target/tests.rs` is
+  two organisations running the same application: the same project,
+  environment and key names, and nothing in a request to tell them apart but
+  the instance id each server reports. The tests assert that a
+  profile pointed at the other deployment, a server that stops reporting its
+  instance, and an `--expect-instance` mismatch are each refused, and that a
+  bare URL with no profile sends no extra request.
+- **Project files only allow.** A `url` key is refused; a file listing several
+  deployments cannot choose; a `.prick.local.toml` cannot select an instance
+  the shared file does not list; the upward search stops at the repository
+  root and at the home directory.
+- **A session never crosses servers.** When an older `prk` writes another
+  server's session into `credentials.json`, the file is handed to that server's
+  profile and the previous owner moves to a fresh, empty file. No session file
+  is moved, so the older `prk` keeps its sign-in, and the hand-over happens
+  once.
+
+#### When the on-disk layout changes
+
+Any change to what `prk` keeps on disk — a new file, a new `config.toml` field,
+a different credential layout — needs a test that builds the **previous**
+layout and proves the new build reads it without writing:
+
+1. Build the old layout in a `tempfile::tempdir()`, the way the old build wrote
+   it: through `store.legacy_tokens().save(...)` for a session, or by writing
+   the exact bytes of an old `config.toml` with `std::fs::write`.
+2. Take `snapshot(dir)` from `crates/prick-auth/src/profiles/tests.rs`.
+3. Run the read path: `store.load()`, or `resolve_with(...)` in
+   `target/tests.rs`, which goes through selection as a command would.
+4. Assert the outcome, and that `snapshot(dir)` is unchanged.
+
+Then a second test for the first write: record the new thing, and assert that
+every file an older build reads still has the bytes it had. A field whose loss
+on rewrite by an older build would weaken a check bumps `CONFIG_VERSION`
+instead, so the older build refuses the file rather than rewriting it.
+
 ## End-to-end
 
 Playwright against a locally built Worker, with its own Access harness under

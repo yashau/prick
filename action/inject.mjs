@@ -74,8 +74,33 @@ import { planInjection } from "./plan.mjs";
  * @returns {string}
  */
 export function stagingDirectory(env) {
+  return freshDirectory(env, "prick-verify-");
+}
+
+/**
+ * A fresh, empty directory for the CLI to use as its config dir, one per run.
+ *
+ * Fresh rather than fixed so that nothing a previous job on the same runner
+ * left behind -- a profile, a stored token -- is there for this one to find;
+ * see `cliEnvironment` in cli.mjs for why the CLI must see an empty one. Under
+ * `RUNNER_TEMP` for the same reason as `stagingDirectory`: the runner empties
+ * it at the start of every job, so it needs no cleanup here.
+ *
+ * @param {NodeJS.ProcessEnv} env
+ * @returns {string}
+ */
+export function configDirectory(env) {
+  return freshDirectory(env, "prick-config-");
+}
+
+/**
+ * @param {NodeJS.ProcessEnv} env
+ * @param {string} prefix
+ * @returns {string}
+ */
+function freshDirectory(env, prefix) {
   const base = String(env.RUNNER_TEMP ?? "").trim();
-  return mkdtempSync(join(base === "" ? tmpdir() : base, "prick-verify-"));
+  return mkdtempSync(join(base === "" ? tmpdir() : base, prefix));
 }
 
 /**
@@ -165,16 +190,29 @@ export function commandInstall({ env, io, spawn = spawnSync, staging = stagingDi
  * @param {import('./io.mjs').Io} options.io
  * @param {typeof spawnSync} [options.spawn]
  * @param {(size: number) => Buffer} [options.random]
+ * @param {(env: NodeJS.ProcessEnv) => string} [options.config]
  * @returns {number} exit code
  */
-export function commandInject({ env, io, spawn = spawnSync, random = randomBytes }) {
+export function commandInject({
+  env,
+  io,
+  spawn = spawnSync,
+  random = randomBytes,
+  config = configDirectory,
+}) {
   const inputs = readInputs(env);
 
   io.log(
     `Reading secrets from project \`${inputs.project}\`, environment \`${inputs.environment}\`.`,
   );
 
-  const result = run(CLI_BINARY, CLI_ARGS, cliEnvironment({ base: env, ...inputs }), spawn);
+  const configDir = config(env);
+  const result = run(
+    CLI_BINARY,
+    CLI_ARGS,
+    cliEnvironment({ base: env, configDir, ...inputs }),
+    spawn,
+  );
 
   if (result.error) {
     throw new ActionError(
@@ -269,16 +307,20 @@ export function commandInject({ env, io, spawn = spawnSync, random = randomBytes
  * @param {typeof spawnSync} [options.spawn]
  * @param {(size: number) => Buffer} [options.random]
  * @param {(env: NodeJS.ProcessEnv) => string} [options.staging]
+ * @param {(env: NodeJS.ProcessEnv) => string} [options.config]
  * @returns {number} exit code
  */
-export function main(argv, { env = process.env, io = realIo(env), spawn, random, staging } = {}) {
+export function main(
+  argv,
+  { env = process.env, io = realIo(env), spawn, random, staging, config } = {},
+) {
   const subcommand = argv[0] ?? "";
   try {
     if (subcommand === "install") {
       return commandInstall({ env, io, spawn, staging });
     }
     if (subcommand === "inject") {
-      return commandInject({ env, io, spawn, random });
+      return commandInject({ env, io, spawn, random, config });
     }
     throw new ActionError(
       `unknown subcommand \`${subcommand}\``,

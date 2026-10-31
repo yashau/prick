@@ -34,6 +34,24 @@ launcher, and the MCP server — all at the same version, all cut by the same ta
 release line of its own. `mise tasks` lists the current names.
 :::
 
+## Release order
+
+A docs page describes what a released binary or deployment does, so the docs
+site is cut after what it describes. When one change spans the lines, release
+in this order: the web app (deploy it to every instance you run), then the CLI
+(`cli:cut`), then the docs (`docs:cut`). A CLI feature that relies on something
+the server reports -- the instance id a profile pins, for example -- works
+against the deployments that already run that server, and the docs published
+last describe all of it at once.
+
+A deployed web app is rolled **forward**, never back past a release that
+changed what clients pin. Rolling the Worker back past the release that added
+the instance id makes every pinned profile fail with `INSTANCE_UNVERIFIED`, and
+restoring a database backup from before that release mints a new id, which
+pinned profiles refuse with `INSTANCE_MISMATCH`. Both are recovered on each
+client only by removing and re-adding the profile, so fix forward instead; see
+[Backup and recovery](/guides/backup-and-recovery).
+
 ## Versioning
 
 `YYYY.MMDD.N` — for example `2026.815.0`.

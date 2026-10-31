@@ -184,6 +184,31 @@ Static assets are served by the Workers assets runtime **without invoking the
 Worker**, so no middleware can reach them. They get their headers from
 `packages/app/_headers` instead.
 
+### `Prick-Instance`
+
+Every **authenticated** response carries the deployment's instance id:
+
+```
+Prick-Instance: 3f9c0a6e1b7d4e2a8c5f0b9d7e6a1c43
+```
+
+The id is 32 lowercase hex characters, generated once when the database is
+migrated and stored in D1. It never changes for the life of that database, so a
+client can tell which deployment answered: two deployments behind the same
+Access organisation, with identical project and environment names, still carry
+different ids. The CLI pins it in each profile, asks `/whoami` for it before a
+command sends anything of its own, and refuses a deployment whose id does not
+match.
+
+Error responses from authenticated routes carry it too, `403`, `404`, `409` and
+`422` included. It is absent from a `401` and from the unauthenticated routes,
+`/health`, `/openapi.json` and `/docs`: the id is a stable fingerprint of one
+deployment, and an unauthenticated caller learns nothing beyond "a prick server
+is listening here". `GET /whoami` reports the same value as `instance`.
+
+A database with no instance row answers without the header, and `whoami`
+reports `instance: null`. The Worker never creates the row itself.
+
 ### The two routes that return plaintext
 
 `GET …/secrets/{key}` and `GET …/secrets:export` additionally carry:
@@ -251,7 +276,7 @@ that matters.
 | Method | Path            | Notes                                                                     |
 | ------ | --------------- | ------------------------------------------------------------------------- |
 | `GET`  | `/health`       | Unauthenticated. `{ "service": "prick", "status": "ok", "version": "…" }` |
-| `GET`  | `/whoami`       | The resolved identity and the caller's **global** role                    |
+| `GET`  | `/whoami`       | The resolved identity, the caller's **global** role, and `instance`       |
 | `GET`  | `/openapi.json` | Unauthenticated. Describes shape; carries no data                         |
 | `GET`  | `/docs`         | Unauthenticated. Scalar viewer                                            |
 
@@ -265,6 +290,24 @@ beyond "a prick server is listening here".
 `/health` answers `200` only once the fail-closed key ring middleware has
 succeeded, which is what makes `ok` mean something: an installation whose
 `MASTER_KEY` decodes to 31 bytes answers `500` here, not `200`.
+
+`/whoami` answers:
+
+```json
+{
+  "kind": "user",
+  "subject": "you@example.com",
+  "identityId": "0192f1c4-7a2e-7b3d-9c41-5e8f0a6d2b17",
+  "role": "admin",
+  "bootstrap": false,
+  "displayName": "You",
+  "instance": "3f9c0a6e1b7d4e2a8c5f0b9d7e6a1c43"
+}
+```
+
+`instance` is the deployment's instance id, the same value as the
+[`Prick-Instance`](#prick-instance) header, or `null` when the database holds
+no instance row. `/health` never carries it.
 
 ### Projects
 

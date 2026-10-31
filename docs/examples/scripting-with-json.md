@@ -98,6 +98,66 @@ For a destructive command a script genuinely means to run, pass `--yes`:
 prk env rm preview-1234 --project api --no-input --yes
 ```
 
+## Pin the script to one deployment
+
+A script that runs on a machine with several profiles should not depend on
+what they are called or which one is the default. Name the deployment by its
+instance id, which `prk whoami` prints:
+
+```bash
+export PRK_EXPECT_INSTANCE=3f9c01ab52e84d7a9b0c6e1f2a3b4c5d
+```
+
+Every `prk` in the script then reaches that deployment or nothing. A rename, a
+changed default, or a profile name reused for another server fails with
+`INSTANCE_MISMATCH` (exit 3) before the command sends its own first request:
+
+```json
+{
+  "error": {
+    "code": "INSTANCE_MISMATCH",
+    "message": "prick.globex.example reports instance a71e09d4c3b2a1f0e9d8c7b6a5f4e3d2, not the expected 3f9c01ab52e84d7a9b0c6e1f2a3b4c5d; nothing beyond the identity check was sent"
+  }
+}
+```
+
+The flag form is `--expect-instance <ID>`. A script that writes, on a machine
+with two or more profiles, must also name its server with `--profile` or
+`PRK_PROFILE`; the default alone is refused with `PROFILE_REQUIRED`.
+
+## Where a write went
+
+Every write's result document carries a `destination` object naming the server
+it reached, the profile that chose it, and the instance the server reported:
+
+```bash
+printf '%s' "$KEY" | prk secrets set SESSION_SECRET --stdin --json --profile acme -P api -E production
+```
+
+```json
+{
+  "key": "SESSION_SECRET",
+  "rev": 13,
+  "created": true,
+  "destination": {
+    "server": "prick.acme.example",
+    "profile": "acme",
+    "instance": "3f9c01ab52e84d7a9b0c6e1f2a3b4c5d"
+  }
+}
+```
+
+`profile` is `null` when the server was named by URL and no profile is for it,
+and `instance` is `null` when the server was not asked for one. A script can
+assert on it:
+
+```bash
+printf '%s' "$KEY" | prk secrets set SESSION_SECRET --stdin --json --profile acme -P api -E production \
+  | jq -e '.destination.instance == "3f9c01ab52e84d7a9b0c6e1f2a3b4c5d"' > /dev/null
+```
+
+Without `--json`, the same three facts are a `writing to …` line on stderr.
+
 ## Recipes
 
 ### Check whether a key exists
@@ -163,9 +223,13 @@ Names only — no values are involved, so this is safe to run in a shared shell.
 ### Copy an environment to another server
 
 ```bash
-PRK_API_URL=https://old.example.com prk secrets download --json --format json -P api -E production > /tmp/copy.json
-PRK_API_URL=https://new.example.com prk secrets upload /tmp/copy.json --dry-run -P api -E production
+prk secrets download --profile old --format json -P api -E production > /tmp/copy.json
+prk secrets upload /tmp/copy.json --profile new --dry-run -P api -E production
 ```
+
+Each command names its own server; one invocation never talks to two. Without
+profiles, `PRK_API_URL=https://old.example.com` and
+`PRK_API_URL=https://new.example.com` do the same.
 
 ```bash
 shred -u /tmp/copy.json
@@ -201,22 +265,26 @@ before formatting.
 
 ## Which commands emit what
 
-| Command                          | `--json` produces                                                |
-| -------------------------------- | ---------------------------------------------------------------- |
-| `projects list`                  | Array of project objects                                         |
-| `projects get`                   | One project object, including `updated_at`                       |
-| `env list`                       | Array of environment objects, including `rev` and `secret_count` |
-| `secrets list`                   | Array of metadata objects, including `unreadable`                |
-| `secrets get`                    | `{ key, value }`                                                 |
-| `secrets set`                    | `{ key, rev, created }`                                          |
-| `secrets upload`                 | `{ applied, added, changed, removed, warnings }`                 |
-| `secrets download --format json` | The secrets themselves, sorted by key                            |
-| `secrets history`                | Array of version objects                                         |
-| `secrets rollback`               | `{ key, restored_from, version, rev }`                           |
-| `whoami`                         | `{ kind, subject, identity_id, role, bootstrap }`                |
-| `doctor`                         | `{ ok, checks }`                                                 |
-| `access identities`              | Array of identity objects                                        |
-| `access explain`                 | The full permission explanation, with sources                    |
+| Command                          | `--json` produces                                                            |
+| -------------------------------- | ---------------------------------------------------------------------------- |
+| `projects list`                  | Array of project objects                                                     |
+| `projects get`                   | One project object, including `updated_at`                                   |
+| `env list`                       | Array of environment objects, including `rev` and `secret_count`             |
+| `secrets list`                   | Array of metadata objects, including `unreadable`                            |
+| `secrets get`                    | `{ key, value }`                                                             |
+| `secrets set`                    | `{ key, rev, created, destination }`                                         |
+| `secrets upload`                 | `{ applied, added, changed, removed, warnings, destination }`                |
+| `secrets download --format json` | The secrets themselves, sorted by key                                        |
+| `secrets history`                | Array of version objects                                                     |
+| `secrets rollback`               | `{ key, restored_from, version, rev, destination }`                          |
+| `whoami`                         | `{ kind, subject, identity_id, role, bootstrap, server, profile, instance }` |
+| `profile list`                   | Array of profile objects, with `server`, `instance` and `signed_in`          |
+| `doctor`                         | `{ ok, checks }`                                                             |
+| `access identities`              | Array of identity objects                                                    |
+| `access explain`                 | The full permission explanation, with sources                                |
+
+Every write — any command that changes data on the server — adds `destination`
+to its result object.
 
 ## One thing to watch
 

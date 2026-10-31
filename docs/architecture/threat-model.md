@@ -172,6 +172,112 @@ the token header, which rejects `alg: none` and RS256→HS256 confusion. Issuer 
 exact-match, audience is checked against the array, and expiry has no skew
 allowance.
 
+## Writing to the wrong organisation
+
+One `prk` can hold profiles for several deployments: your own, a client's, a
+staging copy. Keeping one deployment's **credential** away from another is the
+easy half; see [Authentication](/guides/authentication#what-keeps-servers-apart).
+The harder half is your own valid credential writing a value into the wrong
+deployment. Project, environment and key names collide across organisations,
+so `api:production` exists in both and the wrong write returns `200`. Nothing
+about it is loud unless the client makes it so.
+
+### How it goes wrong
+
+| Scenario                                                                                            | Control                                                                                                      |
+| --------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| A stale default: `prk profile use other` yesterday, `prk secrets set` today                         | With two or more profiles, a write must name its server; the default alone is refused                        |
+| A leftover `PRK_PROFILE` in a long-lived terminal                                                   | Every write prints `writing to <host> (profile <name>, instance <id>)` before it is sent                     |
+| A pipe whose second half resolves through the default                                               | The same write rule; one invocation talks to one server and has no way to change it                          |
+| A repository's committed file naming `prod`, which is a different deployment on this machine        | Project files select by instance id, never by profile name                                                   |
+| An injected secret named `PRK_API_URL` or `PRK_PROFILE` redirecting a `prk` nested inside `prk run` | `prk run` skips those names, with a warning naming the key, unless `--allow-prk-vars` is given               |
+| A hostname repointed, by DNS or a reused domain, at another deployment                              | The instance pin: a different instance is refused before the command's own first request                     |
+| A service token for one deployment sent to another                                                  | With several profiles, a token pairs only with a server chosen by flag or environment; and the client-id pin |
+| Two profiles chosen between by a model, through two MCP entries                                     | One MCP entry per deployment, an instance pin per entry; see [MCP server](/guides/mcp-server)                |
+
+A refusal is used rather than a confirmation prompt throughout. It behaves the
+same under `--no-input`, and a y/N prompt that appears on every write is
+answered from muscle memory.
+
+### The project file only allows
+
+A `.prick.toml` arrives with `git clone`, so it is input from whoever wrote the
+repository, not from you. It is constrained accordingly:
+
+- It **never names a URL or a credential**. Every key it does not recognise is
+  refused, so `url = ...` is an error rather than a line that might be honoured.
+  A cloned repository therefore cannot aim a command, or a service token in
+  your environment, at a server you did not register.
+- It **lists instance ids**, and among the profiles you already have, selects
+  the one pinned to the listed instance. It narrows what your machine does; it
+  never widens it.
+- **Whatever selects the server**, the server's instance must be on the list.
+  A flag can choose among the listed deployments, not escape them.
+- It **does not count as your choice for a write.** With several profiles, a
+  command that changes data needs a flag, an environment variable or
+  `.prick.local.toml` to name its server; a committed `.prick.toml` selects for
+  reads and supplies the project and environment, but a write it alone aimed
+  is refused with `PROFILE_REQUIRED`.
+- It **cannot pair with a service token** when several profiles exist. A token
+  in the environment and a server chosen by a file are two decisions nobody
+  made together.
+- A `.prick.local.toml` beside it holds one checkout's choice and is refused
+  unless git ignores it, so it cannot become a choice made for everyone who
+  clones.
+
+### Trust on first use
+
+A profile pins the instance id its server reports the first time it talks to
+the server: at `prk login`, at the first command after `prk profile add`, or
+at the first command after updating from a single-server install. That first
+answer is trusted on the same basis as the URL itself: you chose to sign in to
+that hostname, through its Access organisation. A deployment that was already
+the wrong one at that moment is pinned as it is.
+
+After that, the pin is the strongest check in the client. A server that
+reports a different instance, or stops reporting one, is refused, and nothing
+the server says can change a pin. Replacing it is a deliberate local act:
+remove the profile and sign in again.
+
+### Deployments sharing one Access organisation
+
+Two deployments of the same application, run for two clients behind one
+Access organisation, can be identical to every request: the same issuer, the
+same administrator, the same slugs and key names. The issuer pin cannot tell
+them apart. The instance id can, and every control above is keyed on it:
+the profile pin, the project file's allow list, and `--expect-instance` for a
+script.
+
+A service token is where such deployments are most easily confused, because
+one token can be accepted by both. The client can only control which token it
+sends, so a profile can pin its `service_token_client_id` and any other is
+refused before it is sent. Which deployments accept a token is a server-side
+property: under a policy admitting any Access service token, prick's grants
+separate the deployments, because a token holds grants only on the deployment
+that granted it and the other answers `404`; under policies scoped to one token
+each, the edge separates them.
+
+### Copies of one database share an id
+
+The instance id names a database's contents, so a database loaded from
+another one's export answers with the same id: a restore test, or a staging
+copy seeded from production. Every pin keyed on the id then accepts the copy
+as the original, so a copy kept running must be given its own id; the step is
+in [Backup and recovery](/guides/backup-and-recovery). A backup taken before
+the instance row existed has none, and restoring it generates a new id, which
+pinned profiles refuse until they are re-added.
+
+### The instance id is shown only to authenticated callers
+
+The instance id is reported by `/api/v1/whoami` and in a `Prick-Instance` header
+on authenticated responses, never by the unauthenticated `/api/v1/health`. It
+is not a secret and carries no authority, but it is a stable fingerprint that
+names **which** deployment answered, and the one unauthenticated route reveals
+nothing beyond "a prick server is listening here". The cost is that the check
+needs a credential: `prk` verifies the instance after the
+credential for that URL is attached, on a request that carries no secret
+value, and before the command's own first request.
+
 ## What it does not protect against
 
 - **A malicious administrator.** An admin can read everything they are granted.

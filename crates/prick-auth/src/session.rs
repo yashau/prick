@@ -84,14 +84,16 @@ pub async fn resolve_at(
         });
     }
 
-    let wanted = api_url.trim_end_matches('/');
+    let wanted = prick_core::profile::normalize_url(api_url);
     let session = store
         .load()?
         // A token issued for one server is never presented to another: the
         // audience is baked into the token, and sending it elsewhere would leak
-        // it to a host that has no business seeing it.
-        .filter(|session| session.api_url == wanted)
-        .ok_or_else(|| AuthError::NoCredential { api_url: wanted.to_owned() })?;
+        // it to a host that has no business seeing it. Compared after
+        // normalising both sides -- case of scheme and host, a default port,
+        // a trailing slash -- and exactly after that.
+        .filter(|session| prick_core::profile::normalize_url(&session.api_url) == wanted)
+        .ok_or_else(|| AuthError::NoCredential { api_url: wanted.clone() })?;
 
     if !session.needs_refresh(now, REFRESH_SKEW_SECS) {
         return Ok(Resolved {
@@ -212,6 +214,22 @@ mod tests {
         resolve_at(&client(), &store, "https://prick.example.com/", None, 1_000)
             .await
             .expect("the trailing slash must be normalised away");
+    }
+
+    #[tokio::test]
+    async fn another_spelling_of_the_same_server_still_matches_the_stored_session() {
+        let (_dir, store) = store();
+        store.save(&session(Some(10_000), true)).expect("save");
+
+        for spelling in ["HTTPS://Prick.Example.com:443/", "https://prick.example.com:443"] {
+            resolve_at(&client(), &store, spelling, None, 1_000)
+                .await
+                .unwrap_or_else(|err| panic!("{spelling} must match: {err}"));
+        }
+        let err = resolve_at(&client(), &store, "https://prick.example.com:8443", None, 1_000)
+            .await
+            .expect_err("another port is another server");
+        assert!(matches!(err, AuthError::NoCredential { .. }));
     }
 
     #[tokio::test]

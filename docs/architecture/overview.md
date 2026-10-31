@@ -74,11 +74,67 @@ Cargo members are `crates/*` plus `xtask`; pnpm packages are the explicit list
 in `pnpm-workspace.yaml` (the `packages/…` directories plus `e2e`). Neither
 crosses into the other.
 
+## The CLI's request flow
+
+Every `prk` invocation talks to exactly one server, chosen once, before any
+request:
+
+```
+ flags, PRK_* env, .prick.local.toml / .prick.toml, config.toml
+        │
+        ▼
+ ┌──────────────────────┐  prick-core::profile::select — pure, run under miri
+ │ 1. select a server   │  flag > environment > project file > default;
+ │                      │  both forms at one tier, or an unknown name: refused
+ └──────────┬───────────┘
+            ▼
+ ┌──────────────────────┐  no request yet
+ │ 2. pre-checks        │  a write with 2+ profiles must name its server;
+ │                      │  a service token pairs only with an explicit choice;
+ │                      │  a pinned instance the project or --expect-instance
+ │                      │  rules out is refused
+ └──────────┬───────────┘
+            ▼
+ ┌──────────────────────┐  the selected profile's credential file, and only it;
+ │ 3. attach credential │  a session is used only for the URL it was issued for
+ └──────────┬───────────┘
+            ▼
+ ┌──────────────────────┐  GET /api/v1/whoami, which carries no secret;
+ │ 4. verify instance   │  must match the profile's pin, --expect-instance and
+ │                      │  the project's allow list; an unpinned profile is pinned
+ └──────────┬───────────┘
+            ▼
+ ┌──────────────────────┐  a write first prints
+ │ 5. the command's own │  "writing to <host> (profile <name>, instance <id>)"
+ │    requests          │
+ └──────────────────────┘
+```
+
+Selection is in `prick-core` because it is a security decision with a dozen
+inputs — two flags, two environment variables, two project files, the default
+and the profiles themselves — and as a pure function it is tested exhaustively.
+Reading those inputs is `prick-auth::profiles`; steps 2 to 5 are
+`crates/prk/src/target.rs`, and the context built from a target has no way to
+change its URL or token store afterwards.
+
+Step 4 is skipped only for a bare URL with no profile for it, no
+`--expect-instance` and no project file, which is how CI calls the server. See
+[Multiple servers](/guides/multiple-servers) for the behaviour and the
+[Threat model](/architecture/threat-model#writing-to-the-wrong-organisation)
+for why each step exists.
+
 ## Data model
 
-Eleven tables: `projects`, `environments`, `secrets`, `secret_versions`,
+Twelve tables: `projects`, `environments`, `secrets`, `secret_versions`,
 `identities`, `grants`, `groups`, `group_members`, `group_grants`, `audit_log`,
-`keyring_state`.
+`keyring_state`, `instance`.
+
+`instance` holds one row: the deployment's permanent random id, written by a
+migration and read by nothing but `whoami` and the `Prick-Instance` response
+header. It lives in D1 so that it names the data: a restored backup answers
+with the id it had, a fresh database answers with a new one, and a database
+loaded from another one's export answers with that one's id until it is given
+its own (see [Backup and recovery](/guides/backup-and-recovery)).
 
 Conventions that hold throughout `packages/app/src/lib/server/db/schema.ts`:
 

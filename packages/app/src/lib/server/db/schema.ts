@@ -655,6 +655,38 @@ export const keyringState = sqliteTable("keyring_state", {
 });
 
 // ---------------------------------------------------------------------------
+// instance
+// ---------------------------------------------------------------------------
+
+/**
+ * Exactly one row: this deployment's permanent, random identity.
+ *
+ * A CLI profile pins the deployment it talks to, and neither the URL nor the
+ * Access issuer can do that job. Two deployments can run this application
+ * behind the same Access organisation with identical project, environment and
+ * key names, and a hostname can be repointed at a different database. A value
+ * written into the DATABASE is the only one that names the data itself.
+ *
+ * It lives in D1 for that reason: it follows the data. Restoring a backup
+ * restores the id with it; a fresh database gets a new one.
+ *
+ * `id` is 32 lowercase hex characters (16 random bytes) rather than a
+ * UUIDv7: it is an identifier, not a sort key, and embedding the creation time
+ * in it would add nothing.
+ *
+ * WRITTEN BY THE MIGRATION AND NOTHING ELSE. The row is inserted by
+ * `0004_instance_row.sql` and the application never writes this table: a runtime insert
+ * would be a mutation with no audit row, and there is no actor to attribute one
+ * to. A database without the row reports no instance id rather than minting
+ * one. Served to authenticated callers only -- see `core/instance.ts`.
+ */
+export const instance = sqliteTable("instance", {
+  /** 32 lowercase hex characters. Permanent. */
+  id: text("id").primaryKey(),
+  createdAt: integer("created_at").notNull(),
+});
+
+// ---------------------------------------------------------------------------
 // Inferred row types
 // ---------------------------------------------------------------------------
 

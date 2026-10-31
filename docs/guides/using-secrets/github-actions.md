@@ -79,6 +79,28 @@ access to every secret in an environment, that is exactly the wrong shape. The
 `version` input defaults to the action's own ref when that ref is a release tag, so
 the action and the CLI cannot drift.
 
+### The server is always the `url` input
+
+The action runs `prk` with a config directory of its own — a fresh, empty
+directory under `RUNNER_TEMP`, created for each run and passed as
+`PRK_CONFIG_DIR` — and with `PRK_PROFILE` set to the empty string. Profiles,
+stored credentials and a default profile on a self-hosted runner never apply to
+the job, a `.prick.toml` in the checkout has no profile to select, and a
+`PRK_PROFILE` set at the workflow level does not collide with the URL the action
+hands the CLI. A `.prick.toml` in the checkout still applies its `[[allow]]`
+list: the CLI refuses a `url` whose deployment the repository does not list, so
+the file can only make a run stricter.
+
+To pin the job to one deployment as well, set `PRK_EXPECT_INSTANCE` to that
+deployment's instance id (`prk whoami` prints it). The action passes it through,
+and the CLI refuses any server whose instance id differs, so a `url` pointed at
+the wrong deployment fails the step before a single secret is injected:
+
+```yaml title=".github/workflows/deploy.yml"
+env:
+  PRK_EXPECT_INSTANCE: 0123456789abcdef0123456789abcdef
+```
+
 ## Or drive the CLI yourself
 
 ```yaml title=".github/workflows/deploy.yml"
@@ -116,6 +138,9 @@ runner already sets `CF_ACCESS_CLIENT_ID` / `CF_ACCESS_CLIENT_SECRET` for
 
 `--no-input` matters: it makes a missing or rejected credential fail immediately
 instead of blocking on a prompt no CI job can answer.
+
+`PRK_EXPECT_INSTANCE` works here too: add it to the job's `env` and every `prk`
+command in the job refuses a server whose instance id differs.
 
 ## The first run will 404, and that is the flow
 

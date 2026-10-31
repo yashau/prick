@@ -17,6 +17,7 @@ export {
   type FetchLike,
   type ProjectSummary,
   type SecretListEntry,
+  type WhoamiResult,
 } from "./api.ts";
 
 export {
@@ -24,10 +25,12 @@ export {
   DEFAULT_TIMEOUT_MS,
   ENV_NAMES,
   helpText,
+  INSTANCE_ID,
   loadConfig,
   normaliseBaseUrl,
   parseAllowReveal,
   parseArgs,
+  parseExpectInstance,
   resolveWorkspaceRoot,
   type Environmentish,
   type ParsedArgs,
@@ -65,6 +68,8 @@ export {
   secretsGet,
   secretsList,
   secretsSet,
+  serverHost,
+  verifyInstance,
   type ToolContext,
 } from "./tools.ts";
 

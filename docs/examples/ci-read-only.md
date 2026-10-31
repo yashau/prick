@@ -52,6 +52,11 @@ between tokens — prick's grants are, and a new token still holds none until
 step 6.
 :::
 
+If you run more than one prick deployment, create a separate token for each.
+Either scope each deployment's policy to its own token, so the edge keeps them
+apart, or admit any service token and let prick's grants keep them apart: the
+token is granted on this deployment only, and any other answers it with `404`.
+
 ## 3. Store the pair in your CI secret store
 
 For GitHub Actions, add two repository secrets:
@@ -78,6 +83,7 @@ jobs:
     runs-on: ubuntu-24.04
     env:
       PRK_API_URL: https://prick.example.com
+      PRK_EXPECT_INSTANCE: 3f9c01ab52e84d7a9b0c6e1f2a3b4c5d
       PRK_PROJECT: api
       PRK_ENV: production
       PRK_ACCESS_CLIENT_ID: ${{ secrets.PRICK_CLIENT_ID }}
@@ -94,6 +100,15 @@ jobs:
 
 `--no-input` makes a missing or rejected credential fail immediately rather than
 blocking on a prompt no CI job can answer.
+
+`PRK_EXPECT_INSTANCE` pins the job to one deployment: if `PRK_API_URL` ever
+answers with a different one — a repointed hostname, a database rebuilt from
+scratch — the job stops before it sends its own first request, rather than
+deploying with another deployment's secrets. Copy the id from the `instance:`
+line of `prk whoami`, signed in to this server. It is not a secret.
+
+The runner has no profiles, and the job does not need any: the server is named
+by URL and the credential is the service token.
 
 ## 5. Run it, and expect a 404
 
@@ -184,6 +199,8 @@ anyone cleaning it up, and it stays in the table as a record that it existed.
 
 ```yaml title=".github/workflows/deploy.yml"
 - uses: yashau/prick/action@v2026.819.0
+  env:
+    PRK_EXPECT_INSTANCE: 3f9c01ab52e84d7a9b0c6e1f2a3b4c5d
   with:
     url: https://prick.example.com
     client-id: ${{ secrets.PRICK_CLIENT_ID }}
@@ -209,6 +226,7 @@ job without it.
 | `UNAUTHENTICATED`, exit 3                                      | One half of the pair is missing, or they come from different prefixes                                                    |
 | `NOT_FOUND`, exit 5                                            | The token holds no grant on this project — do step 6. Also what a grant on a different project or environment looks like |
 | `FORBIDDEN`, exit 4                                            | The token can see the environment, but its role is too low for the operation                                             |
+| `INSTANCE_MISMATCH`, exit 3                                    | `PRK_API_URL` answered as a different deployment than `PRK_EXPECT_INSTANCE` names. Find out why before changing either   |
 
 Which form the first row takes depends on **strict service token
 authentication**, a setting of your Zero Trust organization. With it on, Access

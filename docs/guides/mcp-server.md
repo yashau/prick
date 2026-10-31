@@ -30,8 +30,8 @@ so the reveal tool is off unless you turn it on.
 | `projects_list`     | project slugs and counts                   | on      |
 | `environments_list` | environment slugs, key counts, revision    | on      |
 | `secrets_list`      | **key names and metadata — never a value** | on      |
-| `secrets_set`       | confirmation naming the key                | on      |
-| `secrets_delete`    | confirmation naming the key                | on      |
+| `secrets_set`       | confirmation naming the key and the server | on      |
+| `secrets_delete`    | confirmation naming the key and the server | on      |
 | `secrets_diff`      | key names only, from both sides            | on      |
 | `secrets_get`       | **a plaintext secret value**               | **off** |
 
@@ -64,15 +64,16 @@ Nothing arriving over the wire can change it.
 
 ## Configure it
 
-| Variable                  | Required | Meaning                                                             |
-| ------------------------- | -------- | ------------------------------------------------------------------- |
-| `PRICK_MCP_API_URL`       | yes      | Origin of the deployed Worker                                       |
-| `PRICK_MCP_CLIENT_ID`     | yes      | Access service token client id, the one ending in `.access`         |
-| `PRICK_MCP_CLIENT_SECRET` | yes      | Access service token client secret                                  |
-| `PRICK_MCP_ALLOW_REVEAL`  | no       | `true` — and only the exact string `true` — registers `secrets_get` |
-| `PRICK_MCP_WORKSPACE`     | no       | The only directory `secrets_diff` may read from. Default: the cwd   |
-| `PRICK_MCP_TIMEOUT_MS`    | no       | Per-request timeout, 1000–120000. Default `15000`                   |
-| `PRICK_MCP_LOG_LEVEL`     | no       | `debug`, `info`, `warn`, `error` or `silent`. Default `info`        |
+| Variable                    | Required | Meaning                                                                               |
+| --------------------------- | -------- | ------------------------------------------------------------------------------------- |
+| `PRICK_MCP_API_URL`         | yes      | Origin of the deployed Worker                                                         |
+| `PRICK_MCP_CLIENT_ID`       | yes      | Access service token client id, the one ending in `.access`                           |
+| `PRICK_MCP_CLIENT_SECRET`   | yes      | Access service token client secret                                                    |
+| `PRICK_MCP_ALLOW_REVEAL`    | no       | `true` — and only the exact string `true` — registers `secrets_get`                   |
+| `PRICK_MCP_WORKSPACE`       | no       | The only directory `secrets_diff` may read from. Default: the cwd                     |
+| `PRICK_MCP_TIMEOUT_MS`      | no       | Per-request timeout, 1000–120000. Default `15000`                                     |
+| `PRICK_MCP_LOG_LEVEL`       | no       | `debug`, `info`, `warn`, `error` or `silent`. Default `info`                          |
+| `PRICK_MCP_EXPECT_INSTANCE` | no       | Instance id every write must land on. See [Several deployments](#several-deployments) |
 
 An environment already set up for `cloudflared` or for `prk` works unchanged:
 `PRK_API_URL` (or the older `PRK_URL`) is read for the base URL, and
@@ -128,6 +129,56 @@ need it, rather than leaving it on:
   }
 }
 ```
+
+## Several deployments
+
+One server process talks to one deployment. To work with several — one per
+organisation, say — configure one entry per deployment, named after the
+organisation, each with its own URL and its own service token:
+
+```json title="mcp.json"
+{
+  "mcpServers": {
+    "prick-acme": {
+      "command": "npx",
+      "args": ["-y", "@yashau/prick-mcp"],
+      "env": {
+        "PRICK_MCP_API_URL": "https://secrets.acme.example",
+        "PRICK_MCP_CLIENT_ID": "0123456789abcdef0123456789abcdef.access",
+        "PRICK_MCP_CLIENT_SECRET": "REPLACE_ME",
+        "PRICK_MCP_EXPECT_INSTANCE": "4f9c2a7e1b3d5f6081a2b3c4d5e6f708"
+      }
+    },
+    "prick-globex": {
+      "command": "npx",
+      "args": ["-y", "@yashau/prick-mcp"],
+      "env": {
+        "PRICK_MCP_API_URL": "https://secrets.globex.example",
+        "PRICK_MCP_CLIENT_ID": "fedcba9876543210fedcba9876543210.access",
+        "PRICK_MCP_CLIENT_SECRET": "REPLACE_ME",
+        "PRICK_MCP_EXPECT_INSTANCE": "9e8d7c6b5a4f3e2d1c0b9a8f7e6d5c4b"
+      }
+    }
+  }
+}
+```
+
+The entry name is what the assistant sees in front of every tool, so
+`prick-acme` and `prick-globex` say which organisation a call goes to. Each
+token is a credential of its own deployment; grant each one the narrowest role
+that works there.
+
+Every `secrets_set` and `secrets_delete` result carries a `server` field holding
+the host it wrote to, so a transcript records where each value went.
+
+`PRICK_MCP_EXPECT_INSTANCE` pins an entry to one deployment. Every deployment
+reports a permanent instance id — 32 lowercase hex characters, the `instance`
+field of `/api/v1/whoami`, which `prk whoami` prints. With the pin set, the
+server checks that id before its first write and refuses every write, with an
+`INSTANCE_MISMATCH` error naming both ids, unless the server reports exactly the
+pinned one. A server that reports no instance id fails the check, and so does a
+lookup that fails. Reads are not gated. A malformed pin is a configuration error
+at startup.
 
 :::caution[The client config file holds a live credential]
 Give it mode `0600` and keep it out of version control. If your client can read

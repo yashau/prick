@@ -68,6 +68,37 @@ export PRK_ENV=staging
 Every command below now runs against `api:staging` until you change it. Put
 these in a `direnv` file per repository if you switch between services often.
 
+### Or let the repository say it
+
+From the root of the service's repository, record which deployment it belongs
+to:
+
+```bash
+prk profile pin
+```
+
+```
+Pinned instance 3f9c01ab (prick.example.com) in /home/you/src/api/.prick.toml.
+```
+
+Then add the project and the environment you work in most:
+
+```toml title=".prick.toml"
+project = "api"
+env = "staging"
+
+[[allow]]
+instance = "3f9c01ab52e84d7a9b0c6e1f2a3b4c5d"
+```
+
+Commit it. Inside this repository, everyone's `prk` now defaults to
+`api:staging` and talks only to this deployment, whatever they named their
+profile for it. The file holds no URL and no credential, so it is safe in
+version control, and it can only narrow which server a command reaches: a
+profile for any other deployment is refused here. `-E production` or
+`PRK_ENV` still override the environment for one command. See
+[Multiple servers](/guides/multiple-servers#project-files).
+
 ## 4. Add secrets
 
 ```bash
@@ -84,6 +115,16 @@ so nothing lands in your shell history.
 ```
 Added `DATABASE_URL` (rev 1).
 ```
+
+Every write also prints the server it is going to on stderr, before it asks
+for anything:
+
+```
+writing to prick.example.com (profile default, instance 3f9c01ab)
+```
+
+The rest of this page leaves that line out. Read it whenever you have more than
+one profile.
 
 Add a description while you are there, so the next person knows what they are
 looking at:

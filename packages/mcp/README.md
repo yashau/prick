@@ -22,8 +22,8 @@ so the default posture here is **write-mostly, read-rarely**.
 | `projects_list`     | project slugs and counts                   | on      |
 | `environments_list` | environment slugs, key counts, revision    | on      |
 | `secrets_list`      | **key names and metadata — never a value** | on      |
-| `secrets_set`       | confirmation naming the key                | on      |
-| `secrets_delete`    | confirmation naming the key                | on      |
+| `secrets_set`       | confirmation naming the key and the server | on      |
+| `secrets_delete`    | confirmation naming the key and the server | on      |
 | `secrets_diff`      | key names only, from both sides            | on      |
 | `secrets_get`       | **a plaintext secret value**               | **off** |
 
@@ -134,15 +134,16 @@ Stated plainly, because a security section that only lists wins is not useful:
 Authentication is a Cloudflare Access **service token**: two headers that Access validates at the
 edge before the request reaches the Worker. There is no login flow and no token store here.
 
-| Variable                  | Required | Meaning                                                             |
-| ------------------------- | -------- | ------------------------------------------------------------------- |
-| `PRICK_MCP_API_URL`       | yes      | Origin of the deployed Worker, e.g. `https://secrets.example.com`   |
-| `PRICK_MCP_CLIENT_ID`     | yes      | Access service token Client ID                                      |
-| `PRICK_MCP_CLIENT_SECRET` | yes      | Access service token Client Secret                                  |
-| `PRICK_MCP_ALLOW_REVEAL`  | no       | `true` — and only the exact string `true` — registers `secrets_get` |
-| `PRICK_MCP_WORKSPACE`     | no       | The only directory `secrets_diff` may read from. Default: the cwd   |
-| `PRICK_MCP_TIMEOUT_MS`    | no       | Per-request timeout, 1000–120000. Default `15000`                   |
-| `PRICK_MCP_LOG_LEVEL`     | no       | `debug` \| `info` \| `warn` \| `error` \| `silent`. Default `info`  |
+| Variable                    | Required | Meaning                                                                               |
+| --------------------------- | -------- | ------------------------------------------------------------------------------------- |
+| `PRICK_MCP_API_URL`         | yes      | Origin of the deployed Worker, e.g. `https://secrets.example.com`                     |
+| `PRICK_MCP_CLIENT_ID`       | yes      | Access service token Client ID                                                        |
+| `PRICK_MCP_CLIENT_SECRET`   | yes      | Access service token Client Secret                                                    |
+| `PRICK_MCP_ALLOW_REVEAL`    | no       | `true` — and only the exact string `true` — registers `secrets_get`                   |
+| `PRICK_MCP_WORKSPACE`       | no       | The only directory `secrets_diff` may read from. Default: the cwd                     |
+| `PRICK_MCP_TIMEOUT_MS`      | no       | Per-request timeout, 1000–120000. Default `15000`                                     |
+| `PRICK_MCP_LOG_LEVEL`       | no       | `debug` \| `info` \| `warn` \| `error` \| `silent`. Default `info`                    |
+| `PRICK_MCP_EXPECT_INSTANCE` | no       | Instance id every write must land on; see [Several deployments](#several-deployments) |
 
 Aliases are accepted so an environment already set up for `cloudflared` or for the `prk` CLI works
 unchanged: `PRK_API_URL` (or the older `PRK_URL`) for the base URL, and `PRK_ACCESS_CLIENT_ID` /
@@ -215,6 +216,53 @@ actually need it rather than leaving it on:
 }
 ```
 
+### Several deployments
+
+One server process talks to one deployment. To work with several, configure one entry per
+deployment, named after the organisation it belongs to, each with its own URL and its own service
+token:
+
+```json
+{
+  "mcpServers": {
+    "prick-acme": {
+      "command": "npx",
+      "args": ["-y", "@yashau/prick-mcp"],
+      "env": {
+        "PRICK_MCP_API_URL": "https://secrets.acme.example",
+        "PRICK_MCP_CLIENT_ID": "0123456789abcdef0123456789abcdef.access",
+        "PRICK_MCP_CLIENT_SECRET": "REPLACE_ME",
+        "PRICK_MCP_EXPECT_INSTANCE": "4f9c2a7e1b3d5f6081a2b3c4d5e6f708"
+      }
+    },
+    "prick-globex": {
+      "command": "npx",
+      "args": ["-y", "@yashau/prick-mcp"],
+      "env": {
+        "PRICK_MCP_API_URL": "https://secrets.globex.example",
+        "PRICK_MCP_CLIENT_ID": "fedcba9876543210fedcba9876543210.access",
+        "PRICK_MCP_CLIENT_SECRET": "REPLACE_ME",
+        "PRICK_MCP_EXPECT_INSTANCE": "9e8d7c6b5a4f3e2d1c0b9a8f7e6d5c4b"
+      }
+    }
+  }
+}
+```
+
+The entry name prefixes every tool the assistant sees, so it says which organisation a call goes to.
+Each token belongs to its own deployment; grant each one the narrowest role that does the job there.
+
+Every `secrets_set` and `secrets_delete` result carries `server`, the host it wrote to, so a
+transcript records where each value went.
+
+`PRICK_MCP_EXPECT_INSTANCE` is optional and pins an entry to one deployment. Each deployment reports
+a permanent instance id — 32 lowercase hex characters, the `instance` field of `/api/v1/whoami`,
+which `prk whoami` prints. With the pin set, the server asks `/api/v1/whoami` before its first write
+and refuses every write with `INSTANCE_MISMATCH`, naming both ids, unless the reported id is exactly
+the pinned one. It fails closed: a server that reports no instance id fails the check, and so does a
+lookup that fails, which is asked again on the next write. Only a match is remembered, for the life
+of the process. Reads are not gated, and a malformed pin is a configuration error at startup.
+
 > The client config file holds a live credential. Give it `0600` permissions and keep it out of
 > version control. If your client supports reading environment variables from the surrounding shell
 > rather than from the config file, prefer that.
@@ -245,15 +293,17 @@ out without `DATABASE_URL`.
 `project`, `environment`, `key`, `value`, optional `reason`.
 
 Applied as a merge in one atomic server-side transaction: no other key is touched, and the previous
-value is retained as a version, so a mistaken overwrite is recoverable. The result names the key and
-the resulting revision and says nothing about the value — not its length, not a prefix, not a hash.
+value is retained as a version, so a mistaken overwrite is recoverable. The result names the
+`server` host, the key and the resulting revision and says nothing about the value — not its length,
+not a prefix, not a hash.
 
 ### `secrets_delete`
 
 `project`, `environment`, `key`, optional `reason`.
 
 The version history is retained as a tombstone, but the key stops being served immediately. Deleting
-a key a running service depends on is an outage, not a tidy-up.
+a key a running service depends on is an outage, not a tidy-up. The result names the `server` host
+the key was deleted from.
 
 ### `secrets_diff`
 
@@ -292,6 +342,9 @@ fails if it goes stale, so the table below is checkable against the server's own
 | `secrets_delete`    | `POST /api/v1/p/{project}/e/{environment}/secrets:batch`         |
 | `secrets_diff`      | `GET /api/v1/p/{project}/e/{environment}/secrets`                |
 | `secrets_get`       | `GET /api/v1/p/{project}/e/{environment}/secrets/{key}?reason=…` |
+
+With `PRICK_MCP_EXPECT_INSTANCE` set, the first write in a process is preceded by
+`GET /api/v1/whoami`, from which only the `instance` field is read.
 
 Both write tools send the documented batch body: `{"mode": "merge", "set": {...}}` or
 `{"mode": "merge", "delete": [...]}`, with an optional `reason` recorded verbatim in the audit log.

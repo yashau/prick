@@ -10,6 +10,7 @@ import {
   bodyLimit,
   crossSiteGuard,
   docsCsp,
+  instanceHeader,
   keyring,
   requestId,
   SCALAR_CDN,
@@ -185,6 +186,11 @@ export function createApi() {
    * have nothing to call `core` WITH, and would fail rather than serve.
    */
   v1.use("*", authenticate);
+
+  // `Prick-Instance` on every response from here down, errors included. Its
+  // position directly below `authenticate` is what keeps the id off a 401 and
+  // off every route mounted above -- see `instanceHeader`.
+  v1.use("*", instanceHeader);
 
   // Body size, after authentication: an anonymous caller should not be able to
   // make this Worker read a megabyte before it decides it does not know them.

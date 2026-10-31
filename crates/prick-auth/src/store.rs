@@ -26,6 +26,17 @@
 //! first time it is read, and the roaming copy is deleted. `prk logout` removes
 //! both, and `prk doctor` reports a roaming copy that could not be removed.
 //!
+//! # One file per profile
+//!
+//! Each profile's session is its own file: `credentials.json` for the profile
+//! built from an install that predates profiles, `credentials/<id>.json` for
+//! every other, where the id is random and recorded in `config.toml`. Separate
+//! files mean a transparent refresh for one profile never rewrites another's,
+//! two concurrent commands against different servers cannot lose each other's
+//! renewal, and a file that will not parse breaks one profile, not all of them.
+//! The file format is the same for both, and the legacy file stays where it is
+//! so an older build on the same machine keeps reading it.
+//!
 //! # Atomicity
 //!
 //! A token file is written to a temporary file **in the same directory**, then
@@ -67,8 +78,12 @@ pub const TOKEN_DIR_MODE: u32 = 0o700;
 /// The environment variable that overrides the configuration directory.
 pub const CONFIG_DIR_VAR: &str = "PRK_CONFIG_DIR";
 
-/// The file tokens are kept in.
-pub const TOKEN_FILE_NAME: &str = "credentials.json";
+/// The file tokens are kept in by an install that predates profiles, and by
+/// the profile built from one.
+pub const TOKEN_FILE_NAME: &str = prick_core::profile::LEGACY_CREDENTIAL;
+
+/// The directory every other profile's credential file lives in.
+pub const CREDENTIALS_DIR: &str = "credentials";
 
 /// Where tokens are kept.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
@@ -315,11 +330,21 @@ pub fn roaming_config_dir_from(lookup: impl Fn(&str) -> Option<String>) -> Optio
         .map(|base| PathBuf::from(base).join("prick"))
 }
 
-/// Reads and writes the token file.
+/// Reads and writes one token file.
+///
+/// One store is one profile's credential: [`TOKEN_FILE_NAME`] for the profile
+/// built from a pre-profiles install, `credentials/<id>.json` for every other.
+/// There is no way to ask a store for "a" session among several, so a command
+/// that built a store for one profile cannot pick up another's.
 #[derive(Debug, Clone)]
 pub struct TokenStore {
     dir: PathBuf,
+    /// The file within `dir`.
+    file: PathBuf,
     /// Where a session written to the roaming profile is picked up from.
+    ///
+    /// Only ever set for [`TOKEN_FILE_NAME`]: that is the only file an older
+    /// build kept in the roaming profile.
     roaming: Option<PathBuf>,
     backend: StorageBackend,
 }
@@ -340,7 +365,25 @@ impl TokenStore {
     /// Only that directory: a roaming copy is picked up by [`TokenStore::new`]
     /// alone.
     pub fn in_dir(dir: impl Into<PathBuf>, backend: StorageBackend) -> Self {
-        Self { dir: dir.into(), roaming: None, backend }
+        Self { dir: dir.into(), file: PathBuf::from(TOKEN_FILE_NAME), roaming: None, backend }
+    }
+
+    /// The same configuration directory, for the credential a profile names.
+    ///
+    /// `credential` is [`TOKEN_FILE_NAME`] or a generated id; anything else is
+    /// refused by [`prick_core::profile::Config::validate`] before it gets
+    /// here, so it can never name a path outside the directory. The roaming
+    /// copy is kept only for the legacy file.
+    #[must_use]
+    pub fn for_credential(&self, credential: &str) -> Self {
+        if credential == TOKEN_FILE_NAME {
+            return Self { file: PathBuf::from(TOKEN_FILE_NAME), ..self.clone() };
+        }
+        Self {
+            file: PathBuf::from(CREDENTIALS_DIR).join(format!("{credential}.json")),
+            roaming: None,
+            ..self.clone()
+        }
     }
 
     /// The same store, on another backend.
@@ -355,14 +398,19 @@ impl TokenStore {
         self.roaming.as_ref().map(|dir| dir.join(TOKEN_FILE_NAME))
     }
 
-    /// The directory the token file lives in.
+    /// The configuration directory.
     pub fn dir(&self) -> &Path {
         &self.dir
     }
 
     /// The token file's path.
     pub fn path(&self) -> PathBuf {
-        self.dir.join(TOKEN_FILE_NAME)
+        self.dir.join(&self.file)
+    }
+
+    /// The directory the token file itself is in.
+    fn file_dir(&self) -> PathBuf {
+        self.path().parent().map_or_else(|| self.dir.clone(), Path::to_path_buf)
     }
 
     /// The backend this store was built for.
@@ -503,13 +551,16 @@ impl TokenStore {
             source,
         };
 
-        if self.dir.is_dir() {
-            return restrict_dir(&self.dir).map_err(map);
+        ensure_private_dir(&self.dir).map_err(map)?;
+        let file_dir = self.file_dir();
+        if file_dir != self.dir {
+            ensure_private_dir(&file_dir).map_err(|source| AuthError::Store {
+                operation: "create",
+                path: file_dir.display().to_string(),
+                source,
+            })?;
         }
-        if let Some(parent) = self.dir.parent() {
-            std::fs::create_dir_all(parent).map_err(map)?;
-        }
-        create_private_dir(&self.dir).map_err(map)
+        Ok(())
     }
 
     /// Temporary file, `fsync`, rename.
@@ -523,7 +574,12 @@ impl TokenStore {
         // In the same directory, so the rename stays within one filesystem and
         // is therefore atomic. A temporary directory elsewhere would make it a
         // copy, which has a window in which the file is half written.
-        let temporary = self.dir.join(format!(".{TOKEN_FILE_NAME}.{}.tmp", std::process::id()));
+        let file_dir = self.file_dir();
+        let file_name = self
+            .file
+            .file_name()
+            .map_or_else(|| TOKEN_FILE_NAME.to_owned(), |name| name.to_string_lossy().into_owned());
+        let temporary = file_dir.join(format!(".{file_name}.{}.tmp", std::process::id()));
 
         // Best effort: a leftover from a previous crash would fail `create_new`.
         let _ = std::fs::remove_file(&temporary);
@@ -547,9 +603,53 @@ impl TokenStore {
             });
         }
 
-        sync_dir(&self.dir).map_err(map("write"))?;
+        sync_dir(&file_dir).map_err(map("write"))?;
         Ok(())
     }
+}
+
+/// Creates a directory with owner-only permissions, or narrows an existing one.
+pub(crate) fn ensure_private_dir(dir: &Path) -> std::io::Result<()> {
+    if dir.is_dir() {
+        return restrict_dir(dir);
+    }
+    if let Some(parent) = dir.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    create_private_dir(dir)
+}
+
+/// Writes a file atomically with owner-only permissions: temporary file in the
+/// same directory, `fsync`, rename.
+///
+/// The same routine the token file uses, for the profile configuration, which
+/// holds no secret but lives in the same private directory.
+pub(crate) fn write_private_atomically(target: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    let dir = target.parent().unwrap_or_else(|| Path::new("."));
+    ensure_private_dir(dir)?;
+    let name =
+        target.file_name().map_or_else(String::new, |name| name.to_string_lossy().into_owned());
+    let temporary = dir.join(format!(".{name}.{}.tmp", std::process::id()));
+    let _ = std::fs::remove_file(&temporary);
+    let mut file = create_private_file(&temporary)?;
+    file.write_all(bytes)?;
+    file.sync_all()?;
+    drop(file);
+    restrict_file(&temporary)?;
+    if let Err(err) = std::fs::rename(&temporary, target) {
+        let _ = std::fs::remove_file(&temporary);
+        return Err(err);
+    }
+    sync_dir(dir)
+}
+
+/// Whether a path grants access to nobody but its owner, for `prk doctor`.
+///
+/// # Errors
+///
+/// The I/O error reading its metadata or ACL.
+pub fn is_path_owner_only(path: &Path) -> std::io::Result<bool> {
+    owner_only(path)
 }
 
 /// Reads one token file. A missing file is `Ok(None)`.

@@ -18,6 +18,19 @@ prk env rm <SLUG>
 Every command here operates inside one project, so it needs `--project` (or
 `PRK_PROJECT`).
 
+:::note[Which server a write reaches]
+`create` and `rm` change data. Before sending the change, each prints the server it is
+going to on stderr, `writing to prick.acme.example (profile acme, instance 3f9c01ab)`,
+unless `-q` or `--json` is given; under `--json` its result carries the same
+facts as a `destination` object with `server`, `profile` and `instance`. With
+two or more profiles, a write needs its server named by `--profile`,
+`PRK_PROFILE`, `--api-url`, `PRK_API_URL` or this checkout's
+`.prick.local.toml`: the default profile, or a committed `.prick.toml`, alone is
+refused with
+[`PROFILE_REQUIRED`](/reference/cli/errors#profile_required-exit-2). See
+[Working with several servers](/guides/multiple-servers/).
+:::
+
 ## `prk env list`
 
 ```bash

@@ -9,7 +9,8 @@
 //! | [`oauth`] | PKCE, the authorization request, the token endpoint, the whole login |
 //! | [`callback`] | The loopback listener and its forty-line HTTP parser |
 //! | [`session`] | Turning stored state into the credential a request carries |
-//! | [`store`] | Persisting tokens |
+//! | [`store`] | Persisting tokens, one file per profile |
+//! | [`profiles`] | `config.toml`, and finding a repository's project files |
 //! | [`browser`] | Opening the system browser |
 //! | [`error`] | Why authentication failed, and what to do about it |
 //!
@@ -34,6 +35,10 @@
 //!   every update re-prompts for authorisation -- unusable from inside
 //!   `prk run`, which is exactly where a prompt cannot be answered.
 //!
+//! Each profile's session is its own file, so a renewal for one server never
+//! rewrites another's, and a session is only ever presented to the URL it was
+//! issued for. See [`store`] and [`profiles`].
+//!
 //! `--storage keyring` exists in the interface and currently reports that the
 //! backend is not available in this build, rather than silently writing a file
 //! instead. See [`store::StorageBackend`].
@@ -52,6 +57,7 @@ pub mod credential;
 pub mod discovery;
 pub mod error;
 pub mod oauth;
+pub mod profiles;
 pub mod session;
 pub mod store;
 

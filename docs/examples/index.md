@@ -24,21 +24,27 @@ prk whoami
 
 ```
 you@example.com (user)
+server: prick.example.com (profile default)
+instance: 3f9c01ab52e84d7a9b0c6e1f2a3b4c5d
 role: admin (global)
 ```
+
+That first sign-in also creates your first profile, `default`. To work with
+more than one server, see [Multiple servers](/guides/multiple-servers).
 
 If either of those does not work, start with the
 [Quickstart](/getting-started/quickstart).
 
 ## The examples
 
-| Example                                                     | You end up with                                                        |
-| ----------------------------------------------------------- | ---------------------------------------------------------------------- |
-| [Onboard a new service](/examples/onboard-a-service)        | A project, two environments, secrets loaded, and the app running       |
-| [Migrate from a `.env` file](/examples/migrate-from-dotenv) | An existing repository's secrets moved in, with `.env` deleted         |
-| [Give CI read-only access](/examples/ci-read-only)          | A service token that reads exactly one environment and nothing else    |
-| [Respond to a leaked secret](/examples/rotate-a-leaked-key) | The leak closed, the blast radius known, and a record of what happened |
-| [Script prk with `--json`](/examples/scripting-with-json)   | Reliable automation that fails loudly instead of silently              |
+| Example                                                              | You end up with                                                                |
+| -------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| [Onboard a new service](/examples/onboard-a-service)                 | A project, two environments, secrets loaded, and the app running               |
+| [Migrate from a `.env` file](/examples/migrate-from-dotenv)          | An existing repository's secrets moved in, with `.env` deleted                 |
+| [Give CI read-only access](/examples/ci-read-only)                   | A service token that reads exactly one environment and nothing else            |
+| [Respond to a leaked secret](/examples/rotate-a-leaked-key)          | The leak closed, the blast radius known, and a record of what happened         |
+| [Script prk with `--json`](/examples/scripting-with-json)            | Reliable automation that fails loudly instead of silently                      |
+| [Work with two organisations](/examples/work-with-two-organisations) | Two client deployments from one checkout, with no write reaching the wrong one |
 
 ## Conventions on these pages
 

@@ -11,6 +11,7 @@ import {
   normaliseBaseUrl,
   parseAllowReveal,
   parseArgs,
+  parseExpectInstance,
   resolveWorkspaceRoot,
 } from "../src/config.ts";
 
@@ -120,6 +121,39 @@ describe("loadConfig", () => {
       () => loadConfig({ ...COMPLETE, PRICK_MCP_LOG_LEVEL: "verbose" }, []),
       ConfigError,
     );
+  });
+});
+
+describe("the instance pin", () => {
+  const ID = "0123456789abcdef0123456789abcdef";
+
+  test("is off unless PRICK_MCP_EXPECT_INSTANCE is set", () => {
+    assert.equal(loadConfig(COMPLETE, []).expectInstance, null);
+    assert.equal(
+      loadConfig({ ...COMPLETE, PRICK_MCP_EXPECT_INSTANCE: "  " }, []).expectInstance,
+      null,
+    );
+  });
+
+  test("reads PRICK_MCP_EXPECT_INSTANCE", () => {
+    assert.equal(loadConfig({ ...COMPLETE, PRICK_MCP_EXPECT_INSTANCE: ID }, []).expectInstance, ID);
+  });
+
+  test("folds upper-case hex to lower-case", () => {
+    assert.equal(parseExpectInstance(ID.toUpperCase()), ID);
+  });
+
+  test("a malformed pin fails startup rather than being ignored", () => {
+    for (const bad of [
+      "abc",
+      `${ID}0`,
+      "0123456789abcdef0123456789abcdeg",
+      `${ID.slice(0, 31)}-`,
+    ]) {
+      const error = caught(() => parseExpectInstance(bad));
+      assert.match(error.message, /PRICK_MCP_EXPECT_INSTANCE/);
+      assert.match(error.hint, /32 hexadecimal/);
+    }
   });
 });
 

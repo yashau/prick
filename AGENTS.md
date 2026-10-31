@@ -125,6 +125,10 @@ Breaking these fails the build, not review.
 2. **`prick-core` is pure** — no I/O, no async, no `unsafe`, no FFI. `mise run miri`
    (`cargo miri nextest run --package prick-core`) is a machine-checked proof of that; it cannot pass if you add a file read, a clock call, or an FFI
    dependency. Put impure code in `prick-api` / `prick-auth` / `prick-exec` instead.
+3. **Every `prk` command is classified as a read or a write.** `Command::writes_server` in
+   `crates/prk/src/cli.rs` matches every subcommand by name, so a new one does not compile until it
+   is classified. With two or more profiles a write must name its server deliberately; that rule is
+   only as good as this list.
 
 ## Rules that are not mechanically enforced — you must hold these yourself
 
@@ -153,6 +157,22 @@ Breaking these fails the build, not review.
 7. **Never split a bulk write across multiple `batch()` calls.** That destroys atomicity. If it does
    not fit, reject it with 413.
 8. **Never swallow a decrypt failure.** A tamper attempt must be the loudest thing in the system.
+9. **One `prk` invocation talks to exactly one server instance.** A `Context` is built from one
+   resolved `Target` and has no setter. Never add a code path that reads from one profile and
+   writes to another, or that takes a server URL from repository content: a project file may
+   allow instances, never select a URL. Two deployments of the same app can share every name and
+   the same Access organisation, so the instance id is the only thing that tells them apart.
+10. **Verify the instance before a secret value leaves the machine.** Every server request
+    goes through `Context::authenticate`, which checks the server's instance against the
+    profile's pin, `--expect-instance` and the project's allow list before the command sends
+    anything of its own. Do not add a request path that skips it.
+11. **Never break reading the previous release's on-disk layout.** `credentials.json` stays wire
+    version 1 and readable by the previous release, and updating writes nothing. A `config.toml`
+    change whose loss on rewrite would weaken a check bumps its `version`. Every layout change adds
+    a test against the old layout.
+12. **A profile name is a local label.** It never identifies a server, never becomes a path, and
+    is never the only thing in a committed file that selects a server. The instance pin
+    identifies the server.
 
 ## Conventions
 
@@ -171,20 +191,24 @@ Breaking these fails the build, not review.
 
 ## Where things live
 
-| Concern                                    | Path                                       |
-| ------------------------------------------ | ------------------------------------------ |
-| Pure logic (parsing, formatting, escaping) | `crates/prick-core/`                       |
-| HTTP client, error classification          | `crates/prick-api/`                        |
-| Access OAuth, token storage                | `crates/prick-auth/`                       |
-| Process spawn, signals                     | `crates/prick-exec/`                       |
-| CLI commands and rendering                 | `crates/prk/`                              |
-| Domain logic, transport-agnostic           | `packages/app/src/lib/server/core/`        |
-| Crypto (envelope, AAD, keyring)            | `packages/app/src/lib/server/crypto/`      |
-| Access JWT verification                    | `packages/app/src/lib/server/auth/`        |
-| Hono route mounting and middleware         | `packages/app/src/lib/server/http/`        |
-| Drizzle schema                             | `packages/app/src/lib/server/db/schema.ts` |
-| UI routes                                  | `packages/app/src/routes/`                 |
-| Prose documentation                        | `docs/` (root, not `packages/docs/`)       |
+| Concern                                    | Path                                           |
+| ------------------------------------------ | ---------------------------------------------- |
+| Pure logic (parsing, formatting, escaping) | `crates/prick-core/`                           |
+| HTTP client, error classification          | `crates/prick-api/`                            |
+| Access OAuth, token storage                | `crates/prick-auth/`                           |
+| Profile model, server selection (pure)     | `crates/prick-core/src/profile.rs`             |
+| Profile and project-file persistence       | `crates/prick-auth/src/profiles.rs`            |
+| Which server a run targets, its checks     | `crates/prk/src/target.rs`                     |
+| Deployment instance id                     | `packages/app/src/lib/server/core/instance.ts` |
+| Process spawn, signals                     | `crates/prick-exec/`                           |
+| CLI commands and rendering                 | `crates/prk/`                                  |
+| Domain logic, transport-agnostic           | `packages/app/src/lib/server/core/`            |
+| Crypto (envelope, AAD, keyring)            | `packages/app/src/lib/server/crypto/`          |
+| Access JWT verification                    | `packages/app/src/lib/server/auth/`            |
+| Hono route mounting and middleware         | `packages/app/src/lib/server/http/`            |
+| Drizzle schema                             | `packages/app/src/lib/server/db/schema.ts`     |
+| UI routes                                  | `packages/app/src/routes/`                     |
+| Prose documentation                        | `docs/` (root, not `packages/docs/`)           |
 
 The domain layer takes `(db, actor, input)` and knows nothing about HTTP. Hono routes and SvelteKit
 loads are both thin transports over it — so authorization is written once, in `core`.

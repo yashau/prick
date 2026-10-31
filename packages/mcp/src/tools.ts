@@ -123,6 +123,72 @@ export async function secretsList(
 }
 
 // ---------------------------------------------------------------------------
+// Where a write goes -- named in every result, and optionally pinned
+// ---------------------------------------------------------------------------
+
+/**
+ * The host every write result names, e.g. `secrets.acme.example`.
+ *
+ * A write result is what a transcript keeps, and "set DATABASE_URL" is only
+ * half an account of what happened when an operator runs one server entry per
+ * deployment. The host is the other half: it says which deployment now holds
+ * the value. It is plaintext configuration -- the operator wrote it into the
+ * client config -- and carries nothing about the value.
+ */
+export function serverHost(config: ServerConfig): string {
+  return new URL(config.apiBaseUrl).host;
+}
+
+/**
+ * Clients whose server has already answered with the pinned instance id.
+ *
+ * Keyed on the client, which lives as long as the process, so the check costs
+ * one request per process rather than one per write. Only a MATCH is
+ * remembered: a mismatch or a failed lookup is asked again on the next write,
+ * and refuses again, so nothing about a failure can turn into a pass.
+ */
+const verifiedClients = new WeakSet<PrickApiClient>();
+
+/**
+ * Refuse the write unless the server is the instance the operator pinned.
+ *
+ * Runs before every write, and does nothing when no pin is configured. Fail
+ * closed on every path that is not an affirmative match: a different id, no
+ * `instance` field at all, and a whoami request that fails (its error
+ * propagates, so the write it guards is never sent). A pin exists to stop a
+ * value landing in the wrong organisation's deployment, and a check that could
+ * not run has not established that it is the right one.
+ */
+export async function verifyInstance(ctx: ToolContext): Promise<void> {
+  const expected = ctx.config.expectInstance;
+  if (expected === null) return;
+  if (verifiedClients.has(ctx.client)) return;
+
+  const { instance } = await ctx.client.whoami();
+
+  if (instance !== expected) {
+    const host = serverHost(ctx.config);
+    const reported = instance === null ? "reports no instance id" : `reports instance ${instance}`;
+
+    ctx.logger.error("write refused: the server is not the pinned instance", {
+      server: host,
+      expected_instance: expected,
+      reported_instance: instance ?? "none",
+    });
+
+    throw new ToolError(
+      "INSTANCE_MISMATCH",
+      `This server is pinned to instance ${expected}, but ${host} ${reported}. Nothing was written.`,
+      {
+        hint: "The configured URL points at a different deployment than the one this server entry is for. An operator must correct the URL or PRICK_MCP_EXPECT_INSTANCE in the MCP client configuration; do not retry.",
+      },
+    );
+  }
+
+  verifiedClients.add(ctx.client);
+}
+
+// ---------------------------------------------------------------------------
 // secrets_set / secrets_delete
 // ---------------------------------------------------------------------------
 
@@ -135,6 +201,8 @@ export interface SecretsSetArgs {
 }
 
 export interface SecretsSetResult {
+  /** The host the value was written to. See `serverHost`. */
+  server: string;
   project: string;
   environment: string;
   key: string;
@@ -154,6 +222,8 @@ export async function secretsSet(
   ctx: ToolContext,
   args: SecretsSetArgs,
 ): Promise<SecretsSetResult> {
+  await verifyInstance(ctx);
+
   let result;
 
   try {
@@ -187,7 +257,10 @@ export async function secretsSet(
       ? "updated"
       : "written";
 
+  const server = serverHost(ctx.config);
+
   ctx.logger.info("secret written", {
+    server,
     project: args.project,
     environment: args.environment,
     key: args.key,
@@ -196,6 +269,7 @@ export async function secretsSet(
   });
 
   return {
+    server,
     project: args.project,
     environment: args.environment,
     key: args.key,
@@ -212,6 +286,8 @@ export interface SecretsDeleteArgs {
 }
 
 export interface SecretsDeleteResult {
+  /** The host the key was deleted from. See `serverHost`. */
+  server: string;
   project: string;
   environment: string;
   key: string;
@@ -223,6 +299,8 @@ export async function secretsDelete(
   ctx: ToolContext,
   args: SecretsDeleteArgs,
 ): Promise<SecretsDeleteResult> {
+  await verifyInstance(ctx);
+
   const result = await ctx.client.deleteSecret(
     args.project,
     args.environment,
@@ -230,7 +308,10 @@ export async function secretsDelete(
     args.reason,
   );
 
+  const server = serverHost(ctx.config);
+
   ctx.logger.info("secret deleted", {
+    server,
     project: args.project,
     environment: args.environment,
     key: args.key,
@@ -238,6 +319,7 @@ export async function secretsDelete(
   });
 
   return {
+    server,
     project: args.project,
     environment: args.environment,
     key: args.key,

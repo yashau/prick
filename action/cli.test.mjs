@@ -20,6 +20,8 @@ import {
 import { ActionError } from "./errors.mjs";
 import {
   auditReport,
+  CONFIG_DIR,
+  fakeConfig,
   fakeNpm,
   fakeSpawn,
   fakeStaging,
@@ -56,6 +58,33 @@ describe("the CLI invocation", () => {
     assert.equal(env.PRK_ENV, "staging");
     assert.equal(env.PRK_ACCESS_CLIENT_ID, TOKEN.PRICK_INPUT_CLIENT_ID);
     assert.equal(env.PRK_ACCESS_CLIENT_SECRET, TOKEN.PRICK_INPUT_CLIENT_SECRET);
+  });
+
+  test("blanks PRK_PROFILE and points PRK_CONFIG_DIR at the run's own directory", () => {
+    // Both set on the runner, as a self-hosted machine or a workflow-level
+    // `env:` block might have them. A PRK_PROFILE that survived would collide
+    // with PRK_API_URL at the same tier and fail the step; a PRK_CONFIG_DIR
+    // that survived would hand the job the runner's profiles and credentials.
+    const result = inject(
+      { A: "1" },
+      { PRK_PROFILE: "acme", PRK_CONFIG_DIR: "/home/runner/.config/prk" },
+    );
+    const { env } = result.calls[0].options;
+
+    assert.equal(result.code, 0);
+    assert.equal(env.PRK_PROFILE, "");
+    assert.equal(env.PRK_CONFIG_DIR, CONFIG_DIR);
+    assert.equal(env.PRK_API_URL, "https://prick.example.com");
+  });
+
+  test("passes PRK_EXPECT_INSTANCE through untouched", () => {
+    const pin = "0123456789abcdef0123456789abcdef";
+    const result = inject({ A: "1" }, { PRK_EXPECT_INSTANCE: pin });
+    assert.equal(result.calls[0].options.env.PRK_EXPECT_INSTANCE, pin);
+  });
+
+  test("never adds PRK_EXPECT_INSTANCE when the workflow did not set one", () => {
+    assert.ok(!("PRK_EXPECT_INSTANCE" in inject({ A: "1" }).calls[0].options.env));
   });
 
   test("defaults the environment to production", () => {
@@ -130,6 +159,7 @@ describe("a failing CLI", () => {
       env: { ...TOKEN },
       io: h.io,
       spawn: fakeSpawn({ status, stderr }),
+      config: fakeConfig,
     });
     return { ...h, code };
   };
@@ -204,6 +234,7 @@ describe("a failing CLI", () => {
       env: { ...TOKEN },
       io: h.io,
       spawn: () => ({ status: null, stdout: "", stderr: "", error: new Error("ENOENT") }),
+      config: fakeConfig,
     });
     assert.equal(code, 1);
     assert.match(h.commands("error")[0].text, /could not run `prk`/);
