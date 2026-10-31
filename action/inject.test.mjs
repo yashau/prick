@@ -6,12 +6,13 @@
 
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import test, { describe } from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { harness, inject } from "./harness.mjs";
-import { main } from "./inject.mjs";
+import { fakeSpawn, harness, inject, TOKEN } from "./harness.mjs";
+import { commandInject, configDirectory, main } from "./inject.mjs";
 import { DELIMITER_PREFIX } from "./io.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -155,6 +156,57 @@ describe("a value survives the round trip when it", () => {
   test("is a line that looks like a heredoc terminator", () => {
     const value = `not-the-end\n${DELIMITER_PREFIX}deadbeef__\nstill-going`;
     assert.equal(inject({ SECRET: value }).injected.get("SECRET"), value);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The CLI's config directory
+// ---------------------------------------------------------------------------
+
+describe("the config directory", () => {
+  /** @type {string} */
+  let temp;
+  test.beforeEach(() => {
+    temp = fs.mkdtempSync(path.join(os.tmpdir(), "prick-action-test-"));
+  });
+  test.afterEach(() => {
+    fs.rmSync(temp, { recursive: true, force: true });
+  });
+
+  test("is a fresh, empty directory under RUNNER_TEMP each time", () => {
+    const first = configDirectory({ RUNNER_TEMP: temp });
+    const second = configDirectory({ RUNNER_TEMP: temp });
+
+    assert.notEqual(first, second);
+    for (const directory of [first, second]) {
+      assert.equal(path.dirname(directory), temp);
+      assert.deepEqual(fs.readdirSync(directory), []);
+    }
+  });
+
+  test("is created once per run and handed to the CLI", () => {
+    const calls = [];
+    const made = [];
+    for (let run = 0; run < 2; run += 1) {
+      const code = commandInject({
+        env: { ...TOKEN, RUNNER_TEMP: temp, PRK_CONFIG_DIR: "/home/runner/.config/prk" },
+        io: harness().io,
+        spawn: fakeSpawn({ stdout: "{}" }, calls),
+        config: (env) => {
+          const directory = configDirectory(env);
+          made.push(directory);
+          return directory;
+        },
+      });
+      assert.equal(code, 0);
+    }
+
+    assert.equal(made.length, 2);
+    assert.notEqual(made[0], made[1]);
+    assert.deepEqual(
+      calls.map((call) => call.options.env.PRK_CONFIG_DIR),
+      made,
+    );
   });
 });
 

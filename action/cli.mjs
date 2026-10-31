@@ -467,8 +467,28 @@ export function parseSecrets(text) {
  * cloudflared and is what a workflow would already have set; this action does
  * not depend on it.
  *
+ * `PRK_PROFILE` is blanked because the CLI reads it at the same precedence tier
+ * as `PRK_API_URL`, and both being set at one tier is a usage error (exit 2).
+ * `base` is the runner's whole environment, so a workflow-level `PRK_PROFILE`
+ * would otherwise collide with the URL this action sets and fail the step. An
+ * empty string is unset to the CLI, so blanking it is enough.
+ *
+ * `PRK_CONFIG_DIR` points the CLI at a directory the caller created empty for
+ * this run. A self-hosted runner is a long-lived machine, and whatever profiles,
+ * stored credentials or default profile its user has configured must not shape
+ * what a job reads or which identity it reads as. With an empty config dir there
+ * is nothing for a profile name -- from a `.prick.toml` in the checkout or
+ * anywhere else -- to resolve to, and the server is the `url` input and nothing
+ * else. The directory is a parameter rather than created here so that this
+ * function stays pure: the caller owns the filesystem, the tests own the path.
+ *
+ * `PRK_EXPECT_INSTANCE` passes through from `base` untouched. It can only make
+ * a run stricter -- the CLI refuses a server whose instance id differs -- so a
+ * workflow that sets it gets the pin, and one that does not loses nothing.
+ *
  * @param {object} options
  * @param {NodeJS.ProcessEnv} options.base
+ * @param {string} options.configDir  an empty directory created for this run
  * @param {string} options.url
  * @param {string} options.project
  * @param {string} options.environment
@@ -476,9 +496,19 @@ export function parseSecrets(text) {
  * @param {string} options.clientSecret
  * @returns {NodeJS.ProcessEnv}
  */
-export function cliEnvironment({ base, url, project, environment, clientId, clientSecret }) {
+export function cliEnvironment({
+  base,
+  configDir,
+  url,
+  project,
+  environment,
+  clientId,
+  clientSecret,
+}) {
   return {
     ...base,
+    PRK_CONFIG_DIR: configDir,
+    PRK_PROFILE: "",
     PRK_API_URL: url,
     PRK_PROJECT: project,
     PRK_ENV: environment,

@@ -5,7 +5,15 @@ import assert from "node:assert/strict";
 import test, { describe } from "node:test";
 
 import { ActionError } from "./errors.mjs";
-import { fakeRandom, fakeSpawn, harness, inject, parseEnvFile, TOKEN } from "./harness.mjs";
+import {
+  fakeConfig,
+  fakeRandom,
+  fakeSpawn,
+  harness,
+  inject,
+  parseEnvFile,
+  TOKEN,
+} from "./harness.mjs";
 import { commandInject, main } from "./inject.mjs";
 import { parseBoolean, validateExportTo, validatePrefix, validateUrl } from "./inputs.mjs";
 
@@ -98,6 +106,7 @@ describe("export-to", () => {
       io: h.io,
       spawn: fakeSpawn({ stdout: '{"A":"1","B":"two\\nlines"}' }),
       random: fakeRandom(),
+      config: fakeConfig,
     });
 
     assert.equal(h.of("env").length, 0);
@@ -112,6 +121,7 @@ describe("export-to", () => {
       io: h.io,
       spawn: fakeSpawn({ stdout: '{"A":"secret"}' }),
       random: fakeRandom(),
+      config: fakeConfig,
     });
     assert.deepEqual(
       h.commands("add-mask").map((e) => e.text),

@@ -134,6 +134,12 @@ export const STAGING = "/tmp/runner temp & more/prick-verify-abc123";
 /** @returns {string} */
 export const fakeStaging = () => STAGING;
 
+/** A config directory that is never created on disk. */
+export const CONFIG_DIR = "/tmp/runner temp/prick-config-abc123";
+
+/** @returns {string} */
+export const fakeConfig = () => CONFIG_DIR;
+
 /**
  * Deterministic bytes. Each call returns a different constant, so delimiters
  * are predictable and a collision can be forced.
@@ -199,7 +205,7 @@ export const TOKEN = {
  * Runs `commandInject` against a canned secret set.
  *
  * @param {Record<string, string>} secrets
- * @param {Record<string, string>} [inputs]
+ * @param {Record<string, string | undefined>} [inputs]
  */
 export function inject(secrets, inputs = {}) {
   const h = harness();
@@ -209,6 +215,7 @@ export function inject(secrets, inputs = {}) {
     io: h.io,
     spawn: fakeSpawn({ stdout: JSON.stringify(secrets) }, calls),
     random: fakeRandom(),
+    config: fakeConfig,
   });
   return { ...h, code, calls, injected: parseEnvFile(h.env()) };
 }

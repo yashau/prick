@@ -4,7 +4,7 @@
 import assert from "node:assert/strict";
 import test, { describe } from "node:test";
 
-import { fakeSpawn, harness, inject, TOKEN } from "./harness.mjs";
+import { fakeConfig, fakeSpawn, harness, inject, TOKEN } from "./harness.mjs";
 import { main } from "./inject.mjs";
 // `parseKeyList` is an input parser and lives in inputs.mjs; the allowlist
 // tests stay together here because reading the list and applying it are one
@@ -156,6 +156,7 @@ describe("the keys allowlist", () => {
       env: { ...TOKEN, PRICK_INPUT_KEYS: "A,MISSING_ONE" },
       io: h.io,
       spawn: fakeSpawn({ stdout: '{"A":"1"}' }),
+      config: fakeConfig,
     });
 
     assert.equal(code, 1);
