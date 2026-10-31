@@ -18,10 +18,11 @@ import {
 import { GENERATOR_OPTIONS } from "./openapi.js";
 import { accessRoutes } from "./routes/access.js";
 import { adminRoutes } from "./routes/admin.js";
+import { serviceTokenRoutes } from "./routes/service-tokens.js";
 import { auditRoutes } from "./routes/audit.js";
 import { environmentCollectionRoutes, registerEnvironmentRoutes } from "./routes/environments.js";
 import { groupRoutes } from "./routes/groups.js";
-import { healthRoutes, whoamiRoutes } from "./routes/meta.js";
+import { capabilitiesRoutes, healthRoutes, whoamiRoutes } from "./routes/meta.js";
 import { projectRoutes } from "./routes/projects.js";
 import { registerSecretRoutes } from "./routes/secrets.js";
 
@@ -197,6 +198,7 @@ export function createApi() {
   v1.use("*", bodyLimit);
 
   v1.route("/", whoamiRoutes());
+  v1.route("/", capabilitiesRoutes());
   v1.route("/projects", projectRoutes());
   v1.route("/projects/:project/environments", environmentCollectionRoutes());
 
@@ -227,6 +229,7 @@ export function createApi() {
   v1.route("/", groupRoutes());
   v1.route("/", auditRoutes());
   v1.route("/", adminRoutes());
+  v1.route("/", serviceTokenRoutes());
 
   app.route("/api/v1", v1);
 

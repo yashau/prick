@@ -214,6 +214,8 @@ export interface AdminExclusion {
   groupId?: string;
   /** One membership about to be removed. */
   membership?: { groupId: string; identityId: string };
+  /** An identity about to be disabled, with every role it holds by any route. */
+  identityId?: string;
 }
 
 /**
@@ -240,6 +242,9 @@ async function countGlobalAdmins(ctx: CoreContext, exclude: AdminExclusion = {})
   ];
 
   if (exclude.grantId !== undefined) directConditions.push(ne(grants.id, exclude.grantId));
+  if (exclude.identityId !== undefined) {
+    directConditions.push(ne(identities.id, exclude.identityId));
+  }
 
   const direct = ctx.db
     .select({ identityId: identities.id })
@@ -259,6 +264,9 @@ async function countGlobalAdmins(ctx: CoreContext, exclude: AdminExclusion = {})
   }
   if (exclude.groupId !== undefined) {
     groupConditions.push(ne(groupGrants.groupId, exclude.groupId));
+  }
+  if (exclude.identityId !== undefined) {
+    groupConditions.push(ne(identities.id, exclude.identityId));
   }
   if (exclude.membership !== undefined) {
     // NOT (group = ? AND identity = ?), written as the De Morgan form because

@@ -108,6 +108,7 @@ export function testConfig(overrides: Partial<RuntimeConfig> = {}): RuntimeConfi
     secretMaxBytes: 65536,
     envMaxSecrets: 500,
     bodyMaxBytes: 1048576,
+    cloudflare: { state: "unconfigured", problem: "Not configured in this test." },
     ...overrides,
   };
 }

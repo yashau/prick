@@ -771,6 +771,203 @@
         ]
       }
     },
+    "/api/v1/capabilities": {
+      "get": {
+        "description": "For clients to decide, before sending anything, whether a feature is there and whether the caller may use it. Not a security boundary: every route still enforces its own authorization.\n\n`features.<name>.allowed` is whether **this caller** may use the feature. `reason` and `hint` are filled in for global administrators only — they describe how the deployment is configured, which nobody else needs to know — and are `null` for everyone else, whose unusable features read `unavailable` whatever the configuration.\n\n`limits` are the caps this deployment enforces, so a client can refuse an oversized write locally and name the offending key. `instance` is the same value as the `Prick-Instance` header.\n\nNew features add keys to `features`; clients ignore keys they do not know. `api` changes only with a breaking change to this API.",
+        "operationId": "getCapabilities",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "additionalProperties": false,
+                  "properties": {
+                    "api": {
+                      "const": 1,
+                      "type": "number"
+                    },
+                    "features": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "serviceTokens": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "allowed": {
+                              "type": "boolean"
+                            },
+                            "hint": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
+                            "reason": {
+                              "anyOf": [
+                                {
+                                  "enum": [
+                                    "unconfigured"
+                                  ],
+                                  "type": "string"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "state": {
+                              "enum": [
+                                "enabled",
+                                "unavailable"
+                              ],
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "state",
+                            "allowed",
+                            "reason",
+                            "hint"
+                          ],
+                          "type": "object"
+                        }
+                      },
+                      "required": [
+                        "serviceTokens"
+                      ],
+                      "type": "object"
+                    },
+                    "instance": {
+                      "anyOf": [
+                        {
+                          "pattern": "^[0-9a-f]{32}$",
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "limits": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "bodyMaxBytes": {
+                          "exclusiveMinimum": 0,
+                          "maximum": 9007199254740991,
+                          "type": "integer"
+                        },
+                        "envMaxSecrets": {
+                          "exclusiveMinimum": 0,
+                          "maximum": 9007199254740991,
+                          "type": "integer"
+                        },
+                        "secretMaxBytes": {
+                          "exclusiveMinimum": 0,
+                          "maximum": 9007199254740991,
+                          "type": "integer"
+                        }
+                      },
+                      "required": [
+                        "secretMaxBytes",
+                        "envMaxSecrets",
+                        "bodyMaxBytes"
+                      ],
+                      "type": "object"
+                    },
+                    "version": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "api",
+                    "version",
+                    "instance",
+                    "limits",
+                    "features"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "This server's capabilities, for this caller."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`BAD_REQUEST` — a malformed `If-Match`, or a precondition this API cannot express."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`UNAUTHENTICATED` — no valid Cloudflare Access assertion was presented."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`FORBIDDEN` — authenticated, but no grant covers this scope. The denial is audited."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`NOT_FOUND` — absent **or** invisible, deliberately indistinguishable. Returning 403 for one and 404 for the other would turn this API into an oracle for which slugs are in use."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`VALIDATION_FAILED` — schema rejection, including an unknown field. `issues` carries `{path, message}` and never the submitted value."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`INTERNAL`, `DECRYPT_FAILED`, `UNKNOWN_KID` or `SERVER_MISCONFIGURED`."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`NO_ADMINS_CONFIGURED` or `IDENTITY_PROVIDER_UNAVAILABLE`."
+          }
+        },
+        "summary": "What this server can do",
+        "tags": [
+          "meta"
+        ]
+      }
+    },
     "/api/v1/grants": {
       "get": {
         "description": "Expired grants are excluded — an expired grant is not a grant. A scoped admin sees the grants that touch what they administer and not the rest of the organisation's access graph.",
@@ -6911,6 +7108,2049 @@
         ]
       }
     },
+    "/api/v1/service-tokens": {
+      "get": {
+        "description": "Every service token this deployment manages, revoked ones included, each with Cloudflare's live view of it (expiry, last use, leak reports) when Cloudflare could be asked. `cloudflare: \"unavailable\"` says it could not, in which case each record's `cloudflare` is `null` and no record is reported `missing`.\n\n`status: \"missing\"` is a token prick still considers live that Cloudflare no longer has — deleted in the dashboard. `POST /service-tokens/reconcile` retires it.",
+        "operationId": "listServiceTokens",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "additionalProperties": false,
+                  "properties": {
+                    "cloudflare": {
+                      "enum": [
+                        "ok",
+                        "unavailable"
+                      ],
+                      "type": "string"
+                    },
+                    "tokens": {
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "adopted": {
+                            "type": "boolean"
+                          },
+                          "clientId": {
+                            "type": "string"
+                          },
+                          "cloudflare": {
+                            "anyOf": [
+                              {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "duration": {
+                                    "type": [
+                                      "string",
+                                      "null"
+                                    ]
+                                  },
+                                  "enabled": {
+                                    "type": "boolean"
+                                  },
+                                  "expiresAt": {
+                                    "anyOf": [
+                                      {
+                                        "maximum": 9007199254740991,
+                                        "minimum": 0,
+                                        "type": "integer"
+                                      },
+                                      {
+                                        "type": "null"
+                                      }
+                                    ]
+                                  },
+                                  "lastSeenAt": {
+                                    "anyOf": [
+                                      {
+                                        "maximum": 9007199254740991,
+                                        "minimum": 0,
+                                        "type": "integer"
+                                      },
+                                      {
+                                        "type": "null"
+                                      }
+                                    ]
+                                  },
+                                  "leakReportedAt": {
+                                    "anyOf": [
+                                      {
+                                        "maximum": 9007199254740991,
+                                        "minimum": 0,
+                                        "type": "integer"
+                                      },
+                                      {
+                                        "type": "null"
+                                      }
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "expiresAt",
+                                  "lastSeenAt",
+                                  "enabled",
+                                  "duration",
+                                  "leakReportedAt"
+                                ],
+                                "type": "object"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "cloudflareId": {
+                            "type": "string"
+                          },
+                          "cloudflareName": {
+                            "type": "string"
+                          },
+                          "createdAt": {
+                            "maximum": 9007199254740991,
+                            "minimum": 0,
+                            "type": "integer"
+                          },
+                          "createdBy": {
+                            "type": "string"
+                          },
+                          "disabled": {
+                            "type": "boolean"
+                          },
+                          "id": {
+                            "format": "uuid",
+                            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                            "type": "string"
+                          },
+                          "identityId": {
+                            "format": "uuid",
+                            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                            "type": "string"
+                          },
+                          "name": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "revokedAt": {
+                            "anyOf": [
+                              {
+                                "maximum": 9007199254740991,
+                                "minimum": 0,
+                                "type": "integer"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "revokedBy": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "rotatedAt": {
+                            "anyOf": [
+                              {
+                                "maximum": 9007199254740991,
+                                "minimum": 0,
+                                "type": "integer"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "status": {
+                            "enum": [
+                              "active",
+                              "revoked",
+                              "missing"
+                            ],
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "identityId",
+                          "clientId",
+                          "name",
+                          "cloudflareId",
+                          "cloudflareName",
+                          "adopted",
+                          "disabled",
+                          "status",
+                          "createdAt",
+                          "createdBy",
+                          "rotatedAt",
+                          "revokedAt",
+                          "revokedBy",
+                          "cloudflare"
+                        ],
+                        "type": "object"
+                      },
+                      "type": "array"
+                    }
+                  },
+                  "required": [
+                    "tokens",
+                    "cloudflare"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Managed service tokens, oldest first."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`BAD_REQUEST` — a malformed `If-Match`, or a precondition this API cannot express."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`UNAUTHENTICATED` — no valid Cloudflare Access assertion was presented."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`FORBIDDEN` — authenticated, but no grant covers this scope. The denial is audited."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`NOT_FOUND` — absent **or** invisible, deliberately indistinguishable. Returning 403 for one and 404 for the other would turn this API into an oracle for which slugs are in use."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`VALIDATION_FAILED` — schema rejection, including an unknown field. `issues` carries `{path, message}` and never the submitted value."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`INTERNAL`, `DECRYPT_FAILED`, `UNKNOWN_KID` or `SERVER_MISCONFIGURED`."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`SERVICE_TOKENS_UNCONFIGURED` — the Worker has no `CF_API_TOKEN` secret or `CF_ACCOUNT_ID` var, or Cloudflare refused the token it holds. The hint names which."
+          }
+        },
+        "summary": "List managed service tokens",
+        "tags": [
+          "service-tokens"
+        ]
+      },
+      "post": {
+        "description": "Asks Cloudflare for a new Access service token, then records the identity it authenticates as — subject = its client id, display name = `name` — and, if `grant` is given, that grant, in one transaction with its audit rows. The token's first request is therefore already authorized; it never has to be refused first to introduce itself.\n\n**The client secret is in this response and nowhere else.** prick stores no copy and no derivative of it, and the response is `no-store`. Lose it and rotate.\n\nThe grant needs admin at its scope, which a global admin always has; a project or environment that does not exist is a `404` before Cloudflare is asked for anything.\n\nIf the transaction fails after Cloudflare issued the token, the token is deleted again before the error is returned, so nothing usable is left behind.",
+        "operationId": "createServiceToken",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "additionalProperties": false,
+                "properties": {
+                  "duration": {
+                    "default": "8760h",
+                    "pattern": "^(?:[1-9][0-9]{0,5}h|forever)$",
+                    "type": "string"
+                  },
+                  "grant": {
+                    "oneOf": [
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "expires_at": {
+                            "anyOf": [
+                              {
+                                "maximum": 9007199254740991,
+                                "minimum": 0,
+                                "type": "integer"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ],
+                            "default": null
+                          },
+                          "role": {
+                            "enum": [
+                              "reader",
+                              "writer",
+                              "admin"
+                            ],
+                            "type": "string"
+                          },
+                          "scope_type": {
+                            "const": "global",
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "scope_type",
+                          "role"
+                        ],
+                        "type": "object"
+                      },
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "expires_at": {
+                            "anyOf": [
+                              {
+                                "maximum": 9007199254740991,
+                                "minimum": 0,
+                                "type": "integer"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ],
+                            "default": null
+                          },
+                          "project": {
+                            "maxLength": 64,
+                            "minLength": 1,
+                            "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+                            "type": "string"
+                          },
+                          "role": {
+                            "enum": [
+                              "reader",
+                              "writer",
+                              "admin"
+                            ],
+                            "type": "string"
+                          },
+                          "scope_type": {
+                            "const": "project",
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "scope_type",
+                          "project",
+                          "role"
+                        ],
+                        "type": "object"
+                      },
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "environment": {
+                            "maxLength": 64,
+                            "minLength": 1,
+                            "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+                            "type": "string"
+                          },
+                          "expires_at": {
+                            "anyOf": [
+                              {
+                                "maximum": 9007199254740991,
+                                "minimum": 0,
+                                "type": "integer"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ],
+                            "default": null
+                          },
+                          "project": {
+                            "maxLength": 64,
+                            "minLength": 1,
+                            "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+                            "type": "string"
+                          },
+                          "role": {
+                            "enum": [
+                              "reader",
+                              "writer",
+                              "admin"
+                            ],
+                            "type": "string"
+                          },
+                          "scope_type": {
+                            "const": "environment",
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "scope_type",
+                          "project",
+                          "environment",
+                          "role"
+                        ],
+                        "type": "object"
+                      }
+                    ]
+                  },
+                  "name": {
+                    "maxLength": 128,
+                    "minLength": 1,
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "name"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "description": "The token's name, lifetime and optional first grant.",
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "additionalProperties": false,
+                  "properties": {
+                    "clientId": {
+                      "type": "string"
+                    },
+                    "clientSecret": {
+                      "type": "string"
+                    },
+                    "grant": {
+                      "anyOf": [
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "environmentSlug": {
+                              "anyOf": [
+                                {
+                                  "maxLength": 64,
+                                  "minLength": 1,
+                                  "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+                                  "type": "string"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "expiresAt": {
+                              "anyOf": [
+                                {
+                                  "maximum": 9007199254740991,
+                                  "minimum": 0,
+                                  "type": "integer"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "id": {
+                              "format": "uuid",
+                              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                              "type": "string"
+                            },
+                            "identityId": {
+                              "format": "uuid",
+                              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                              "type": "string"
+                            },
+                            "projectSlug": {
+                              "anyOf": [
+                                {
+                                  "maxLength": 64,
+                                  "minLength": 1,
+                                  "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+                                  "type": "string"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "role": {
+                              "enum": [
+                                "reader",
+                                "writer",
+                                "admin"
+                              ],
+                              "type": "string"
+                            },
+                            "scopeType": {
+                              "enum": [
+                                "global",
+                                "project",
+                                "environment"
+                              ],
+                              "type": "string"
+                            },
+                            "subject": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "id",
+                            "identityId",
+                            "subject",
+                            "role",
+                            "scopeType",
+                            "projectSlug",
+                            "environmentSlug",
+                            "expiresAt"
+                          ],
+                          "type": "object"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "token": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "adopted": {
+                          "type": "boolean"
+                        },
+                        "clientId": {
+                          "type": "string"
+                        },
+                        "cloudflare": {
+                          "anyOf": [
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "duration": {
+                                  "type": [
+                                    "string",
+                                    "null"
+                                  ]
+                                },
+                                "enabled": {
+                                  "type": "boolean"
+                                },
+                                "expiresAt": {
+                                  "anyOf": [
+                                    {
+                                      "maximum": 9007199254740991,
+                                      "minimum": 0,
+                                      "type": "integer"
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                },
+                                "lastSeenAt": {
+                                  "anyOf": [
+                                    {
+                                      "maximum": 9007199254740991,
+                                      "minimum": 0,
+                                      "type": "integer"
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                },
+                                "leakReportedAt": {
+                                  "anyOf": [
+                                    {
+                                      "maximum": 9007199254740991,
+                                      "minimum": 0,
+                                      "type": "integer"
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                }
+                              },
+                              "required": [
+                                "expiresAt",
+                                "lastSeenAt",
+                                "enabled",
+                                "duration",
+                                "leakReportedAt"
+                              ],
+                              "type": "object"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "cloudflareId": {
+                          "type": "string"
+                        },
+                        "cloudflareName": {
+                          "type": "string"
+                        },
+                        "createdAt": {
+                          "maximum": 9007199254740991,
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        "createdBy": {
+                          "type": "string"
+                        },
+                        "disabled": {
+                          "type": "boolean"
+                        },
+                        "id": {
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                          "type": "string"
+                        },
+                        "identityId": {
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                          "type": "string"
+                        },
+                        "name": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "revokedAt": {
+                          "anyOf": [
+                            {
+                              "maximum": 9007199254740991,
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "revokedBy": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "rotatedAt": {
+                          "anyOf": [
+                            {
+                              "maximum": 9007199254740991,
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "status": {
+                          "enum": [
+                            "active",
+                            "revoked",
+                            "missing"
+                          ],
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "identityId",
+                        "clientId",
+                        "name",
+                        "cloudflareId",
+                        "cloudflareName",
+                        "adopted",
+                        "disabled",
+                        "status",
+                        "createdAt",
+                        "createdBy",
+                        "rotatedAt",
+                        "revokedAt",
+                        "revokedBy",
+                        "cloudflare"
+                      ],
+                      "type": "object"
+                    }
+                  },
+                  "required": [
+                    "token",
+                    "grant",
+                    "clientId",
+                    "clientSecret"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "The new token, its grant, and its client secret (shown once).",
+            "headers": {
+              "Cache-Control": {
+                "description": "`no-store, no-cache, must-revalidate, private`.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Cloudflare-CDN-Cache-Control": {
+                "description": "`no-store`. Cloudflare's edge cache does not necessarily honour `Cache-Control`, so it is told separately.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Vary": {
+                "description": "`Cf-Access-Jwt-Assertion`, so a cached entry can never be served across identities.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`BAD_REQUEST` — a malformed `If-Match`, or a precondition this API cannot express."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`UNAUTHENTICATED` — no valid Cloudflare Access assertion was presented."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`FORBIDDEN` — authenticated, but no grant covers this scope. The denial is audited."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`NOT_FOUND` — absent **or** invisible, deliberately indistinguishable. Returning 403 for one and 404 for the other would turn this API into an oracle for which slugs are in use."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`VALIDATION_FAILED` — schema rejection, including an unknown field. `issues` carries `{path, message}` and never the submitted value."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`INTERNAL`, `DECRYPT_FAILED`, `UNKNOWN_KID` or `SERVER_MISCONFIGURED`."
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`UPSTREAM_FAILED` — the Cloudflare API failed. The hint says whether anything was left half done."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`SERVICE_TOKENS_UNCONFIGURED` — the Worker has no `CF_API_TOKEN` secret or `CF_ACCOUNT_ID` var, or Cloudflare refused the token it holds. The hint names which."
+          }
+        },
+        "summary": "Create a service token",
+        "tags": [
+          "service-tokens"
+        ]
+      }
+    },
+    "/api/v1/service-tokens/adopt": {
+      "post": {
+        "description": "Brings an existing Cloudflare service token, found by client id, under this deployment's management so it can be rotated, extended and revoked here. Its identity is created if the token has never authenticated, and reused — grants and all — if it has. No secret is involved or returned.",
+        "operationId": "adoptServiceToken",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "additionalProperties": false,
+                "properties": {
+                  "client_id": {
+                    "maxLength": 128,
+                    "minLength": 1,
+                    "pattern": "^[A-Za-z0-9]+\\.access$",
+                    "type": "string"
+                  },
+                  "name": {
+                    "maxLength": 128,
+                    "minLength": 1,
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "client_id"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "description": "The token's client id and an optional display name.",
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "additionalProperties": false,
+                  "properties": {
+                    "adopted": {
+                      "type": "boolean"
+                    },
+                    "clientId": {
+                      "type": "string"
+                    },
+                    "cloudflare": {
+                      "anyOf": [
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "duration": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
+                            "enabled": {
+                              "type": "boolean"
+                            },
+                            "expiresAt": {
+                              "anyOf": [
+                                {
+                                  "maximum": 9007199254740991,
+                                  "minimum": 0,
+                                  "type": "integer"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "lastSeenAt": {
+                              "anyOf": [
+                                {
+                                  "maximum": 9007199254740991,
+                                  "minimum": 0,
+                                  "type": "integer"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "leakReportedAt": {
+                              "anyOf": [
+                                {
+                                  "maximum": 9007199254740991,
+                                  "minimum": 0,
+                                  "type": "integer"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            }
+                          },
+                          "required": [
+                            "expiresAt",
+                            "lastSeenAt",
+                            "enabled",
+                            "duration",
+                            "leakReportedAt"
+                          ],
+                          "type": "object"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "cloudflareId": {
+                      "type": "string"
+                    },
+                    "cloudflareName": {
+                      "type": "string"
+                    },
+                    "createdAt": {
+                      "maximum": 9007199254740991,
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "createdBy": {
+                      "type": "string"
+                    },
+                    "disabled": {
+                      "type": "boolean"
+                    },
+                    "id": {
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                      "type": "string"
+                    },
+                    "identityId": {
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "revokedAt": {
+                      "anyOf": [
+                        {
+                          "maximum": 9007199254740991,
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "revokedBy": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "rotatedAt": {
+                      "anyOf": [
+                        {
+                          "maximum": 9007199254740991,
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "status": {
+                      "enum": [
+                        "active",
+                        "revoked",
+                        "missing"
+                      ],
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "identityId",
+                    "clientId",
+                    "name",
+                    "cloudflareId",
+                    "cloudflareName",
+                    "adopted",
+                    "disabled",
+                    "status",
+                    "createdAt",
+                    "createdBy",
+                    "rotatedAt",
+                    "revokedAt",
+                    "revokedBy",
+                    "cloudflare"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "The adopted token."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`BAD_REQUEST` — a malformed `If-Match`, or a precondition this API cannot express."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`UNAUTHENTICATED` — no valid Cloudflare Access assertion was presented."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`FORBIDDEN` — authenticated, but no grant covers this scope. The denial is audited."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`NOT_FOUND` — absent **or** invisible, deliberately indistinguishable. Returning 403 for one and 404 for the other would turn this API into an oracle for which slugs are in use."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`CONFLICT` — that token is already managed here."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`VALIDATION_FAILED` — schema rejection, including an unknown field. `issues` carries `{path, message}` and never the submitted value."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`INTERNAL`, `DECRYPT_FAILED`, `UNKNOWN_KID` or `SERVER_MISCONFIGURED`."
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`UPSTREAM_FAILED` — the Cloudflare API failed. The hint says whether anything was left half done."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`SERVICE_TOKENS_UNCONFIGURED` — the Worker has no `CF_API_TOKEN` secret or `CF_ACCOUNT_ID` var, or Cloudflare refused the token it holds. The hint names which."
+          }
+        },
+        "summary": "Adopt a service token made in the dashboard",
+        "tags": [
+          "service-tokens"
+        ]
+      }
+    },
+    "/api/v1/service-tokens/reconcile": {
+      "post": {
+        "description": "`orphan`: a Cloudflare token named for THIS deployment (`prick:<instance>:…`) that prick has no record of — a create that crashed between Cloudflare and D1. `missing`: a live record whose token Cloudflare no longer has. `revoke_incomplete`: a revoked record whose token still exists in Cloudflare. `foreign`: a token named for another prick deployment sharing the account — reported, never touched.\n\nWith `apply: true`, orphans and incomplete revocations are deleted from Cloudflare and missing tokens are retired (identity disabled), each with its own audit row. Tokens with any other name were made by hand and are not considered.",
+        "operationId": "reconcileServiceTokens",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "additionalProperties": false,
+                "properties": {
+                  "apply": {
+                    "default": false,
+                    "type": "boolean"
+                  }
+                },
+                "type": "object"
+              }
+            }
+          },
+          "description": "Whether to repair what is found.",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "additionalProperties": false,
+                  "properties": {
+                    "applied": {
+                      "type": "boolean"
+                    },
+                    "entries": {
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "applied": {
+                            "type": "boolean"
+                          },
+                          "clientId": {
+                            "type": "string"
+                          },
+                          "cloudflareId": {
+                            "type": "string"
+                          },
+                          "error": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "kind": {
+                            "enum": [
+                              "orphan",
+                              "missing",
+                              "revoke_incomplete",
+                              "foreign"
+                            ],
+                            "type": "string"
+                          },
+                          "name": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "kind",
+                          "cloudflareId",
+                          "clientId",
+                          "name",
+                          "applied",
+                          "error"
+                        ],
+                        "type": "object"
+                      },
+                      "type": "array"
+                    }
+                  },
+                  "required": [
+                    "applied",
+                    "entries"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "What disagreed, and what was repaired."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`BAD_REQUEST` — a malformed `If-Match`, or a precondition this API cannot express."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`UNAUTHENTICATED` — no valid Cloudflare Access assertion was presented."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`FORBIDDEN` — authenticated, but no grant covers this scope. The denial is audited."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`NOT_FOUND` — absent **or** invisible, deliberately indistinguishable. Returning 403 for one and 404 for the other would turn this API into an oracle for which slugs are in use."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`VALIDATION_FAILED` — schema rejection, including an unknown field. `issues` carries `{path, message}` and never the submitted value."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`INTERNAL`, `DECRYPT_FAILED`, `UNKNOWN_KID` or `SERVER_MISCONFIGURED`."
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`UPSTREAM_FAILED` — the Cloudflare API failed. The hint says whether anything was left half done."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`SERVICE_TOKENS_UNCONFIGURED` — the Worker has no `CF_API_TOKEN` secret or `CF_ACCOUNT_ID` var, or Cloudflare refused the token it holds. The hint names which."
+          }
+        },
+        "summary": "Find, and optionally repair, disagreements with Cloudflare",
+        "tags": [
+          "service-tokens"
+        ]
+      }
+    },
+    "/api/v1/service-tokens/{id}": {
+      "delete": {
+        "description": "Disables the token's identity — the kill switch, which outranks every grant — and marks the record revoked, in one transaction with its audit row; then deletes the token from Cloudflare. The order means access is gone the moment the transaction commits. If the Cloudflare delete fails, the response is `502` and the token, already refused by prick, is finished by `POST /service-tokens/reconcile`.\n\nGrants are kept as the record of what the token held; `GET /identities/{id}/effective-permissions` still lists them.",
+        "operationId": "revokeServiceToken",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Revoked."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`BAD_REQUEST` — a malformed `If-Match`, or a precondition this API cannot express."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`UNAUTHENTICATED` — no valid Cloudflare Access assertion was presented."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`FORBIDDEN` — authenticated, but no grant covers this scope. The denial is audited."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`NOT_FOUND` — absent **or** invisible, deliberately indistinguishable. Returning 403 for one and 404 for the other would turn this API into an oracle for which slugs are in use."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`LAST_ADMIN` — this token is the last usable global administrator and `BOOTSTRAP_ADMINS` is empty."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`VALIDATION_FAILED` — schema rejection, including an unknown field. `issues` carries `{path, message}` and never the submitted value."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`INTERNAL`, `DECRYPT_FAILED`, `UNKNOWN_KID` or `SERVER_MISCONFIGURED`."
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`UPSTREAM_FAILED` — the Cloudflare API failed. The hint says whether anything was left half done."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`SERVICE_TOKENS_UNCONFIGURED` — the Worker has no `CF_API_TOKEN` secret or `CF_ACCOUNT_ID` var, or Cloudflare refused the token it holds. The hint names which."
+          }
+        },
+        "summary": "Revoke a service token",
+        "tags": [
+          "service-tokens"
+        ]
+      }
+    },
+    "/api/v1/service-tokens/{id}/refresh": {
+      "post": {
+        "description": "Asks Cloudflare to extend the token's expiry by its duration. No new secret; nothing about the identity changes.",
+        "operationId": "refreshServiceToken",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "additionalProperties": false,
+                  "properties": {
+                    "adopted": {
+                      "type": "boolean"
+                    },
+                    "clientId": {
+                      "type": "string"
+                    },
+                    "cloudflare": {
+                      "anyOf": [
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "duration": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
+                            "enabled": {
+                              "type": "boolean"
+                            },
+                            "expiresAt": {
+                              "anyOf": [
+                                {
+                                  "maximum": 9007199254740991,
+                                  "minimum": 0,
+                                  "type": "integer"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "lastSeenAt": {
+                              "anyOf": [
+                                {
+                                  "maximum": 9007199254740991,
+                                  "minimum": 0,
+                                  "type": "integer"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "leakReportedAt": {
+                              "anyOf": [
+                                {
+                                  "maximum": 9007199254740991,
+                                  "minimum": 0,
+                                  "type": "integer"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            }
+                          },
+                          "required": [
+                            "expiresAt",
+                            "lastSeenAt",
+                            "enabled",
+                            "duration",
+                            "leakReportedAt"
+                          ],
+                          "type": "object"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "cloudflareId": {
+                      "type": "string"
+                    },
+                    "cloudflareName": {
+                      "type": "string"
+                    },
+                    "createdAt": {
+                      "maximum": 9007199254740991,
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "createdBy": {
+                      "type": "string"
+                    },
+                    "disabled": {
+                      "type": "boolean"
+                    },
+                    "id": {
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                      "type": "string"
+                    },
+                    "identityId": {
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "revokedAt": {
+                      "anyOf": [
+                        {
+                          "maximum": 9007199254740991,
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "revokedBy": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "rotatedAt": {
+                      "anyOf": [
+                        {
+                          "maximum": 9007199254740991,
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "status": {
+                      "enum": [
+                        "active",
+                        "revoked",
+                        "missing"
+                      ],
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "identityId",
+                    "clientId",
+                    "name",
+                    "cloudflareId",
+                    "cloudflareName",
+                    "adopted",
+                    "disabled",
+                    "status",
+                    "createdAt",
+                    "createdBy",
+                    "rotatedAt",
+                    "revokedAt",
+                    "revokedBy",
+                    "cloudflare"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "The token, with its new expiry."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`BAD_REQUEST` — a malformed `If-Match`, or a precondition this API cannot express."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`UNAUTHENTICATED` — no valid Cloudflare Access assertion was presented."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`FORBIDDEN` — authenticated, but no grant covers this scope. The denial is audited."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`NOT_FOUND` — absent **or** invisible, deliberately indistinguishable. Returning 403 for one and 404 for the other would turn this API into an oracle for which slugs are in use."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`VALIDATION_FAILED` — schema rejection, including an unknown field. `issues` carries `{path, message}` and never the submitted value."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`INTERNAL`, `DECRYPT_FAILED`, `UNKNOWN_KID` or `SERVER_MISCONFIGURED`."
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`UPSTREAM_FAILED` — the Cloudflare API failed. The hint says whether anything was left half done."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`SERVICE_TOKENS_UNCONFIGURED` — the Worker has no `CF_API_TOKEN` secret or `CF_ACCOUNT_ID` var, or Cloudflare refused the token it holds. The hint names which."
+          }
+        },
+        "summary": "Extend a service token's expiry",
+        "tags": [
+          "service-tokens"
+        ]
+      }
+    },
+    "/api/v1/service-tokens/{id}/rotate": {
+      "post": {
+        "description": "A new client secret for the same client id, so the identity and every grant it holds are unchanged. `grace_seconds` keeps the previous secret valid that long (at most 30 days); `0`, the default, ends it immediately — the right answer when it leaked.\n\nThe new secret is in this response only, and the response is `no-store`. A rotation whose audit row cannot be written is refused and its secret discarded.",
+        "operationId": "rotateServiceToken",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "additionalProperties": false,
+                "properties": {
+                  "grace_seconds": {
+                    "default": 0,
+                    "maximum": 2592000,
+                    "minimum": 0,
+                    "type": "integer"
+                  }
+                },
+                "type": "object"
+              }
+            }
+          },
+          "description": "How long the previous secret stays valid.",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "additionalProperties": false,
+                  "properties": {
+                    "clientId": {
+                      "type": "string"
+                    },
+                    "clientSecret": {
+                      "type": "string"
+                    },
+                    "previousSecretExpiresAt": {
+                      "anyOf": [
+                        {
+                          "maximum": 9007199254740991,
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "token": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "adopted": {
+                          "type": "boolean"
+                        },
+                        "clientId": {
+                          "type": "string"
+                        },
+                        "cloudflare": {
+                          "anyOf": [
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "duration": {
+                                  "type": [
+                                    "string",
+                                    "null"
+                                  ]
+                                },
+                                "enabled": {
+                                  "type": "boolean"
+                                },
+                                "expiresAt": {
+                                  "anyOf": [
+                                    {
+                                      "maximum": 9007199254740991,
+                                      "minimum": 0,
+                                      "type": "integer"
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                },
+                                "lastSeenAt": {
+                                  "anyOf": [
+                                    {
+                                      "maximum": 9007199254740991,
+                                      "minimum": 0,
+                                      "type": "integer"
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                },
+                                "leakReportedAt": {
+                                  "anyOf": [
+                                    {
+                                      "maximum": 9007199254740991,
+                                      "minimum": 0,
+                                      "type": "integer"
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                }
+                              },
+                              "required": [
+                                "expiresAt",
+                                "lastSeenAt",
+                                "enabled",
+                                "duration",
+                                "leakReportedAt"
+                              ],
+                              "type": "object"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "cloudflareId": {
+                          "type": "string"
+                        },
+                        "cloudflareName": {
+                          "type": "string"
+                        },
+                        "createdAt": {
+                          "maximum": 9007199254740991,
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        "createdBy": {
+                          "type": "string"
+                        },
+                        "disabled": {
+                          "type": "boolean"
+                        },
+                        "id": {
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                          "type": "string"
+                        },
+                        "identityId": {
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                          "type": "string"
+                        },
+                        "name": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "revokedAt": {
+                          "anyOf": [
+                            {
+                              "maximum": 9007199254740991,
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "revokedBy": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "rotatedAt": {
+                          "anyOf": [
+                            {
+                              "maximum": 9007199254740991,
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "status": {
+                          "enum": [
+                            "active",
+                            "revoked",
+                            "missing"
+                          ],
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "identityId",
+                        "clientId",
+                        "name",
+                        "cloudflareId",
+                        "cloudflareName",
+                        "adopted",
+                        "disabled",
+                        "status",
+                        "createdAt",
+                        "createdBy",
+                        "rotatedAt",
+                        "revokedAt",
+                        "revokedBy",
+                        "cloudflare"
+                      ],
+                      "type": "object"
+                    }
+                  },
+                  "required": [
+                    "token",
+                    "clientId",
+                    "clientSecret",
+                    "previousSecretExpiresAt"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "The token and its new client secret (shown once).",
+            "headers": {
+              "Cache-Control": {
+                "description": "`no-store, no-cache, must-revalidate, private`.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Cloudflare-CDN-Cache-Control": {
+                "description": "`no-store`. Cloudflare's edge cache does not necessarily honour `Cache-Control`, so it is told separately.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Vary": {
+                "description": "`Cf-Access-Jwt-Assertion`, so a cached entry can never be served across identities.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`BAD_REQUEST` — a malformed `If-Match`, or a precondition this API cannot express."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`UNAUTHENTICATED` — no valid Cloudflare Access assertion was presented."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`FORBIDDEN` — authenticated, but no grant covers this scope. The denial is audited."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`NOT_FOUND` — absent **or** invisible, deliberately indistinguishable. Returning 403 for one and 404 for the other would turn this API into an oracle for which slugs are in use."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`VALIDATION_FAILED` — schema rejection, including an unknown field. `issues` carries `{path, message}` and never the submitted value."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`INTERNAL`, `DECRYPT_FAILED`, `UNKNOWN_KID` or `SERVER_MISCONFIGURED`."
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`UPSTREAM_FAILED` — the Cloudflare API failed. The hint says whether anything was left half done."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "`SERVICE_TOKENS_UNCONFIGURED` — the Worker has no `CF_API_TOKEN` secret or `CF_ACCOUNT_ID` var, or Cloudflare refused the token it holds. The hint names which."
+          }
+        },
+        "summary": "Rotate a service token's secret",
+        "tags": [
+          "service-tokens"
+        ]
+      }
+    },
     "/api/v1/whoami": {
       "get": {
         "description": "Derived entirely from the VERIFIED Access assertion plus the identity row it resolved — never from a header a client controls.\n\n`role` is the caller's **global** role, or `null`. It is not the maximum over every scope: a project-scoped admin reports `null` here and is still an admin of that project.\n\n`displayName` is the name Cloudflare Access holds for this caller, resolved lazily from `/cdn-cgi/access/get-identity` and cached on the identity row. It is COSMETIC — `subject` is the identifier, and nothing authorises on a name. It is `null` for service tokens, for providers that supply no name, and until the first lookup has run.\n\n`bootstrap` is true while the caller is an administrator by virtue of `BOOTSTRAP_ADMINS` alone. It goes false the moment the self-heal has converted the var into a real, revocable grant — which happens on the first authenticated request — and the UI shows a banner for exactly as long as it is true.\n\n`instance` is this deployment's permanent, random instance id: 32 lowercase hex characters, written into the database by a migration and never changed. It is the same value every authenticated response carries in the `Prick-Instance` header. A restored backup keeps it; a fresh database has a new one. `null` when the database holds no instance row.",
@@ -7121,6 +9361,10 @@
     {
       "description": "Key ring status and rekeying.",
       "name": "admin"
+    },
+    {
+      "description": "Cloudflare Access service tokens created, rotated and revoked by this Worker, each recorded with the identity it authenticates as. Global admin only; requires the `CF_API_TOKEN` secret and `CF_ACCOUNT_ID` var.",
+      "name": "service-tokens"
     }
   ]
 }

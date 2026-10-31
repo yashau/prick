@@ -687,6 +687,64 @@ export const instance = sqliteTable("instance", {
 });
 
 // ---------------------------------------------------------------------------
+// service_tokens
+// ---------------------------------------------------------------------------
+
+/**
+ * Cloudflare Access service tokens this deployment manages.
+ *
+ * One row per token, linked to the `identities` row its JWTs authenticate as:
+ * a service token's `common_name` is its client id, so `identities.subject`
+ * equals `client_id` and the identity exists from the moment the token does.
+ *
+ * NO SECRET, NO HASH, NO PREFIX. Access verifies the secret; prick never does,
+ * so storing anything derived from it would buy nothing and create something to
+ * leak. Expiry, last use and leak reports are Cloudflare's to know and are read
+ * live, so this table holds only what Cloudflare cannot: which identity a token
+ * is, and who made, rotated and revoked it here.
+ *
+ * A revoked row stays as the record. Identities are never deleted, so neither is
+ * the row that explains one.
+ */
+export const serviceTokens = sqliteTable(
+  "service_tokens",
+  {
+    id: text("id").primaryKey(),
+
+    identityId: text("identity_id")
+      .notNull()
+      .references(() => identities.id),
+
+    /** Cloudflare's uuid for the token. */
+    cloudflareId: text("cloudflare_id").notNull(),
+
+    /** `<hex>.access`. Equal to the identity's subject. */
+    clientId: text("client_id").notNull(),
+
+    /**
+     * The token's name in Cloudflare: `prick:<instance>:<id>` for one created
+     * here, so a token a crash left behind is findable and a second deployment
+     * sharing the account never mistakes it for its own. An adopted token keeps
+     * the name it was given.
+     */
+    cloudflareName: text("cloudflare_name").notNull(),
+
+    /** True when the token was made elsewhere and brought under management. */
+    adopted: integer("adopted", { mode: "boolean" }).notNull().default(false),
+
+    createdAt: integer("created_at").notNull(),
+    createdBy: text("created_by").notNull(),
+    rotatedAt: integer("rotated_at"),
+    revokedAt: integer("revoked_at"),
+    revokedBy: text("revoked_by"),
+  },
+  (t) => [
+    uniqueIndex("service_tokens_cloudflare_id_uniq").on(t.cloudflareId),
+    uniqueIndex("service_tokens_identity_uniq").on(t.identityId),
+  ],
+);
+
+// ---------------------------------------------------------------------------
 // Inferred row types
 // ---------------------------------------------------------------------------
 
@@ -722,3 +780,6 @@ export type NewAuditEntry = typeof auditLog.$inferInsert;
 
 export type KeyringEntry = typeof keyringState.$inferSelect;
 export type NewKeyringEntry = typeof keyringState.$inferInsert;
+
+export type ServiceTokenRow = typeof serviceTokens.$inferSelect;
+export type NewServiceTokenRow = typeof serviceTokens.$inferInsert;

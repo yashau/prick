@@ -128,6 +128,18 @@ export const ERROR_STATUS = {
    * honest reading.
    */
   NO_ADMINS_CONFIGURED: 503,
+  /**
+   * Service-token management is not configured on this Worker, or Cloudflare
+   * refused the API token it holds. The hint names the missing secret, var or
+   * permission. Nothing else in the Worker is affected.
+   */
+  SERVICE_TOKENS_UNCONFIGURED: 503,
+  /**
+   * The Cloudflare API failed or answered something unexpected while prick was
+   * managing a service token. Transient more often than not; the hint says what,
+   * if anything, was left half done.
+   */
+  UPSTREAM_FAILED: 502,
 } as const satisfies Record<string, number>;
 
 export type PrickErrorCode = keyof typeof ERROR_STATUS;

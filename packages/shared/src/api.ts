@@ -370,3 +370,95 @@ export const ApiErrorBody = z
   })
   .strict();
 export type ApiErrorBody = z.infer<typeof ApiErrorBody>;
+
+// ---------------------------------------------------------------------------
+// Service tokens
+// ---------------------------------------------------------------------------
+
+/**
+ * How long Cloudflare keeps a service token valid: whole hours, or `forever`.
+ *
+ * Cloudflare accepts any Go-style duration, but a token lifetime measured in
+ * anything finer than an hour is a mistake rather than a requirement, and one
+ * unit means the CLI and the UI never have to agree on how to spell `1h30m`.
+ * Capped at ten years so an unbounded number cannot stand in for `forever`.
+ */
+export const ServiceTokenDuration = z
+  .string()
+  .regex(
+    /^(?:[1-9][0-9]{0,5}h|forever)$/,
+    'must be a whole number of hours such as "8760h", or "forever"',
+  )
+  .refine((value) => value === "forever" || Number(value.slice(0, -1)) <= 87_600, {
+    message: "must be at most 87600h (ten years)",
+  });
+export type ServiceTokenDuration = z.infer<typeof ServiceTokenDuration>;
+
+/**
+ * The grant a new service token is created holding, in the same transaction.
+ *
+ * The scope half of `CreateGrantBody` without `identity_id`: the identity does
+ * not exist until the token does, so naming it is the server's job.
+ */
+const ServiceTokenGrant = z.discriminatedUnion("scope_type", [
+  z.object({ scope_type: z.literal("global"), ...GrantTerms }).strict(),
+  z.object({ scope_type: z.literal("project"), project: Slug, ...GrantTerms }).strict(),
+  z
+    .object({
+      scope_type: z.literal("environment"),
+      project: Slug,
+      environment: Slug,
+      ...GrantTerms,
+    })
+    .strict(),
+]);
+
+/**
+ * Create a Cloudflare Access service token and the identity it authenticates as.
+ *
+ * `name` becomes the identity's display name, so the token reads as "staging
+ * deploy" everywhere prick lists identities rather than as a hex client id.
+ */
+export const CreateServiceTokenBody = z
+  .object({
+    name: DisplayName,
+    duration: ServiceTokenDuration.default("8760h"),
+    grant: ServiceTokenGrant.optional(),
+  })
+  .strict();
+export type CreateServiceTokenBody = z.infer<typeof CreateServiceTokenBody>;
+
+/**
+ * Rotate a service token's secret. The client id, identity and grants stay.
+ *
+ * `grace_seconds` keeps the previous secret valid that long so a job can be
+ * moved to the new one without an outage. Zero, the default, ends the old secret
+ * immediately -- the right answer when it leaked. Capped at 30 days.
+ */
+export const RotateServiceTokenBody = z
+  .object({
+    grace_seconds: z.number().int().min(0).max(2_592_000).default(0),
+  })
+  .strict();
+export type RotateServiceTokenBody = z.infer<typeof RotateServiceTokenBody>;
+
+/** Bring a service token made in the Cloudflare dashboard under prick's management. */
+export const AdoptServiceTokenBody = z
+  .object({
+    client_id: z
+      .string()
+      .min(1)
+      .max(128)
+      .regex(/^[A-Za-z0-9]+\.access$/, 'must be a service token client id ending in ".access"'),
+    name: DisplayName.optional(),
+  })
+  .strict();
+export type AdoptServiceTokenBody = z.infer<typeof AdoptServiceTokenBody>;
+
+/** Compare prick's records with Cloudflare's; `apply` repairs what differs. */
+export const ReconcileServiceTokensBody = z
+  .object({
+    apply: z.boolean().default(false),
+  })
+  .strict();
+export type ReconcileServiceTokensBody = z.infer<typeof ReconcileServiceTokensBody>;

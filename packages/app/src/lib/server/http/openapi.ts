@@ -307,6 +307,11 @@ export const DOCUMENT: GenerateSpecOptions["documentation"] = {
     },
     { name: "audit", description: "The append-only audit log." },
     { name: "admin", description: "Key ring status and rekeying." },
+    {
+      name: "service-tokens",
+      description:
+        "Cloudflare Access service tokens created, rotated and revoked by this Worker, each recorded with the identity it authenticates as. Global admin only; requires the `CF_API_TOKEN` secret and `CF_ACCOUNT_ID` var.",
+    },
   ],
   components: {
     schemas: { ApiError: jsonSchema(ErrorResponse, "output") },
