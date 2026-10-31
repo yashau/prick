@@ -1,10 +1,9 @@
 import type {
   AdoptServiceTokenBody,
   CreateServiceTokenBody,
-  ReconcileServiceTokensBody,
   RotateServiceTokenBody,
 } from "@prick/shared";
-import { and, eq, isNull } from "drizzle-orm";
+import { and, eq, isNotNull, isNull } from "drizzle-orm";
 
 import { assertNotLastAdminAfter } from "../auth/bootstrap.js";
 import {
@@ -120,23 +119,8 @@ export interface RotatedServiceTokenResult {
   clientSecret: string;
   /** When the previous secret stops working; `null` means it already has. */
   previousSecretExpiresAt: number | null;
-}
-
-export interface ReconcileEntry {
-  kind: "orphan" | "missing" | "revoke_incomplete" | "foreign";
-  cloudflareId: string;
-  clientId: string;
-  /** Cloudflare's name for the token, or the identity's display name. */
-  name: string | null;
-  /** True when `apply` repaired it. `foreign` entries are never touched. */
-  applied: boolean;
-  /** Why an attempted repair failed. Never carries a response body. */
-  error: string | null;
-}
-
-export interface ReconcileResult {
-  applied: boolean;
-  entries: ReconcileEntry[];
+  /** Set when the rotation succeeded but left something for the operator to do. */
+  warning: string | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -144,7 +128,7 @@ export interface ReconcileResult {
 // ---------------------------------------------------------------------------
 
 /** Global admin, then the API. In that order, so a non-admin learns nothing about configuration. */
-async function authorizeAndConnect(ctx: CoreContext): Promise<AccessServiceTokens> {
+export async function authorizeAndConnect(ctx: CoreContext): Promise<AccessServiceTokens> {
   await assertRole(ctx, { type: "global" }, "admin");
 
   const config = ctx.config.cloudflare;
@@ -168,7 +152,7 @@ async function authorizeAndConnect(ctx: CoreContext): Promise<AccessServiceToken
 }
 
 /** A Cloudflare failure as this application's taxonomy, with a hint about what was left behind. */
-function upstream(error: unknown, leftBehind?: string): PrickError {
+export function upstream(error: unknown, leftBehind?: string): PrickError {
   if (error instanceof PrickError) return error;
 
   const suffix = leftBehind === undefined ? "" : ` ${leftBehind}`;
@@ -187,8 +171,15 @@ function upstream(error: unknown, leftBehind?: string): PrickError {
       });
     }
 
+    const hints: Record<"unavailable" | "rejected" | "malformed", string> = {
+      unavailable: "Cloudflare may be briefly unavailable; try again.",
+      rejected:
+        "Cloudflare refused the request itself, so retrying will not change the answer. The status and Cloudflare error code in the message say why; check the token's state in Cloudflare.",
+      malformed:
+        "Cloudflare answered in a shape prick does not recognise, which suggests its API changed. Retrying will not help; report it with the request id.",
+    };
     return new PrickError("UPSTREAM_FAILED", error.message, {
-      hint: `Cloudflare may be briefly unavailable; try again.${suffix}`,
+      hint: `${hints[error.kind]}${suffix}`,
       cause: error,
     });
   }
@@ -225,7 +216,7 @@ interface JoinedRow {
   disabled: boolean;
 }
 
-function selectJoined(ctx: CoreContext) {
+export function selectJoined(ctx: CoreContext) {
   return ctx.db
     .select({
       id: serviceTokens.id,
@@ -284,7 +275,7 @@ async function requireActive(ctx: CoreContext, id: string): Promise<JoinedRow> {
   return row;
 }
 
-async function requireInstance(ctx: CoreContext): Promise<string> {
+export async function requireInstance(ctx: CoreContext): Promise<string> {
   const instance = await readInstanceId(ctx.db);
   if (instance === null) {
     throw new PrickError("SERVER_MISCONFIGURED", "This database has no instance id.", {
@@ -292,6 +283,49 @@ async function requireInstance(ctx: CoreContext): Promise<string> {
     });
   }
   return instance;
+}
+
+/** Cloudflare's current view of a token, or `null` when it cannot be had right now. */
+async function liveOrNull(
+  api: AccessServiceTokens,
+  cloudflareId: string,
+): Promise<CloudflareServiceToken | null> {
+  try {
+    return await api.get(cloudflareId);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * A statement that aborts its batch when the token is ALREADY revoked.
+ *
+ * It re-inserts the row under its own primary key, selecting it only when
+ * `revoked_at` is set, so a revoke that lost a race fails on the primary key
+ * before its audit row is written. Two concurrent revokes therefore produce one
+ * revocation, one audit row and one `revoked_by` -- the mechanism the secret
+ * write path uses for `expected_rev`, and the projection is written column by
+ * column in declaration order for the reason given there.
+ */
+export function revokedGuard(ctx: CoreContext, id: string) {
+  return ctx.db.insert(serviceTokens).select((qb) =>
+    qb
+      .select({
+        id: serviceTokens.id,
+        identityId: serviceTokens.identityId,
+        cloudflareId: serviceTokens.cloudflareId,
+        clientId: serviceTokens.clientId,
+        cloudflareName: serviceTokens.cloudflareName,
+        adopted: serviceTokens.adopted,
+        createdAt: serviceTokens.createdAt,
+        createdBy: serviceTokens.createdBy,
+        rotatedAt: serviceTokens.rotatedAt,
+        revokedAt: serviceTokens.revokedAt,
+        revokedBy: serviceTokens.revokedBy,
+      })
+      .from(serviceTokens)
+      .where(and(eq(serviceTokens.id, id), isNotNull(serviceTokens.revokedAt))),
+  );
 }
 
 /** `prick:<instance>:` -- the prefix every token created by THIS deployment carries. */
@@ -311,10 +345,15 @@ export async function listServiceTokens(ctx: CoreContext): Promise<ServiceTokenL
   let live: Map<string, CloudflareServiceToken> | null = null;
   try {
     live = new Map((await api.list()).map((token) => [token.id, token]));
-  } catch {
-    // The records are still worth showing: which identities are managed tokens,
-    // and who made them, is D1's to know. The response says Cloudflare was not
-    // asked, so a reader does not mistake "unknown" for "missing".
+  } catch (error) {
+    // A refused API token is configuration, and the operator needs the hint
+    // that names the permission -- not a quiet "unavailable".
+    if (error instanceof CloudflareApiError && error.kind === "refused") throw upstream(error);
+
+    // An outage is different: the records are still worth showing, since which
+    // identities are managed tokens, and who made them, is D1's to know. The
+    // response says Cloudflare was not asked, so a reader does not mistake
+    // "unknown" for "missing".
     live = null;
   }
 
@@ -476,8 +515,12 @@ export async function createServiceToken(
     disabled: false,
   };
 
+  // The create response carries no expiry. Ask for the token, and report the
+  // expiry as unknown -- never as "never expires" -- if that fails.
+  const live = await liveOrNull(api, issued.id);
+
   return {
-    token: toRecord(row, issued, true),
+    token: toRecord(row, live, live !== null),
     grant:
       scope === null || grantId === null || input.grant === undefined
         ? null
@@ -507,11 +550,45 @@ export async function rotateServiceToken(
   const previousSecretExpiresAt =
     input.grace_seconds > 0 ? ctx.now + input.grace_seconds * 1000 : null;
 
+  let before: CloudflareServiceToken;
+  try {
+    before = await api.get(row.cloudflareId);
+  } catch (error) {
+    throw upstream(error);
+  }
+
+  // Cloudflare discards a leaked secret at rotation and refuses a grace period
+  // for it. Saying so here beats relaying a bare 400.
+  if (before.leakReportedAt !== null && previousSecretExpiresAt !== null) {
+    throw new PrickError(
+      "CONFLICT",
+      "Cloudflare reported this token's secret as leaked, so the previous secret cannot be kept.",
+      {
+        hint: "Rotate without a grace period. The leaked secret stops working at once; update the job with the new secret straight after.",
+      },
+    );
+  }
+
   let issued: IssuedServiceToken;
   try {
     issued = await api.rotate(row.cloudflareId, previousSecretExpiresAt);
   } catch (error) {
     throw upstream(error);
+  }
+
+  // Cloudflare disables a token reported as leaked, and allows re-enabling it
+  // only once the secret has been rotated -- which it now has. A token disabled
+  // for any other reason is re-enabled too: rotating is the operator saying the
+  // token should work.
+  const needsEnabling = before.leakReportedAt !== null || !before.enabled;
+  let warning: string | null = null;
+  if (needsEnabling) {
+    try {
+      await api.enable(row.cloudflareId);
+    } catch {
+      warning =
+        "The secret was rotated, but Cloudflare did not re-enable the token, so it still cannot authenticate. Rotate again, or enable it in Cloudflare.";
+    }
   }
 
   try {
@@ -525,6 +602,7 @@ export async function rotateServiceToken(
           clientId: row.clientId,
           name: row.name ?? row.clientId,
           graceSeconds: input.grace_seconds,
+          ...(needsEnabling ? { reenabled: warning === null } : {}),
         },
       }),
     ]);
@@ -545,11 +623,14 @@ export async function rotateServiceToken(
     );
   }
 
+  const live = await liveOrNull(api, row.cloudflareId);
+
   return {
-    token: toRecord({ ...row, rotatedAt: ctx.now }, issued, true),
+    token: toRecord({ ...row, rotatedAt: ctx.now }, live, live !== null),
     clientId: row.clientId,
     clientSecret: issued.clientSecret,
     previousSecretExpiresAt,
+    warning,
   };
 }
 
@@ -585,21 +666,30 @@ export async function revokeServiceToken(ctx: CoreContext, id: string): Promise<
   // token that is the last global administrator is guarded like any other.
   await assertNotLastAdminAfter(ctx, { identityId: row.identityId });
 
-  await runBatch(ctx.db, [
-    ctx.db
-      .update(identities)
-      .set({ disabled: true, updatedAt: ctx.now })
-      .where(eq(identities.id, row.identityId)),
-    ctx.db
-      .update(serviceTokens)
-      .set({ revokedAt: ctx.now, revokedBy: ctx.actor.subject })
-      .where(eq(serviceTokens.id, id)),
-    auditStatement(ctx, {
-      action: "service_token.revoke",
-      outcome: "success",
-      detail: { kind: "service_token", clientId: row.clientId, name: row.name ?? row.clientId },
-    }),
-  ]);
+  try {
+    await runBatch(ctx.db, [
+      revokedGuard(ctx, id),
+      ctx.db
+        .update(identities)
+        .set({ disabled: true, updatedAt: ctx.now })
+        .where(eq(identities.id, row.identityId)),
+      ctx.db
+        .update(serviceTokens)
+        .set({ revokedAt: ctx.now, revokedBy: ctx.actor.subject })
+        .where(and(eq(serviceTokens.id, id), isNull(serviceTokens.revokedAt))),
+      auditStatement(ctx, {
+        action: "service_token.revoke",
+        outcome: "success",
+        detail: { kind: "service_token", clientId: row.clientId, name: row.name ?? row.clientId },
+      }),
+    ]);
+  } catch (error) {
+    // The guard fired: another request revoked it first, and wrote the record.
+    if (/UNIQUE constraint failed: service_tokens\.id/i.test(String(error))) {
+      throw notFound("service token");
+    }
+    throw error;
+  }
 
   try {
     await api.remove(row.cloudflareId);
@@ -709,122 +799,4 @@ export async function adoptServiceToken(
     token,
     true,
   );
-}
-
-/**
- * Compare D1 with Cloudflare, and with `apply`, make them agree.
- *
- * Only tokens this deployment owns are ever touched: a row here, or a Cloudflare
- * name carrying THIS instance's prefix. A `prick:<other instance>:` token belongs
- * to another deployment sharing the account and is reported as `foreign`; a token
- * with any other name was made by hand and is not mentioned at all.
- */
-export async function reconcileServiceTokens(
-  ctx: CoreContext,
-  input: ReconcileServiceTokensBody,
-): Promise<ReconcileResult> {
-  const api = await authorizeAndConnect(ctx);
-  const instance = await requireInstance(ctx);
-  const prefix = cloudflareNamePrefix(instance);
-
-  let live: CloudflareServiceToken[];
-  try {
-    live = await api.list();
-  } catch (error) {
-    throw upstream(error);
-  }
-
-  const rows = await selectJoined(ctx);
-  const byCloudflareId = new Map(rows.map((row) => [row.cloudflareId, row]));
-  const liveIds = new Set(live.map((token) => token.id));
-
-  const entries: ReconcileEntry[] = [];
-
-  for (const token of live) {
-    if (byCloudflareId.has(token.id) || !token.name.startsWith("prick:")) continue;
-
-    entries.push({
-      kind: token.name.startsWith(prefix) ? "orphan" : "foreign",
-      cloudflareId: token.id,
-      clientId: token.clientId,
-      name: token.name,
-      applied: false,
-      error: null,
-    });
-  }
-
-  for (const row of rows) {
-    const present = liveIds.has(row.cloudflareId);
-    if (row.revokedAt === null && !present) {
-      entries.push({
-        kind: "missing",
-        cloudflareId: row.cloudflareId,
-        clientId: row.clientId,
-        name: row.name,
-        applied: false,
-        error: null,
-      });
-    } else if (row.revokedAt !== null && present) {
-      entries.push({
-        kind: "revoke_incomplete",
-        cloudflareId: row.cloudflareId,
-        clientId: row.clientId,
-        name: row.name,
-        applied: false,
-        error: null,
-      });
-    }
-  }
-
-  if (!input.apply) return { applied: false, entries };
-
-  for (const entry of entries) {
-    if (entry.kind === "foreign") continue;
-
-    try {
-      if (entry.kind === "missing") {
-        const row = byCloudflareId.get(entry.cloudflareId);
-        if (row === undefined) continue;
-
-        await assertNotLastAdminAfter(ctx, { identityId: row.identityId });
-        await runBatch(ctx.db, [
-          ctx.db
-            .update(identities)
-            .set({ disabled: true, updatedAt: ctx.now })
-            .where(eq(identities.id, row.identityId)),
-          ctx.db
-            .update(serviceTokens)
-            .set({ revokedAt: ctx.now, revokedBy: ctx.actor.subject })
-            .where(eq(serviceTokens.id, row.id)),
-          auditStatement(ctx, {
-            action: "service_token.reconcile",
-            outcome: "success",
-            detail: {
-              kind: "service_token",
-              clientId: row.clientId,
-              name: row.name ?? row.clientId,
-              drift: "missing",
-            },
-          }),
-        ]);
-      } else {
-        await api.remove(entry.cloudflareId);
-        await recordAudit(ctx, {
-          action: "service_token.reconcile",
-          outcome: "success",
-          detail: {
-            kind: "service_token",
-            clientId: entry.clientId,
-            name: entry.name ?? entry.clientId,
-            drift: entry.kind,
-          },
-        });
-      }
-      entry.applied = true;
-    } catch (error) {
-      entry.error = error instanceof Error ? error.message : "The repair failed.";
-    }
-  }
-
-  return { applied: true, entries };
 }

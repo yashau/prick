@@ -26,7 +26,12 @@
  *                                expires at `previous_client_secret_expires_at`
  *                                (defaults to now)
  *   POST   /{id}/refresh         extend the expiry by the token's duration
+ *   GET    /{id}                 one token, with its expiry
+ *   PUT    /{id}                 partial update; prick sends only `enabled`
  *   DELETE /{id}                 delete
+ *
+ * The create and rotate responses carry no `expires_at`, so a token's expiry is
+ * read with `GET /{id}` afterwards rather than assumed.
  *
  * Every one needs the account permission "Access: Service Tokens Write"
  * (dashboard: Access: Service Tokens → Edit), and nothing more.
@@ -62,6 +67,12 @@ export interface AccessServiceTokens {
   create(input: { name: string; duration: string }): Promise<IssuedServiceToken>;
   rotate(id: string, previousSecretExpiresAt: number | null): Promise<IssuedServiceToken>;
   refresh(id: string): Promise<CloudflareServiceToken>;
+  get(id: string): Promise<CloudflareServiceToken>;
+  /**
+   * Re-enable a token. Cloudflare disables a token whose secret was reported as
+   * leaked, and accepts re-enabling only after the secret has been rotated.
+   */
+  enable(id: string): Promise<CloudflareServiceToken>;
   /** `"absent"` when Cloudflare no longer knows the id: already gone is gone. */
   remove(id: string): Promise<"deleted" | "absent">;
   list(): Promise<CloudflareServiceToken[]>;
@@ -208,6 +219,16 @@ export function createAccessServiceTokens(
       return token(resultOf(body));
     },
 
+    async get(id) {
+      const body = await call("GET", `/${encodeURIComponent(id)}`);
+      return token(resultOf(body));
+    },
+
+    async enable(id) {
+      const body = await call("PUT", `/${encodeURIComponent(id)}`, { enabled: true });
+      return token(resultOf(body));
+    },
+
     async remove(id) {
       try {
         await call("DELETE", `/${encodeURIComponent(id)}`);
@@ -227,14 +248,24 @@ export function createAccessServiceTokens(
           throw malformed("GET service_tokens");
         }
 
-        for (const entry of body["result"]) out.push(token(entry));
+        const entries = body["result"];
+        for (const entry of entries) out.push(token(entry));
 
+        // The page size Cloudflare actually used, which may be smaller than the
+        // one asked for: a short page is the end only when it is shorter than
+        // THAT. `total_pages` and `total_count`, when present, decide outright.
         const info = isRecord(body["result_info"]) ? body["result_info"] : undefined;
-        const totalPages =
-          typeof info?.["total_pages"] === "number" ? info["total_pages"] : undefined;
-        if (body["result"].length < PAGE_SIZE || totalPages === undefined || page >= totalPages) {
-          return out;
-        }
+        const totalPages = numberField(info, "total_pages");
+        const totalCount = numberField(info, "total_count");
+        const perPage = numberField(info, "per_page") ?? PAGE_SIZE;
+
+        const more =
+          totalPages !== undefined
+            ? page < totalPages
+            : totalCount !== undefined
+              ? out.length < totalCount
+              : entries.length >= perPage;
+        if (!more || entries.length === 0) return out;
       }
 
       throw malformed("GET service_tokens (pagination did not end)");
@@ -276,6 +307,11 @@ function errorCodes(body: unknown): number[] {
   return body["errors"]
     .map((entry) => (isRecord(entry) && typeof entry["code"] === "number" ? entry["code"] : null))
     .filter((code): code is number => code !== null);
+}
+
+function numberField(record: Record<string, unknown> | undefined, key: string): number | undefined {
+  const value = record?.[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
 function malformed(what: string): CloudflareApiError {

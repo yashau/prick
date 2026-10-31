@@ -65,6 +65,18 @@ class FakeApi implements AccessServiceTokens {
     return token;
   }
 
+  async get(id: string): Promise<CloudflareServiceToken> {
+    const token = this.tokens.get(id);
+    if (token === undefined) throw new CloudflareApiError("not_found", "gone", 404, []);
+    return token;
+  }
+
+  async enable(id: string): Promise<CloudflareServiceToken> {
+    const token = await this.get(id);
+    token.enabled = true;
+    return token;
+  }
+
   async remove(id: string): Promise<"deleted" | "absent"> {
     if (this.removeFails) throw new CloudflareApiError("unavailable", "down", 503, []);
     return this.tokens.delete(id) ? "deleted" : "absent";

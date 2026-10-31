@@ -196,6 +196,8 @@ export type AuditDetail =
       drift?: "orphan" | "missing" | "revoke_incomplete";
       /** A failed create: whether the Cloudflare token was deleted again. */
       compensated?: boolean;
+      /** Rotation of a disabled or leaked token: whether Cloudflare re-enabled it. */
+      reenabled?: boolean;
     }
   | {
       kind: "denial";

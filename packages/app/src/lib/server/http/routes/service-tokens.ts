@@ -10,11 +10,11 @@ import {
   adoptServiceToken,
   createServiceToken,
   listServiceTokens,
-  reconcileServiceTokens,
   refreshServiceToken,
   revokeServiceToken,
   rotateServiceToken,
 } from "../../core/service-tokens.js";
+import { reconcileServiceTokens } from "../../core/service-token-reconcile.js";
 import { core } from "../context.js";
 import type { ApiEnv } from "../env.js";
 import { noStore } from "../middleware.js";

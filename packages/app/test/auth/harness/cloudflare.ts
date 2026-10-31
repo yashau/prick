@@ -18,7 +18,7 @@
 /** The API token the fake accepts. Anything else is a 403, as Cloudflare answers. */
 export const FAKE_CLOUDFLARE_TOKEN = "test-cloudflare-api-token";
 
-export type FakeOperation = "create" | "list" | "rotate" | "refresh" | "delete";
+export type FakeOperation = "create" | "list" | "get" | "update" | "rotate" | "refresh" | "delete";
 
 export interface FakeToken {
   id: string;
@@ -29,6 +29,10 @@ export interface FakeToken {
   expires_at: string | null;
   created_at: string;
   previous_client_secret_expires_at: string | null;
+  enabled: boolean;
+  leak_reported_at: string | null;
+  /** True once the secret has been rotated since the leak report. */
+  rotated_since_leak: boolean;
 }
 
 export interface FakeCall {
@@ -84,8 +88,9 @@ function view(token: FakeToken): Record<string, unknown> {
     client_id: token.client_id,
     name: token.name,
     duration: token.duration,
-    enabled: true,
+    enabled: token.enabled,
     expires_at: token.expires_at,
+    leak_reported_at: token.leak_reported_at,
     created_at: token.created_at,
     updated_at: token.created_at,
     last_seen_at: null,
@@ -103,6 +108,9 @@ function mint(name: string, duration: string): FakeToken {
     expires_at: expiry(duration, now),
     created_at: new Date(now).toISOString(),
     previous_client_secret_expires_at: null,
+    enabled: true,
+    leak_reported_at: null,
+    rotated_since_leak: false,
   };
 }
 
@@ -143,7 +151,19 @@ export function createFakeCloudflare(): { fetch(request: Request, url: URL): Pro
         const body = (await request.json()) as {
           fail?: { op: FakeOperation; status: number; times?: number };
           seed?: { name: string };
+          leak?: { id: string };
+          disable?: { id: string };
         };
+        if (body.leak !== undefined || body.disable !== undefined) {
+          const target = state.tokens.get(body.leak?.id ?? body.disable?.id ?? "");
+          if (target === undefined) return json({ error: "no_such_token" }, 404);
+          target.enabled = false;
+          if (body.leak !== undefined) {
+            target.leak_reported_at = new Date().toISOString();
+            target.rotated_since_leak = false;
+          }
+          return json({ ok: true });
+        }
         if (body.fail !== undefined) {
           state.failures.set(body.fail.op, {
             status: body.fail.status,
@@ -214,15 +234,53 @@ export function createFakeCloudflare(): { fetch(request: Request, url: URL): Pro
 
       const token = state.tokens.get(id);
 
+      if (verb === undefined && request.method === "GET") {
+        const injected = armed(state, "get");
+        if (injected !== null) return injected;
+        if (token === undefined) return failure(404, "service token not found");
+        return envelope(view(token));
+      }
+
+      if (verb === undefined && request.method === "PUT") {
+        const injected = armed(state, "update");
+        if (injected !== null) return injected;
+        if (token === undefined) return failure(404, "service token not found");
+        const patch = body as { enabled?: boolean };
+        // As documented: a leaked token cannot be re-enabled until rotated.
+        if (
+          patch.enabled === true &&
+          token.leak_reported_at !== null &&
+          !token.rotated_since_leak
+        ) {
+          return failure(409, "a leaked service token must be rotated before it is re-enabled");
+        }
+        if (patch.enabled !== undefined) token.enabled = patch.enabled;
+        return envelope(view(token));
+      }
+
       if (verb === "rotate" && request.method === "POST") {
         const injected = armed(state, "rotate");
         if (injected !== null) return injected;
         if (token === undefined) return failure(404, "service token not found");
-        token.client_secret = `cfast_${hex(24)}`;
-        token.previous_client_secret_expires_at =
+        const previous =
           (body as { previous_client_secret_expires_at?: string } | undefined)
             ?.previous_client_secret_expires_at ?? null;
-        return envelope({ ...view(token), client_secret: token.client_secret });
+        // As documented: a leaked secret is discarded; no grace period.
+        if (
+          token.leak_reported_at !== null &&
+          previous !== null &&
+          Date.parse(previous) > Date.now()
+        ) {
+          return failure(
+            400,
+            "previous_client_secret_expires_at must not be in the future for a leaked token",
+          );
+        }
+        token.client_secret = `cfast_${hex(24)}`;
+        token.previous_client_secret_expires_at = previous;
+        if (token.leak_reported_at !== null) token.rotated_since_leak = true;
+        const { expires_at: _omitted, ...rest } = view(token);
+        return envelope({ ...rest, client_secret: token.client_secret });
       }
 
       if (verb === "refresh" && request.method === "POST") {

@@ -155,3 +155,40 @@ describe("requests", () => {
     expect(sent(immediate)).toEqual({});
   });
 });
+
+describe("pagination", () => {
+  const page = (start: number, count: number, info: Record<string, number>) =>
+    new Response(
+      JSON.stringify({
+        success: true,
+        result: Array.from({ length: count }, (_, index) => ({
+          id: `t-${String(start + index)}`,
+          client_id: `${String(start + index)}.access`,
+          name: "t",
+        })),
+        result_info: info,
+      }),
+    );
+
+  it("keeps going past a page shorter than asked for when Cloudflare caps per_page", async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(page(0, 50, { page: 1, per_page: 50 }))
+      .mockResolvedValueOnce(page(50, 50, { page: 2, per_page: 50 }))
+      .mockResolvedValueOnce(page(100, 7, { page: 3, per_page: 50 })) as unknown as typeof fetch;
+
+    expect(await client(fetchImpl).list()).toHaveLength(107);
+  });
+
+  it("stops at total_count when Cloudflare reports one", async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(page(0, 20, { page: 1, per_page: 20, total_count: 30 }))
+      .mockResolvedValueOnce(
+        page(20, 10, { page: 2, per_page: 20, total_count: 30 }),
+      ) as unknown as typeof fetch;
+
+    expect(await client(fetchImpl).list()).toHaveLength(30);
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+  });
+});

@@ -66,6 +66,31 @@ async function instanceId(): Promise<string> {
   return row.id;
 }
 
+/** A UUIDv7 whose timestamp is `ageMs` in the past, as a token created then would carry. */
+function uuidv7Aged(ageMs: number): string {
+  const ts = (Date.now() - ageMs).toString(16).padStart(12, "0");
+  const random = [...crypto.getRandomValues(new Uint8Array(10))]
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+  return `${ts.slice(0, 8)}-${ts.slice(8, 12)}-7${random.slice(0, 3)}-8${random.slice(3, 6)}-${random.slice(6, 18)}`;
+}
+
+/** Move a managed token's timestamps ten minutes into the past, past reconcile's age floor. */
+async function age(tokenId: string): Promise<void> {
+  await env.DB.prepare(
+    "UPDATE service_tokens SET created_at = created_at - 600000, revoked_at = revoked_at - 600000 WHERE id = ?",
+  )
+    .bind(tokenId)
+    .run();
+}
+
+async function control(account: string, payload: unknown): Promise<void> {
+  await fetch(`${HARNESS_ORIGIN}/cloudflare-control/${account}`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
 async function auditText(): Promise<string> {
   const rows = await env.DB.prepare("SELECT action, detail FROM audit_log").all();
   return JSON.stringify(rows.results);
@@ -419,7 +444,7 @@ describe("POST /service-tokens/{id}/rotate", () => {
 
     const fake = await cloudflare(account);
     expect(fake.tokens[0]?.client_secret).toBe(rotated.clientSecret);
-    expect(fake.calls.at(-1)?.body).toEqual({});
+    expect(fake.calls.find((call) => call.path.endsWith("/rotate"))?.body).toEqual({});
     expect(await auditText()).not.toContain(rotated.clientSecret);
   });
 
@@ -433,7 +458,8 @@ describe("POST /service-tokens/{id}/rotate", () => {
     );
 
     expect(rotated.previousSecretExpiresAt).toBeGreaterThanOrEqual(before + 3_600_000);
-    const sent = (await cloudflare(account)).calls.at(-1)?.body as {
+    const sent = (await cloudflare(account)).calls.find((call) => call.path.endsWith("/rotate"))
+      ?.body as {
       previous_client_secret_expires_at: string;
     };
     expect(Date.parse(sent.previous_client_secret_expires_at)).toBe(
@@ -516,6 +542,7 @@ describe("DELETE /service-tokens/{id}", () => {
       .first<{ disabled: number }>();
     expect(identity?.disabled).toBe(1);
 
+    await age(issued.token.id);
     const report = await api.json<{ entries: { kind: string; applied: boolean }[] }>(
       "/api/v1/service-tokens/reconcile",
       { method: "POST", token: owner, ...body({ apply: true }) },
@@ -594,7 +621,7 @@ describe("POST /service-tokens/adopt", () => {
 describe("POST /service-tokens/reconcile", () => {
   it("finds orphans and foreign tokens, ignores hand-made ones, and repairs only its own", async () => {
     const instance = await instanceId();
-    const orphan = await seedCloudflareToken(account, `prick:${instance}:${crypto.randomUUID()}`);
+    const orphan = await seedCloudflareToken(account, `prick:${instance}:${uuidv7Aged(600_000)}`);
     const foreign = await seedCloudflareToken(
       account,
       `prick:${"f".repeat(32)}:${crypto.randomUUID()}`,
@@ -628,6 +655,7 @@ describe("POST /service-tokens/reconcile", () => {
   it("retires a token deleted in the dashboard", async () => {
     const { body: issued } = await create();
     await deleteInDashboard(account, issued.token.cloudflareId);
+    await age(issued.token.id);
 
     const report = await api.json<{ entries: { kind: string; applied: boolean }[] }>(
       "/api/v1/service-tokens/reconcile",
@@ -641,5 +669,207 @@ describe("POST /service-tokens/reconcile", () => {
       .bind(issued.token.id)
       .first<{ revoked_at: number | null }>();
     expect(row?.revoked_at).not.toBeNull();
+  });
+});
+
+describe("reconcile is safe against requests in flight", () => {
+  it("reports a token created moments ago but does not delete it", async () => {
+    const instance = await instanceId();
+    const fresh = await seedCloudflareToken(account, `prick:${instance}:${uuidv7Aged(0)}`);
+
+    const report = await api.json<{
+      entries: { kind: string; skipped: boolean; applied: boolean; reason: string }[];
+    }>("/api/v1/service-tokens/reconcile", {
+      method: "POST",
+      token: owner,
+      ...body({ apply: true }),
+    });
+
+    expect(report.body.entries).toEqual([
+      expect.objectContaining({ kind: "orphan", skipped: true, applied: false }),
+    ]);
+    expect(report.body.entries[0]?.reason).toContain("Too recent");
+    expect((await cloudflare(account)).tokens.map((token) => token.id)).toContain(fresh.id);
+  });
+
+  it("does not retire a just-created row that Cloudflare does not list yet", async () => {
+    const { body: issued } = await create();
+    await deleteInDashboard(account, issued.token.cloudflareId);
+
+    const report = await api.json<{ entries: { kind: string; skipped: boolean }[] }>(
+      "/api/v1/service-tokens/reconcile",
+      { method: "POST", token: owner, ...body({ apply: true }) },
+    );
+
+    expect(report.body.entries).toEqual([
+      expect.objectContaining({ kind: "missing", skipped: true }),
+    ]);
+    const row = await env.DB.prepare("SELECT revoked_at FROM service_tokens WHERE id = ?")
+      .bind(issued.token.id)
+      .first<{ revoked_at: number | null }>();
+    expect(row?.revoked_at).toBeNull();
+  });
+
+  it("refuses to retire every live token at once, changing nothing", async () => {
+    const tokens = [(await create({ name: "one" })).body, (await create({ name: "two" })).body];
+    for (const issued of tokens) {
+      await deleteInDashboard(account, issued.token.cloudflareId);
+      await age(issued.token.id);
+    }
+
+    const refused = await api.json<{ code: string; hint: string }>(
+      "/api/v1/service-tokens/reconcile",
+      {
+        method: "POST",
+        token: owner,
+        ...body({ apply: true }),
+      },
+    );
+
+    expect(refused.status).toBe(409);
+    expect(refused.body.hint).toContain("CF_ACCOUNT_ID");
+    const revoked = await env.DB.prepare(
+      "SELECT COUNT(*) AS n FROM service_tokens WHERE revoked_at IS NOT NULL",
+    ).first<{ n: number }>();
+    expect(revoked?.n).toBe(0);
+  });
+});
+
+describe("rotating a leaked or disabled token", () => {
+  it("refuses a grace period for a leaked secret, with a reason rather than 'try again'", async () => {
+    const { body: issued } = await create();
+    await control(account, { leak: { id: issued.token.cloudflareId } });
+
+    const refused = await api.json<{ code: string; message: string; hint: string }>(
+      `/api/v1/service-tokens/${issued.token.id}/rotate`,
+      { method: "POST", token: owner, ...body({ grace_seconds: 3600 }) },
+    );
+
+    expect(refused.status).toBe(409);
+    expect(refused.body.message).toContain("leaked");
+    expect(refused.body.hint).not.toContain("try again");
+  });
+
+  it("re-enables a leaked token once its secret is rotated", async () => {
+    const { body: issued } = await create();
+    await control(account, { leak: { id: issued.token.cloudflareId } });
+
+    const rotated = await api.json<{
+      warning: string | null;
+      token: { cloudflare: { enabled: boolean } };
+    }>(`/api/v1/service-tokens/${issued.token.id}/rotate`, {
+      method: "POST",
+      token: owner,
+      ...body({}),
+    });
+
+    expect(rotated.status).toBe(200);
+    expect(rotated.body.warning).toBeNull();
+    expect(rotated.body.token.cloudflare.enabled).toBe(true);
+    expect((await cloudflare(account)).tokens[0]?.enabled).toBe(true);
+    const rotation = await env.DB.prepare(
+      "SELECT detail FROM audit_log WHERE action = 'service_token.rotate'",
+    ).first<{ detail: string }>();
+    expect(JSON.parse(rotation?.detail ?? "{}")).toMatchObject({ reenabled: true });
+  });
+
+  it("re-enables a token disabled in the dashboard, and warns when Cloudflare refuses", async () => {
+    const { body: issued } = await create();
+    await control(account, { disable: { id: issued.token.cloudflareId } });
+    await failNext(account, "update", 500);
+
+    const rotated = await api.json<{ warning: string | null; clientSecret: string }>(
+      `/api/v1/service-tokens/${issued.token.id}/rotate`,
+      { method: "POST", token: owner, ...body({}) },
+    );
+
+    expect(rotated.status).toBe(200);
+    expect(rotated.body.clientSecret).toMatch(/^cfast_/);
+    expect(rotated.body.warning).toContain("did not re-enable");
+  });
+});
+
+describe("expiry after create and rotate", () => {
+  it("reads the expiry from Cloudflare, since the create response carries none", async () => {
+    const { body: issued } = await api.json<{
+      token: { cloudflare: { expiresAt: number } | null };
+    }>("/api/v1/service-tokens", {
+      method: "POST",
+      token: owner,
+      ...body({ name: "ci", duration: "720h" }),
+    });
+    expect(issued.token.cloudflare?.expiresAt).toBeGreaterThan(Date.now() + 700 * 3_600_000);
+  });
+
+  it("reports the expiry as unknown, not as never, when Cloudflare cannot be asked", async () => {
+    await failNext(account, "get", 503);
+    const { status, body: issued } = await api.json<{
+      token: { status: string; cloudflare: unknown };
+    }>("/api/v1/service-tokens", { method: "POST", token: owner, ...body({ name: "ci" }) });
+
+    expect(status).toBe(201);
+    expect(issued.token).toMatchObject({ status: "active", cloudflare: null });
+  });
+});
+
+describe("errors name their cause", () => {
+  it("does not tell the caller to retry a request Cloudflare rejected", async () => {
+    await failNext(account, "create", 400);
+    const { status, body: error } = await api.json<{ code: string; hint: string }>(
+      "/api/v1/service-tokens",
+      { method: "POST", token: owner, ...body({ name: "ci" }) },
+    );
+
+    expect(status).toBe(502);
+    expect(error.hint).toContain("will not change the answer");
+  });
+
+  it("surfaces a refused API token on the listing instead of reporting Cloudflare unavailable", async () => {
+    const wrong = await apiHarness({ bindings: configured(account, "not-the-token") });
+    const { status, body: error } = await wrong.json<{ code: string; hint: string }>(
+      "/api/v1/service-tokens",
+      { token: await wrong.ownerToken() },
+    );
+
+    expect(status).toBe(503);
+    expect(error.code).toBe("SERVICE_TOKENS_UNCONFIGURED");
+    expect(error.hint).toContain("Access: Service Tokens");
+  });
+});
+
+describe("revocation is final", () => {
+  it("records one revocation when two revokes race", async () => {
+    const { body: issued } = await create();
+
+    const results = await Promise.all([
+      api.fetch(`/api/v1/service-tokens/${issued.token.id}`, { method: "DELETE", token: owner }),
+      api.fetch(`/api/v1/service-tokens/${issued.token.id}`, { method: "DELETE", token: owner }),
+    ]);
+
+    expect(results.map((response) => response.status).sort()).toEqual([204, 404]);
+    const audits = await env.DB.prepare(
+      "SELECT COUNT(*) AS n FROM audit_log WHERE action = 'service_token.revoke'",
+    ).first<{ n: number }>();
+    expect(audits?.n).toBe(1);
+  });
+
+  it("refuses to re-enable the identity of a revoked token", async () => {
+    const { body: issued } = await create();
+    await api.fetch(`/api/v1/service-tokens/${issued.token.id}`, {
+      method: "DELETE",
+      token: owner,
+    });
+
+    const enabled = await api.json<{ code: string }>(
+      `/api/v1/identities/${issued.token.identityId}`,
+      {
+        method: "PATCH",
+        token: owner,
+        ...body({ disabled: false }),
+      },
+    );
+
+    expect(enabled.status).toBe(409);
+    expect(enabled.body.code).toBe("CONFLICT");
   });
 });

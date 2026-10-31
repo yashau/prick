@@ -15,11 +15,11 @@ import type { AuditEntryView, AuditPage } from "../core/audit.js";
 import type { Capabilities } from "../core/capabilities.js";
 import type {
   IssuedServiceTokenResult,
-  ReconcileResult,
   RotatedServiceTokenResult,
   ServiceTokenList,
   ServiceTokenRecord,
 } from "../core/service-tokens.js";
+import type { ReconcileResult } from "../core/service-token-reconcile.js";
 import type { EnvironmentSummary } from "../core/environments.js";
 import type { GrantRecord, IdentityRecord, UnknownIdentity } from "../core/identities.js";
 import type { EffectivePermissions } from "../core/permissions.js";
@@ -637,6 +637,8 @@ export const RotatedServiceTokenResponse = z
     clientSecret: z.string(),
     /** When the previous secret stops working; `null` means it already has. */
     previousSecretExpiresAt: EpochMillis.nullable(),
+    /** Set when the rotation succeeded but left something for the operator to do. */
+    warning: z.string().nullable(),
   })
   .strict();
 
@@ -651,6 +653,8 @@ export const ReconcileResultResponse = z
           clientId: z.string(),
           name: z.string().nullable(),
           applied: z.boolean(),
+          skipped: z.boolean(),
+          reason: z.string().nullable(),
           error: z.string().nullable(),
         })
         .strict(),

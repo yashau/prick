@@ -8303,6 +8303,15 @@
                               "string",
                               "null"
                             ]
+                          },
+                          "reason": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "skipped": {
+                            "type": "boolean"
                           }
                         },
                         "required": [
@@ -8311,6 +8320,8 @@
                           "clientId",
                           "name",
                           "applied",
+                          "skipped",
+                          "reason",
                           "error"
                         ],
                         "type": "object"
@@ -9030,13 +9041,20 @@
                         "cloudflare"
                       ],
                       "type": "object"
+                    },
+                    "warning": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
                     }
                   },
                   "required": [
                     "token",
                     "clientId",
                     "clientSecret",
-                    "previousSecretExpiresAt"
+                    "previousSecretExpiresAt",
+                    "warning"
                   ],
                   "type": "object"
                 }

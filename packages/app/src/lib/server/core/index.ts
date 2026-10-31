@@ -31,3 +31,4 @@ export * from "./keyring.js";
 export * from "./instance.js";
 export * from "./capabilities.js";
 export * from "./service-tokens.js";
+export * from "./service-token-reconcile.js";
