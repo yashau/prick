@@ -89,9 +89,11 @@ Read [Backup and recovery](/guides/backup-and-recovery) before you continue.
 
 ## 5. Create the Access application
 
-In the Cloudflare dashboard, under **Zero Trust → Access → Applications**, add a
-self-hosted application for the hostname from step 3, and add a policy for the
-people who should reach it.
+In the Cloudflare dashboard, under **Zero Trust → Access controls →
+Applications**, add a self-hosted application for the hostname from step 3, and
+attach an **Allow** policy for the people who should reach it. Policies are
+reusable: create one under **Access controls → Policies**, or pick an existing
+one from the application's policy list.
 
 From the application's **Overview** tab, copy the **Application Audience (AUD)
 tag** — you need it in the next step.

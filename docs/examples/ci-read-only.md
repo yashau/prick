@@ -16,24 +16,41 @@ how the job introduces itself.
 
 ## 1. Create the service token
 
-In the Cloudflare dashboard, go to **Zero Trust → Access → Service auth →
-Service Tokens** and create one.
+In the Cloudflare dashboard, go to **Zero Trust → Access controls → Service
+credentials → Service Tokens** and create one.
 
 You get two values. The client id ends in `.access` and is not secret. The client
-secret is **shown once** — copy it now.
+secret starts with `cfast_` and is **shown once** — copy it now.
 
 ```
 Client ID:     e367826f93b8d71185e03fe518aff3b4.access
-Client Secret: 3a4f…  (shown once)
+Client Secret: cfast_…  (shown once)
 ```
 
 ## 2. Let the token through Access
 
-The token still has to get past Cloudflare Access, and a policy that lists only
-human identities rejects it at the edge — before prick sees the request at all.
+The token still has to get past Cloudflare Access, and the Allow policy that
+admits your people does not admit it: a service token is authorised only by a
+policy whose action is **Service Auth**.
 
-On your prick application's policy, add an **include** rule of type **Service
-Auth**, and set the policy's action to **Service Auth** rather than Allow.
+1. Under **Zero Trust → Access controls → Policies**, add a policy with the
+   action **Service Auth** and an **include** rule using the **Service Token**
+   selector, set to the token you just created.
+2. Open your prick application under **Access controls → Applications** and
+   add that policy next to the existing Allow policy.
+
+The application now carries two policies, and each admits one kind of caller.
+Access evaluates Service Auth policies first, so the token is matched before
+the people's policy is consulted. Leave the people's policy on **Allow**: a
+Service Auth policy never shows a login page, so changing its action locks
+every person out of `prk login`.
+
+:::tip[One policy for every token]
+The **Any Access Service Token** selector admits every service token in the
+account, so a new token needs no policy edit. Access is then not the boundary
+between tokens — prick's grants are, and a new token still holds none until
+step 6.
+:::
 
 ## 3. Store the pair in your CI secret store
 
@@ -186,12 +203,19 @@ job without it.
 
 ## Troubleshooting
 
-| What you see                                 | What it means                                                                                                            |
-| -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
-| Access login page HTML instead of a response | The policy has no Service Auth rule, so the token never reaches prick                                                    |
-| `UNAUTHENTICATED`, exit 3                    | One half of the pair is missing, or they come from different prefixes                                                    |
-| `NOT_FOUND`, exit 5                          | The token holds no grant on this project — do step 6. Also what a grant on a different project or environment looks like |
-| `FORBIDDEN`, exit 4                          | The token can see the environment, but its role is too low for the operation                                             |
+| What you see                                                   | What it means                                                                                                            |
+| -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| An error naming Access's login page, or a non-JSON `401`/`403` | No Service Auth policy on the application admits this token, so the request never reaches prick — redo step 2            |
+| `UNAUTHENTICATED`, exit 3                                      | One half of the pair is missing, or they come from different prefixes                                                    |
+| `NOT_FOUND`, exit 5                                            | The token holds no grant on this project — do step 6. Also what a grant on a different project or environment looks like |
+| `FORBIDDEN`, exit 4                                            | The token can see the environment, but its role is too low for the operation                                             |
+
+Which form the first row takes depends on **strict service token
+authentication**, a setting of your Zero Trust organization. With it on, Access
+answers a token it does not authorise with a `401` or `403` and never redirects
+to the login page; it is always on for organizations created on or after
+2026-10-05, and older organizations can turn it on. With it off, Access
+redirects to its login page, and prk reports that redirect by name.
 
 Check the whole chain from the job itself:
 
