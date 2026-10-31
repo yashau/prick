@@ -523,6 +523,15 @@ export const WhoamiResponse = z
     bootstrap: z.boolean(),
     /** The name Access holds for this caller. Cosmetic; `null` when unknown. */
     displayName: z.string().nullable(),
+    /**
+     * This deployment's permanent instance id, 32 lowercase hex characters --
+     * the same value as the `Prick-Instance` response header. `null` when the
+     * database holds no instance row.
+     */
+    instance: z
+      .string()
+      .regex(/^[0-9a-f]{32}$/)
+      .nullable(),
   })
   .strict();
 

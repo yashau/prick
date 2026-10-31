@@ -28,3 +28,4 @@ export * from "./groups.js";
 export * from "./permissions.js";
 export * from "./audit.js";
 export * from "./keyring.js";
+export * from "./instance.js";

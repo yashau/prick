@@ -2,6 +2,7 @@ import { Hono } from "hono";
 
 import { APP_VERSION } from "../../../version.js";
 import { resolveEffectiveRole } from "../../auth/authorize.js";
+import { readInstanceId } from "../../core/instance.js";
 import { core } from "../context.js";
 import type { ApiEnv } from "../env.js";
 import { describe, jsonResponse } from "../openapi.js";
@@ -36,6 +37,11 @@ import { HealthResponse, WhoamiResponse } from "../schemas.js";
  *             opposite of the truth.
  *   version   the web app's CalVer (`APP_VERSION`), stamped from an `app-v*`
  *             tag by `mise run app:set`; `0.0.0-dev` when unstamped.
+ *
+ * The deployment's instance id is served only to authenticated callers -- in
+ * `whoami` and the `Prick-Instance` header -- and never here: it is a stable
+ * fingerprint that names WHICH deployment answered, which is more than "a prick
+ * server is listening here".
  */
 export function healthRoutes(): Hono<ApiEnv> {
   const app = new Hono<ApiEnv>();
@@ -81,7 +87,7 @@ export function whoamiRoutes(): Hono<ApiEnv> {
     describe({
       summary: "Who the server thinks you are",
       description:
-        "Derived entirely from the VERIFIED Access assertion plus the identity row it resolved — never from a header a client controls.\n\n`role` is the caller's **global** role, or `null`. It is not the maximum over every scope: a project-scoped admin reports `null` here and is still an admin of that project.\n\n`displayName` is the name Cloudflare Access holds for this caller, resolved lazily from `/cdn-cgi/access/get-identity` and cached on the identity row. It is COSMETIC — `subject` is the identifier, and nothing authorises on a name. It is `null` for service tokens, for providers that supply no name, and until the first lookup has run.\n\n`bootstrap` is true while the caller is an administrator by virtue of `BOOTSTRAP_ADMINS` alone. It goes false the moment the self-heal has converted the var into a real, revocable grant — which happens on the first authenticated request — and the UI shows a banner for exactly as long as it is true.",
+        "Derived entirely from the VERIFIED Access assertion plus the identity row it resolved — never from a header a client controls.\n\n`role` is the caller's **global** role, or `null`. It is not the maximum over every scope: a project-scoped admin reports `null` here and is still an admin of that project.\n\n`displayName` is the name Cloudflare Access holds for this caller, resolved lazily from `/cdn-cgi/access/get-identity` and cached on the identity row. It is COSMETIC — `subject` is the identifier, and nothing authorises on a name. It is `null` for service tokens, for providers that supply no name, and until the first lookup has run.\n\n`bootstrap` is true while the caller is an administrator by virtue of `BOOTSTRAP_ADMINS` alone. It goes false the moment the self-heal has converted the var into a real, revocable grant — which happens on the first authenticated request — and the UI shows a banner for exactly as long as it is true.\n\n`instance` is this deployment's permanent, random instance id: 32 lowercase hex characters, written into the database by a migration and never changed. It is the same value every authenticated response carries in the `Prick-Instance` header. A restored backup keeps it; a fresh database has a new one. `null` when the database holds no instance row.",
       tags: ["meta"],
       operationId: "whoami",
       responses: { 200: jsonResponse("The resolved identity.", WhoamiResponse) },
@@ -96,6 +102,7 @@ export function whoamiRoutes(): Hono<ApiEnv> {
         role: await resolveEffectiveRole(ctx, { type: "global" }),
         bootstrap: ctx.actor.bootstrap,
         displayName: ctx.actor.displayName,
+        instance: await readInstanceId(ctx.db),
       });
     },
   );

@@ -6913,7 +6913,7 @@
     },
     "/api/v1/whoami": {
       "get": {
-        "description": "Derived entirely from the VERIFIED Access assertion plus the identity row it resolved — never from a header a client controls.\n\n`role` is the caller's **global** role, or `null`. It is not the maximum over every scope: a project-scoped admin reports `null` here and is still an admin of that project.\n\n`displayName` is the name Cloudflare Access holds for this caller, resolved lazily from `/cdn-cgi/access/get-identity` and cached on the identity row. It is COSMETIC — `subject` is the identifier, and nothing authorises on a name. It is `null` for service tokens, for providers that supply no name, and until the first lookup has run.\n\n`bootstrap` is true while the caller is an administrator by virtue of `BOOTSTRAP_ADMINS` alone. It goes false the moment the self-heal has converted the var into a real, revocable grant — which happens on the first authenticated request — and the UI shows a banner for exactly as long as it is true.",
+        "description": "Derived entirely from the VERIFIED Access assertion plus the identity row it resolved — never from a header a client controls.\n\n`role` is the caller's **global** role, or `null`. It is not the maximum over every scope: a project-scoped admin reports `null` here and is still an admin of that project.\n\n`displayName` is the name Cloudflare Access holds for this caller, resolved lazily from `/cdn-cgi/access/get-identity` and cached on the identity row. It is COSMETIC — `subject` is the identifier, and nothing authorises on a name. It is `null` for service tokens, for providers that supply no name, and until the first lookup has run.\n\n`bootstrap` is true while the caller is an administrator by virtue of `BOOTSTRAP_ADMINS` alone. It goes false the moment the self-heal has converted the var into a real, revocable grant — which happens on the first authenticated request — and the UI shows a banner for exactly as long as it is true.\n\n`instance` is this deployment's permanent, random instance id: 32 lowercase hex characters, written into the database by a migration and never changed. It is the same value every authenticated response carries in the `Prick-Instance` header. A restored backup keeps it; a fresh database has a new one. `null` when the database holds no instance row.",
         "operationId": "whoami",
         "responses": {
           "200": {
@@ -6937,6 +6937,17 @@
                         {
                           "format": "uuid",
                           "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "instance": {
+                      "anyOf": [
+                        {
+                          "pattern": "^[0-9a-f]{32}$",
                           "type": "string"
                         },
                         {
@@ -6976,7 +6987,8 @@
                     "identityId",
                     "role",
                     "bootstrap",
-                    "displayName"
+                    "displayName",
+                    "instance"
                   ],
                   "type": "object"
                 }

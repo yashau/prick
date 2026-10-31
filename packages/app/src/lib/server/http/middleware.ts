@@ -3,8 +3,10 @@ import { bodyLimit as honoBodyLimit } from "hono/body-limit";
 
 import { loadRuntimeConfig, type RuntimeConfig } from "../core/context.js";
 import { PrickError, toPrickError } from "../core/errors.js";
+import { readInstanceId } from "../core/instance.js";
 import { getKeyring, type Keyring, type MasterKeyEnv } from "../crypto/index.js";
 import { uuidv7 } from "../db/ids.js";
+import type { ApiEnv } from "./env.js";
 
 /**
  * `Cache-Control: no-store` for reveal/export responses.
@@ -134,6 +136,43 @@ export const bodyLimit: MiddlewareHandler<{
       );
     },
   })(c, next);
+};
+
+/** The response header that names the deployment. See `instanceHeader`. */
+export const INSTANCE_HEADER = "Prick-Instance";
+
+/**
+ * `Prick-Instance: <id>` on every AUTHENTICATED response.
+ *
+ * The id is this deployment's permanent, random identity (`core/instance.ts`),
+ * and it is what a CLI profile pins: `prk` asks `whoami` before a command sends
+ * anything of its own and refuses a deployment other than the one the profile
+ * was created against. Carrying it on every response as well lets any client
+ * check any response it receives without an extra request.
+ *
+ * MOUNTED DIRECTLY AFTER `authenticate`, and that position is the guarantee
+ * that an unauthenticated caller never sees it. A 401 is thrown inside
+ * `authenticate`, so this middleware is never entered; `/health`, `/openapi.json`
+ * and `/docs` are mounted above both. The id is a fingerprint, and the one
+ * unauthenticated route promises to reveal nothing beyond "a prick server is
+ * listening here".
+ *
+ * ERROR RESPONSES CARRY IT TOO. The header is set AFTER `next()`: when a handler
+ * throws, Hono's dispatcher hands the error to `onError` and installs its
+ * response as `c.res` before control returns here, so the 403, 404 or 409 a
+ * route produced is labelled exactly like a 200.
+ *
+ * The id is read BEFORE `next()`, so a failed read fails the request ahead of
+ * the handler rather than replacing a completed write's response with a 500. It
+ * costs one query per D1 binding per isolate and a map lookup after that. No
+ * row, no header.
+ */
+export const instanceHeader: MiddlewareHandler<ApiEnv> = async (c, next) => {
+  const id = await readInstanceId(c.get("core").db);
+
+  await next();
+
+  if (id !== null) c.header(INSTANCE_HEADER, id);
 };
 
 // ---------------------------------------------------------------------------
