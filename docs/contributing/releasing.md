@@ -44,6 +44,14 @@ the server reports -- the instance id a profile pins, for example -- works
 against the deployments that already run that server, and the docs published
 last describe all of it at once.
 
+A deployed web app is rolled **forward**, never back past a release that
+changed what clients pin. Rolling the Worker back past the release that added
+the instance id makes every pinned profile fail with `INSTANCE_UNVERIFIED`, and
+restoring a database backup from before that release mints a new id, which
+pinned profiles refuse with `INSTANCE_MISMATCH`. Both are recovered on each
+client only by removing and re-adding the profile, so fix forward instead; see
+[Backup and recovery](/guides/backup-and-recovery).
+
 ## Versioning
 
 `YYYY.MMDD.N` — for example `2026.815.0`.

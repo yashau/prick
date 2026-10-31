@@ -166,8 +166,9 @@ three consequences:
   restored database answers with the id it had, and profiles that point at its
   hostname keep working.
 - **A backup from before that migration does not have one.** Restoring it and
-  applying the migrations generates a new id. Profiles pinned to the old id
-  refuse the restored database until they are re-added (below).
+  applying the migrations generates a new id, and every command from a profile
+  pinned to the old id fails with `INSTANCE_MISMATCH` until the profile is
+  re-added (below).
 - **A database loaded from another one's export shares its id.** A restore
   test, or a staging copy seeded from production, answers with production's id
   until you give it its own. A profile, a project's `[[allow]]` list or
@@ -186,6 +187,16 @@ A database built by running the migrations against an empty D1 also gets its
 own id. Put it behind a hostname that profiles already point at, and those
 profiles refuse to talk to it: the data behind that URL is no longer the data
 the profile was created against.
+
+### Do not roll the Worker back past the instance id
+
+A Worker deployed from a release before the instance id existed reports no id
+at all, and every command from a pinned profile then fails with
+`INSTANCE_UNVERIFIED`. Fix forward instead: redeploy the current release, whose
+migrations are additive and leave the instance row in place, and the pinned
+profiles work again with nothing to do on any client. If the older Worker has
+to stay, every client re-adds its profile against it, as below, and re-adds it
+again once the newer Worker returns with its id.
 
 To point a profile at a database with a new id, remove it and log in again:
 

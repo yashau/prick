@@ -229,9 +229,11 @@ they exist to keep:
   deployments cannot choose; a `.prick.local.toml` cannot select an instance
   the shared file does not list; the upward search stops at the repository
   root and at the home directory.
-- **A session never crosses servers.** A session an older `prk` wrote into
-  `credentials.json` for another server is moved to that server's profile, and
-  never used for the profile that owned the file.
+- **A session never crosses servers.** When an older `prk` writes another
+  server's session into `credentials.json`, the file is handed to that server's
+  profile and the previous owner moves to a fresh, empty file. No session file
+  is moved, so the older `prk` keeps its sign-in, and the hand-over happens
+  once.
 
 #### When the on-disk layout changes
 

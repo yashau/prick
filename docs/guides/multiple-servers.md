@@ -495,10 +495,12 @@ An older and a newer `prk` can share a machine. Both use `credentials.json`
 for the `default` profile, and the older one ignores `config.toml` and
 `credentials/`. If the older one signs in to a different server, it overwrites
 `credentials.json` with that server's session. The newer one never sends that
-session anywhere but the server it records: it moves it to the profile for
-that URL, or a new one, leaves `default` signed out, and says which profile
-received it and that `default` needs `prk login --profile default`. It never
-overwrites a profile that has a session of its own.
+session anywhere but the server it records: it hands `credentials.json` to the
+profile for that URL, or a new one, and moves `default` to a fresh, empty
+credential file, signed out, saying so and naming
+`prk login --profile default`. No session file is moved or deleted, so the
+older one keeps its sign-in. A profile that has a session of its own is never
+touched.
 
 ## Troubleshooting
 

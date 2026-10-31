@@ -243,15 +243,18 @@ next run tries again.
 
 If that older `prk` signs in to a different server, it overwrites
 `credentials.json` with that server's session. A session records the URL it
-was issued for, so it is never sent anywhere else: the next run moves it to
-the profile for its URL that has no session of its own, or to a new profile,
-and says so:
+was issued for, so it is never sent anywhere else. On the next run the newer
+`prk` hands `credentials.json` to the profile for that URL (one with no session
+of its own, or a new one) and moves the profile that owned the file to a
+fresh, empty credential file, signed out. Only `config.toml` changes: no
+session file is moved or deleted, so the older `prk` keeps its sign-in. It says
+so once:
 
 ```
-moved the session for prick.globex.example that an older prk wrote into credentials.json to profile `prick-globex-example`; profile `default` is signed out (`prk login --profile default`)
+the session in credentials.json is for prick.globex.example, signed in by an older prk; it now belongs to profile `prick-globex-example`, and profile `default` is signed out (`prk login --profile default`)
 ```
 
-A profile that already has a session is never overwritten.
+A profile that already has a session is never touched.
 
 #### The roaming profile on Windows
 
