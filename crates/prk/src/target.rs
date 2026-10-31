@@ -455,20 +455,22 @@ fn resolve_with(
     })
 }
 
-/// Moves a session an older `prk` wrote into the legacy file to the profile it
-/// belongs to.
+/// Hands the legacy file to the profile whose server an older `prk` signed in
+/// to.
 ///
 /// An older build knows only `credentials.json`, so its `prk login <other>`
 /// replaces the session of whichever profile uses that file with one for
 /// another server. The URL check means that session is never sent anywhere
-/// but its own server; this puts it where it can be used: into the one
-/// profile for that URL that has no session of its own, or into a new
-/// profile. A profile that already has a session is never overwritten, and
-/// the profile that owned the file is left signed out.
+/// but its own server; this makes it usable again without moving it. Only
+/// `config.toml` changes: the profile for the session's URL (an existing one
+/// with no session of its own, or a new one) takes `credentials.json`, and the
+/// profile that owned it moves to a fresh, empty credential file and is signed
+/// out. No session file is written, moved or deleted, so the older build keeps
+/// its sign-in, and a profile that already has a session is never touched.
 ///
 /// # Errors
 ///
-/// [`TargetError::Store`] if a file cannot be written.
+/// [`TargetError::Store`] if `config.toml` cannot be written.
 fn adopt_legacy_session(
     store: &ProfileStore,
     config: &prick_core::profile::Config,
@@ -478,8 +480,7 @@ fn adopt_legacy_session(
     else {
         return Ok(None);
     };
-    let legacy = store.legacy_tokens();
-    let Ok(Some(session)) = legacy.load() else {
+    let Ok(Some(session)) = store.legacy_tokens().load() else {
         return Ok(None);
     };
     if prick_core::profile::same_server(&session.api_url, &profile.api_url) {
@@ -491,39 +492,39 @@ fn adopt_legacy_session(
         .into_iter()
         .filter(|name| name != owner)
         .collect();
-    let (name, destination) = match candidates.as_slice() {
-        [] => {
-            let name = config.auto_name(&session.api_url);
-            let mut adopted = Profile::new(
-                &session.api_url,
-                prick_auth::profiles::new_credential_id().map_err(ProfileStoreError::from)?,
-            );
-            adopted.issuer = Some(session.issuer.clone());
-            (name, adopted)
-        }
+    let (name, existing) = match candidates.as_slice() {
+        [] => (config.auto_name(&session.api_url), None),
         [one] => {
-            let existing = config.profiles[*one].clone();
-            if store.tokens(&existing).path().exists() {
+            let existing = &config.profiles[*one];
+            if store.tokens(existing).path().exists() {
                 return Ok(None);
             }
-            ((*one).to_owned(), existing)
+            ((*one).to_owned(), Some(existing.clone()))
         }
         _ => return Ok(None),
     };
 
-    store.tokens(&destination).save(&session).map_err(ProfileStoreError::from)?;
+    let owner = owner.clone();
+    let fresh = prick_auth::profiles::new_credential_id().map_err(ProfileStoreError::from)?;
     store.update(|config| -> Result<(), TargetError> {
-        if !config.profiles.contains_key(&name) {
-            *config =
-                prick_core::profile::edit::add(config, &name, destination.clone(), false, false)?;
+        if let Some(previous) = config.profiles.get_mut(&owner) {
+            previous.credential.clone_from(&fresh);
+        }
+        if let Some(adopted) = config.profiles.get_mut(&name) {
+            LEGACY_CREDENTIAL.clone_into(&mut adopted.credential);
+        } else {
+            let mut adopted = existing
+                .clone()
+                .unwrap_or_else(|| Profile::new(&session.api_url, LEGACY_CREDENTIAL));
+            LEGACY_CREDENTIAL.clone_into(&mut adopted.credential);
+            adopted.issuer.get_or_insert_with(|| session.issuer.clone());
+            *config = prick_core::profile::edit::add(config, &name, adopted, false, false)?;
         }
         Ok(())
     })?;
-    legacy.clear().map_err(ProfileStoreError::from)?;
 
     Ok(Some(format!(
-        "moved the session for {} that an older prk wrote into {LEGACY_CREDENTIAL} to profile `{name}`; \
-         profile `{owner}` is signed out (`prk login --profile {owner}`)",
+        "the session in {LEGACY_CREDENTIAL} is for {}, signed in by an older prk; it now belongs to          profile `{name}`, and profile `{owner}` is signed out (`prk login --profile {owner}`)",
         host_of(&session.api_url)
     )))
 }

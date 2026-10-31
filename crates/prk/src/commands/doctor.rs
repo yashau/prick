@@ -242,10 +242,20 @@ fn server_checks(context: &mut Context, out: Output) -> Vec<Check> {
                     Status::Ok,
                     format!("{} ({})", identity.subject, identity.kind),
                 ));
-                checks.push(match identity.instance {
-                    Some(_) => {
+                checks.push(match identity.instance.as_deref() {
+                    // Verified against a pin, an expectation or a project file.
+                    Some(_) if context.target().verified_instance.is_some() => {
                         Check::new("instance", Status::Ok, context.target().instance_label())
                     }
+                    // Reported, with nothing here to check it against.
+                    Some(id) => Check::new(
+                        "instance",
+                        Status::Ok,
+                        format!(
+                            "instance {} (reported; no profile pins it)",
+                            prick_core::profile::short_instance(id)
+                        ),
+                    ),
                     None => Check::new(
                         "instance",
                         Status::Warn,

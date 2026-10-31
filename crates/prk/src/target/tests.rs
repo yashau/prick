@@ -388,12 +388,21 @@ fn a_session_an_older_prk_wrote_for_another_server_is_moved_to_its_own_profile()
     let adopted = config.profiles_for_url(GLOBEX_URL);
     assert_eq!(adopted.len(), 1);
     let adopted = &config.profiles[adopted[0]];
-    assert!(store.tokens(adopted).load().unwrap().is_some(), "the session moved with it");
-    assert!(
-        store.legacy_tokens().load().unwrap().is_none(),
-        "the profile that owned the legacy file is signed out, not handed another server's session"
-    );
-    assert_eq!(config.profiles["default"].api_url, ACME_URL);
+    assert_eq!(adopted.credential, "credentials.json", "the adopted profile takes the legacy file");
+    assert!(store.tokens(adopted).load().unwrap().is_some());
+    // The older prk still finds its session exactly where it left it.
+    let legacy = store.legacy_tokens().load().unwrap().expect("the legacy file is untouched");
+    assert_eq!(legacy.api_url, GLOBEX_URL);
+    // The previous owner moved to a fresh file and is signed out, never handed
+    // another server's session.
+    let previous = &config.profiles["default"];
+    assert_eq!(previous.api_url, ACME_URL);
+    assert_ne!(previous.credential, "credentials.json");
+    assert!(store.tokens(previous).load().unwrap().is_none());
+
+    // It happens once.
+    let again = resolve_with(&global(&[]), &EnvVars::default(), &store).unwrap();
+    assert!(again.notes.is_empty(), "{:?}", again.notes);
 }
 
 #[test]
