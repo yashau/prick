@@ -26,10 +26,11 @@ on:
   push:
     tags:
       - "v*"
-  # Dry runs only. A dispatched run builds every binary and stages every npm
-  # package so the pipeline can be exercised without claiming a version; the
-  # publish and release jobs below are gated on the event being a tag push, so a
-  # dispatch can never publish however its inputs are set.
+  # Dry runs only. A dispatched run builds every binary, packs and smoke-tests
+  # every npm package so the pipeline can be exercised without claiming a
+  # version; every step that publishes and the release job below are gated on
+  # the event being a tag push, so a dispatch can never publish however its
+  # inputs are set.
   workflow_dispatch:
     inputs:
       dry_run:
@@ -40,9 +41,10 @@ on:
 permissions:
   contents: read
 
-# Never cancel a release. A cancelled run between `npm publish` and the dist-tag
-# flip leaves the registry in a half-published state that no rerun can undo,
-# because npm versions are immutable.
+# Never cancel a release. A run cancelled between the first `npm publish` and
+# the parent's leaves the release on the registry only in part, and npm versions
+# are immutable: nothing undoes the packages that landed, and only a rerun of
+# the same tag finishes it.
 concurrency:
   group: cli-release
   cancel-in-progress: false
@@ -130,8 +132,8 @@ jobs:
           # A cold toolchain install costs ~30s. Releases are not hot-path.
           cache: false
 
-      # A dispatched run can never publish (see the `if:` on publish-npm and
-      # github-release). Saying so out loud beats letting somebody dispatch with
+      # A dispatched run can never publish (see the `if:` on publish-npm's
+      # publish steps and on github-release). Saying so out loud beats letting somebody dispatch with
       # dry_run=false and wonder why nothing reached npm.
       - name: Refuse a non-dry dispatch
         if: github.event_name == 'workflow_dispatch' && !inputs.dry_run
@@ -522,7 +524,7 @@ jobs:
           upload-release-assets: false
 
       # -----------------------------------------------------------------------
-      # Gated on the TRIGGER, exactly like publish-npm and github-release. An
+      # Gated on the TRIGGER, exactly like npm publishing and github-release. An
       # attestation is a signed, publicly discoverable claim that a named
       # artefact came out of this repository -- and a dispatched run produces
       # archives nobody can download, under a version it never claimed. Signing
@@ -569,21 +571,40 @@ jobs:
   # ---------------------------------------------------------------------------
   # Publish.
   #
-  # npm versions are immutable; dist-tags are not. That asymmetry is the only
-  # atomicity primitive available, so everything lands under `next` first and
-  # `latest` moves only once all ten packages are readable from the registry
-  # and a real install has produced a working binary. The parent moves LAST:
-  # until it does, `npm install @yashau/prick` still resolves to the previous
-  # good release.
+  # Users install `@yashau/prick`, and its optionalDependencies pin every
+  # platform package by EXACT version. So the parent is the release: until its
+  # new version is on the registry, an install resolves the previous parent,
+  # whose pins all name versions that are still published. Publishing it LAST
+  # is therefore the whole atomicity story, and it needs nothing but a plain
+  # `npm publish` -- which tags `latest` as part of the publish, the one
+  # dist-tag write npm's trusted publishing permits. (A separate
+  # `npm dist-tag add` over the OIDC session is a bare 401: its Allowed-actions
+  # list has no dist-tag entry. Confirmed on v2026.816.2.)
+  #
+  #   1. the eight platform packages publish, and each is waited on until it is
+  #      readable from the registry;
+  #   2. the parent and the MCP server are smoke-tested from tarballs packed
+  #      here, the parent resolving its platform package from the registry
+  #      exactly as a user's install does;
+  #   3. the MCP server publishes, then the parent. The parent's publish is the
+  #      moment the release goes live.
+  #
+  # The platform packages go to `latest` too. Nothing resolves one by dist-tag
+  # -- the parent names an exact version -- so the tag is only what npmjs.com
+  # and `npm view` show, and keeping it current on all ten is the accurate
+  # display. A platform package reaching `latest` before its parent is harmless
+  # for the same reason.
+  #
+  # THIS JOB RUNS ON A DRY RUN TOO. Every step that writes to the registry is
+  # gated on the tag push; everything else -- the mode-bit gate, the packing
+  # and both smoke tests -- runs on a rehearsal, because four defects in this
+  # workflow reached production from steps that had never executed before a
+  # release. A rehearsal has no platform package on the registry, so its
+  # launcher smoke test installs the linux-x64-gnu tarball beside the parent's.
   # ---------------------------------------------------------------------------
   publish-npm:
     name: publish-npm
     needs: [version, package]
-    # The TRIGGER is the gate, not an input. A dispatched run has claimed no
-    # version, so publishing from one would put a version on npm that no tag
-    # points at -- and npm versions are immutable. `dry_run` is documentation;
-    # this line is enforcement.
-    if: github.event_name == 'push'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
@@ -629,7 +650,7 @@ jobs:
       # anybody runs `prk`.
       #
       # v2026.816.0 shipped exactly that. The bug was unreachable until then:
-      # this job is gated on the tag push, so no dry run had ever executed a
+      # this job was gated on the tag push, so no dry run had ever executed a
       # single step of it. The smoke test below did catch it -- after ten
       # immutable versions were already on the registry, which is why the
       # assertion that follows exists.
@@ -703,15 +724,20 @@ jobs:
           npm install --global npm@11.19.1
           npm --version
 
-      - name: Publish under the `next` tag
+      # -----------------------------------------------------------------------
+      # Sort the ten package trees into their three roles and pack the two the
+      # smoke tests install. Package names are read out of the generated
+      # manifests rather than hardcoded here, so renaming a platform package
+      # cannot desynchronise the publish list from what was actually assembled.
+      # -----------------------------------------------------------------------
+      - name: Sort and pack the packages
+        id: packages
         run: |
           set -euo pipefail
 
-          # Package names are read out of the generated manifests rather than
-          # hardcoded here, so renaming a platform package cannot desynchronise
-          # the publish list from what was actually assembled.
           parent=""
           mcp=""
+          host=""
           platforms=()
           for manifest in dist/npm/*/package.json; do
             dir="$(dirname "$manifest")"
@@ -719,7 +745,11 @@ jobs:
             case "$name" in
               "@yashau/prick")     parent="$dir" ;;
               "@yashau/prick-mcp") mcp="$dir" ;;
-              *)                   platforms+=("$dir") ;;
+              *)
+                platforms+=("$dir")
+                # The runner's own platform: ubuntu-24.04 on x64 is glibc.
+                if [ "$name" = "@yashau/prick-linux-x64-gnu" ]; then host="$dir"; fi
+                ;;
             esac
           done
 
@@ -736,40 +766,59 @@ jobs:
             printf '%s\n' "${platforms[@]}"
             exit 1
           fi
+          if [ -z "$host" ]; then
+            echo "::error::No @yashau/prick-linux-x64-gnu package found under dist/npm/; the launcher smoke test runs on it."
+            exit 1
+          fi
 
-          publish_one() {
-            local dir="$1" name version
-            name="$(jq -r '.name' "${dir}/package.json")"
-            version="$(jq -r '.version' "${dir}/package.json")"
-            # Idempotent: a rerun of the same tag resumes rather than failing on
-            # the packages that already landed.
-            if npm view "${name}@${version}" version >/dev/null 2>&1; then
-              echo "${name}@${version} already published, skipping"
-              return 0
-            fi
-            echo "publishing ${name}@${version}"
-            npm publish "$dir" --tag next --access public
+          mkdir -p dist/tgz
+          pack() {
+            npm pack "./$1" --pack-destination dist/tgz --json | jq -r '"\(env.PWD)/dist/tgz/\(.[0].filename)"'
           }
 
-          # Platform packages first. The parent's optionalDependencies point at
-          # them by exact version, so publishing the parent first would create a
-          # window in which it is installable and broken.
-          for dir in "${platforms[@]}"; do
-            publish_one "$dir"
-          done
-          # The MCP server depends on nothing here and nothing here depends on
-          # it, so its only ordering constraint is the one below: the parent is
-          # the last thing this release does.
-          publish_one "$mcp"
-          publish_one "$parent"
+          {
+            echo "parent=${parent}"
+            echo "mcp=${mcp}"
+            echo "platforms=${platforms[*]}"
+            echo "parent_tgz=$(pack "$parent")"
+            echo "mcp_tgz=$(pack "$mcp")"
+            echo "host_tgz=$(pack "$host")"
+          } >> "$GITHUB_OUTPUT"
 
-      - name: Verify registry propagation
+      # Each publish is idempotent -- an `npm view` check comes first -- so a
+      # rerun of the same tag resumes rather than failing on the packages that
+      # already landed. No `--tag`: a plain publish tags `latest`.
+      - name: Publish the platform packages
+        if: github.event_name == 'push'
         env:
+          PLATFORMS: ${{ steps.packages.outputs.platforms }}
           VERSION: ${{ needs.version.outputs.version }}
         run: |
           set -euo pipefail
-          for manifest in dist/npm/*/package.json; do
-            name="$(jq -r '.name' "$manifest")"
+          read -r -a dirs <<< "$PLATFORMS"
+          for dir in "${dirs[@]}"; do
+            name="$(jq -r '.name' "${dir}/package.json")"
+            if npm view "${name}@${VERSION}" version >/dev/null 2>&1; then
+              echo "${name}@${VERSION} already published, skipping"
+              continue
+            fi
+            echo "publishing ${name}@${VERSION}"
+            npm publish "$dir" --access public
+          done
+
+      # The parent must not publish until every package its optionalDependencies
+      # pin is readable, or there is a window in which `@yashau/prick` is
+      # `latest` and its install finds no binary.
+      - name: Wait for the platform packages
+        if: github.event_name == 'push'
+        env:
+          PLATFORMS: ${{ steps.packages.outputs.platforms }}
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          read -r -a dirs <<< "$PLATFORMS"
+          for dir in "${dirs[@]}"; do
+            name="$(jq -r '.name' "${dir}/package.json")"
             ok=0
             for attempt in $(seq 1 30); do
               if npm view "${name}@${VERSION}" version >/dev/null 2>&1; then
@@ -780,7 +829,7 @@ jobs:
               sleep 10
             done
             if [ "$ok" -ne 1 ]; then
-              echo "::error::${name}@${VERSION} never became readable from the registry. The latest dist-tag has NOT been moved; the previous release is still current."
+              echo "::error::${name}@${VERSION} never became readable from the registry. The parent has NOT been published; the previous release is still current."
               exit 1
             fi
             echo "${name}@${VERSION} is readable"
@@ -788,6 +837,9 @@ jobs:
 
       - name: Install smoke test # zizmor: ignore[adhoc-packages]
         env:
+          EVENT: ${{ github.event_name }}
+          PARENT_TGZ: ${{ steps.packages.outputs.parent_tgz }}
+          HOST_TGZ: ${{ steps.packages.outputs.host_tgz }}
           VERSION: ${{ needs.version.outputs.version }}
         run: |
           set -euo pipefail
@@ -798,9 +850,17 @@ jobs:
           # --ignore-scripts on purpose: a security-conscious user runs it, and
           # the whole reason these are real platform packages rather than a
           # postinstall downloader is that they must work without scripts.
-          # Installing from the public registry with no lockfile is the point:
-          # this reproduces exactly what a user gets.
-          npm install --ignore-scripts "@yashau/prick@${VERSION}"
+          #
+          # The parent comes from the tarball that is about to be published. On
+          # a release its platform package comes from the public registry, with
+          # no lockfile, which is exactly what a user's install resolves. A
+          # rehearsal published nothing, so the platform tarball is installed
+          # beside it; npm takes it as satisfying the exact-version pin.
+          if [ "$EVENT" = "push" ]; then
+            npm install --ignore-scripts "$PARENT_TGZ"
+          else
+            npm install --ignore-scripts "$PARENT_TGZ" "$HOST_TGZ"
+          fi
 
           bin="./node_modules/.bin/prk"
           [ -x "$bin" ] || { echo "::error::prk was not installed as an executable."; exit 1; }
@@ -813,10 +873,10 @@ jobs:
           esac
           popd >/dev/null
 
-          # Check the artefact that actually came back from the registry, not
-          # just the one built upstairs. The parent package's bin is a Node
-          # shim, so the native executable is located inside whichever platform
-          # package the install resolved to.
+          # Check the artefact the install actually produced, not just the one
+          # built upstairs. The parent package's bin is a Node shim, so the
+          # native executable is located inside whichever platform package the
+          # install resolved to.
           real="$(find "${work}/node_modules" -type f -name prk -not -path '*/.bin/*' -print -quit)"
           if [ -z "$real" ]; then
             echo "::error::Could not find the installed native binary under node_modules."
@@ -836,7 +896,7 @@ jobs:
           # That one matched "(N crate dependencies)" -- `cargo audit`'s
           # lockfile wording, which `cargo audit bin` never emits -- so it could
           # never match and always failed. The fix landed in one place because
-          # only one place had ever run; this job is gated on the tag push, so
+          # only one place had ever run; this job was gated on the tag push, so
           # its copy sat unexecuted until v2026.816.0.
           count="$(
             printf '%s\n' "$out" \
@@ -844,11 +904,11 @@ jobs:
               | head -n 1
           )"
           if [ -z "$count" ] || [ "$count" -lt 20 ]; then
-            echo "::error::The published binary carries no readable embedded dependency list (found '${count:-none}')."
+            echo "::error::The installed binary carries no readable embedded dependency list (found '${count:-none}')."
             exit 1
           fi
           if [ "$status" -ne 0 ]; then
-            echo "::error::cargo audit bin reported findings against the published binary."
+            echo "::error::cargo audit bin reported findings against the installed binary."
             exit 1
           fi
 
@@ -859,13 +919,14 @@ jobs:
       # the server reports over MCP is the one being released.
       - name: MCP install smoke test # zizmor: ignore[adhoc-packages]
         env:
+          MCP_TGZ: ${{ steps.packages.outputs.mcp_tgz }}
           VERSION: ${{ needs.version.outputs.version }}
         run: |
           set -euo pipefail
           work="$(mktemp -d)"
           cd "$work"
           npm init --yes >/dev/null
-          npm install --ignore-scripts "@yashau/prick-mcp@${VERSION}"
+          npm install --ignore-scripts "$MCP_TGZ"
 
           bin="./node_modules/.bin/prick-mcp"
           [ -x "$bin" ] || { echo "::error::prick-mcp was not installed as an executable."; exit 1; }
@@ -876,13 +937,13 @@ jobs:
           echo "prick-mcp --version -> ${reported}"
           case "$reported" in
             *"$VERSION"*) ;;
-            *) echo "::error::The published MCP server reports '${reported}', expected it to contain '${VERSION}'."; exit 1 ;;
+            *) echo "::error::The packed MCP server reports '${reported}', expected it to contain '${VERSION}'."; exit 1 ;;
           esac
 
-          # Invariant 3, checked against what came back from the registry rather
-          # than against what was rendered upstairs. The workspace manifest uses
-          # `workspace:` and `catalog:`; npm publishes those verbatim, and a
-          # consumer cannot resolve either.
+          # Invariant 3, checked against the manifest inside the tarball that is
+          # about to be published rather than against what was rendered
+          # upstairs. The workspace manifest uses `workspace:` and `catalog:`;
+          # npm publishes those verbatim, and a consumer cannot resolve either.
           published="./node_modules/@yashau/prick-mcp/package.json"
           if ! node -e '
             const pkg = require(require("path").resolve(process.argv[1]));
@@ -896,80 +957,58 @@ jobs:
             }
             if (bad.length > 0) { console.error(bad.join("\n")); process.exit(1); }
           ' "$published"; then
-            echo "::error::The published MCP manifest carries a dependency spec npm cannot resolve."
+            echo "::error::The packed MCP manifest carries a dependency spec npm cannot resolve."
             exit 1
           fi
 
-      - name: Move `latest`, or hand the promotion over
+      # The release goes live here. The MCP server depends on nothing here and
+      # nothing here depends on it, so its only ordering constraint is that the
+      # parent's publish is the last thing this release does.
+      - name: Publish the MCP server, then the parent
+        if: github.event_name == 'push'
         env:
-          # npm's trusted publishing grants `npm publish` and NOTHING else --
-          # its Allowed-actions list has no dist-tag entry, and a dist-tag PUT
-          # over the OIDC session returns a bare 401. Confirmed on v2026.816.2,
-          # not assumed.
-          #
-          # npm will only issue the needed credential as a scope-wide
-          # read/write token, which is exactly the standing secret OIDC
-          # publishing exists to avoid. So the flip is OPTIONAL: with the secret
-          # set, CI promotes; without it, CI stops at a fully published,
-          # fully smoke-tested release and prints what to run.
-          #
-          # Published-but-unpromoted is a COMPLETE state, not a failure. Every
-          # version is on the registry and immutable, and `latest` still points
-          # where it did, so nobody is served a release nobody promoted. Failing
-          # the job here would only cost the GitHub release below.
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          MCP: ${{ steps.packages.outputs.mcp }}
+          PARENT: ${{ steps.packages.outputs.parent }}
           VERSION: ${{ needs.version.outputs.version }}
         run: |
           set -euo pipefail
-
-          parent=""
-          mcp=""
-          platforms=()
-          for manifest in dist/npm/*/package.json; do
-            name="$(jq -r '.name' "$manifest")"
-            case "$name" in
-              "@yashau/prick")     parent="$name" ;;
-              "@yashau/prick-mcp") mcp="$name" ;;
-              *)                   platforms+=("$name") ;;
-            esac
+          for dir in "$MCP" "$PARENT"; do
+            name="$(jq -r '.name' "${dir}/package.json")"
+            if npm view "${name}@${VERSION}" version >/dev/null 2>&1; then
+              echo "${name}@${VERSION} already published, skipping"
+              continue
+            fi
+            echo "publishing ${name}@${VERSION}"
+            npm publish "$dir" --access public
           done
 
-          # Parent last, on both paths. Until `@yashau/prick` moves, an install
-          # resolves the previous parent, whose optionalDependencies pin exact
-          # platform versions that are all still on the registry -- so there is
-          # no half-promoted state a user can land in.
-          ordered=("${platforms[@]}" "$mcp" "$parent")
-
-          if [ -z "${NPM_TOKEN:-}" ]; then
-            {
-              echo "### \`${VERSION}\` is published, and not yet promoted"
-              echo
-              echo "All ten packages are on npm under \`next\` and passed both smoke tests."
-              echo "\`latest\` is unchanged, so no installer resolves this release yet."
-              echo
-              echo "Promote it, parent last:"
-              echo
-              echo '```bash'
-              for name in "${ordered[@]}"; do
-                echo "npm dist-tag add \"${name}@${VERSION}\" latest"
-              done
-              echo '```'
-              echo
-              echo "Set the \`NPM_TOKEN\` secret to have CI do this instead."
-            } >> "$GITHUB_STEP_SUMMARY"
-
-            echo "No NPM_TOKEN set — leaving the promotion to a human."
-            echo "The commands are in this run's job summary."
-            exit 0
-          fi
-
-          printf '//registry.npmjs.org/:_authToken=%s\n' "$NPM_TOKEN" >> "${HOME}/.npmrc"
-
-          # This is the flip. Everything above it is reversible by doing nothing.
-          for name in "${ordered[@]}"; do
-            npm dist-tag add "${name}@${VERSION}" latest
+      # The github-release job needs this one, so a release whose parent never
+      # became readable does not go on to put a release page up for it.
+      - name: Wait for the MCP server and the parent
+        if: github.event_name == 'push'
+        env:
+          MCP: ${{ steps.packages.outputs.mcp }}
+          PARENT: ${{ steps.packages.outputs.parent }}
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          for dir in "$MCP" "$PARENT"; do
+            name="$(jq -r '.name' "${dir}/package.json")"
+            ok=0
+            for attempt in $(seq 1 30); do
+              if npm view "${name}@${VERSION}" version >/dev/null 2>&1; then
+                ok=1
+                break
+              fi
+              echo "waiting for ${name}@${VERSION} (attempt ${attempt})"
+              sleep 10
+            done
+            if [ "$ok" -ne 1 ]; then
+              echo "::error::${name}@${VERSION} was published but never became readable from the registry."
+              exit 1
+            fi
+            echo "${name}@${VERSION} is readable"
           done
-
           echo "### Published \`${VERSION}\` to npm as \`latest\`" >> "$GITHUB_STEP_SUMMARY"
 
   # ---------------------------------------------------------------------------
@@ -999,15 +1038,10 @@ jobs:
   publish-crates:
     name: publish-crates
     needs: [version, package, publish-npm]
-    # `!cancelled()` rather than the default, which is `success()`: publish-npm
-    # is SKIPPED on a dispatch, and a skipped dependency makes `success()` false
-    # -- which would silently take the dry-run coverage above away again.
-    #
-    # But `!cancelled()` also switches OFF the implicit "every dependency
-    # succeeded" gate, so a release must re-assert it by hand. Without the second
-    # clause, a tag push whose publish-npm failed would go on to put five
-    # immutable crates on crates.io for a release that exists nowhere else.
-    if: ${{ !cancelled() && needs.package.result == 'success' && (github.event_name != 'push' || needs.publish-npm.result == 'success') }}
+    # The default `success()` gate is the right one: publish-npm runs on a
+    # dispatch as well, so a rehearsal reaches this job, and a tag push whose
+    # publish-npm failed does not go on to put five immutable crates on
+    # crates.io for a release that exists nowhere else.
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     permissions:
@@ -1156,7 +1190,7 @@ jobs:
   github-release:
     name: github-release
     needs: [version, package, publish-npm]
-    # Same gate as publish-npm: only a tag push has a tag to release.
+    # Same gate as npm publishing: only a tag push has a tag to release.
     if: github.event_name == 'push'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -1242,11 +1276,10 @@ jobs:
   # tested script (scripts/dist-manifests.test.mjs), and a rehearsal prints
   # exactly what a release would commit into the job summary.
   #
-  # The commit is OPTIONAL, on the same terms as npm's `latest` promotion above:
-  # with the GitHub App configured it happens, and without it the job prints the
-  # manifests and exits 0. A release whose bucket has not caught up is a
-  # complete release -- the archives, the attestations and the GitHub release
-  # page are all already published.
+  # The commit is OPTIONAL: with the GitHub App configured it happens, and
+  # without it the job prints the manifests and exits 0. A release whose bucket
+  # has not caught up is a complete release -- the archives, the attestations
+  # and the GitHub release page are all already published.
   # ---------------------------------------------------------------------------
   publish-manifests:
     name: publish-manifests

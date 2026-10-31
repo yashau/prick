@@ -51,13 +51,15 @@ export const TAG_GLOB = tagGlob(TAG_PREFIX);
 /**
  * The ten packages a real release publishes, in publish order.
  *
- * The parent is LAST on purpose. Everything publishes under `--tag next`, and
- * `latest` only moves once all ten verify and a real `npm install && prk
- * --version` smoke test passes — parent last, so `latest` never points at a
+ * The parent is LAST on purpose. Its optionalDependencies pin the platform
+ * packages by exact version, and a plain `npm publish` tags it `latest`, so
+ * its publish is the moment a release goes live. It waits until all eight
+ * platform packages are readable from the registry and a real `npm install &&
+ * prk --version` of its packed tarball passes, so `latest` never points at a
  * shim whose platform packages are not yet resolvable.
  *
  * The MCP server sits between the two groups: nothing depends on it, so its
- * position is only a matter of keeping the parent's flip the final act.
+ * position is only a matter of keeping the parent's publish the final act.
  *
  * @returns {string[]}
  */
