@@ -103,12 +103,12 @@ mise run version:check
 
 ## Cutting a CLI release
 
-| Task                  | Does                                                                                                                              |
-| --------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| `mise run cli:next`   | Print the version and tag the next release would take. Read-only, never prompts, works at zero tags                               |
-| `mise run cli:dry`    | Dispatch with `dry_run=true` on the current branch — builds all eight binaries and stages the ten npm packages, publishes nothing |
-| `mise run cli:cut`    | Tag and push, which builds, publishes to npm and creates the GitHub Release                                                       |
-| `mise run cli:status` | Follow the latest run. Read-only                                                                                                  |
+| Task                  | Does                                                                                                                                      |
+| --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| `mise run cli:next`   | Print the version and tag the next release would take. Read-only, never prompts, works at zero tags                                       |
+| `mise run cli:dry`    | Dispatch with `dry_run=true` on the current branch — builds all eight binaries, packs and smoke-tests the npm packages, publishes nothing |
+| `mise run cli:cut`    | Tag and push, which builds, publishes to npm and creates the GitHub Release                                                               |
+| `mise run cli:status` | Follow the latest run. Read-only                                                                                                          |
 
 ```bash
 mise run cli:next
@@ -141,8 +141,8 @@ The tag it pushes is the trigger. Nothing else starts a release: `cli-release.ym
 has no branch trigger, and its `workflow_dispatch` can only ever dry-run.
 
 :::danger[It is not undoable]
-npm versions are immutable. Recovery is limited to rolling the `latest` dist-tag
-back and deprecating. The fix for a bad release is to roll **forward**:
+npm versions are immutable. Recovery is limited to moving the `latest` dist-tag
+back by hand and deprecating. The fix for a bad release is to roll **forward**:
 `2026.815.1`. **Never** delete and re-push a tag.
 :::
 
@@ -226,10 +226,11 @@ version → build (6 legs → 8 artefacts) → package → publish-npm ─┬─
                                                                                      └─→ publish-winget
 ```
 
-Everything left of `publish-npm` runs on a dispatched dry run too. Of the four
-jobs to its right, two do: `publish-crates` packages and verifies with
-`--dry-run`, and `publish-manifests` renders both files and prints them.
-`github-release` and `publish-winget` are push-only.
+Everything up to and including `publish-npm` runs on a dispatched dry run too;
+`publish-npm` packs and smoke-tests every package and skips only its publishing
+steps. Of the four jobs to its right, two run: `publish-crates` packages and
+verifies with `--dry-run`, and `publish-manifests` renders both files and prints
+them. `github-release` and `publish-winget` are push-only.
 
 ### version
 
@@ -281,17 +282,38 @@ than ship a binary whose audit data is gone.
 
 ### publish-npm
 
-npm versions are immutable; dist-tags are not. That asymmetry is the whole
-strategy.
+Users install `@yashau/prick`, and its `optionalDependencies` pin every platform
+package by exact version. The parent is therefore the release: until its new
+version is published, an install resolves the previous parent, whose pins all
+name versions that are still on the registry. Publishing it **last** is the
+whole strategy.
 
-1. Everything publishes under `--tag next`.
-2. Registry propagation is verified.
-3. A real `npm install` and `prk --version` smoke test runs.
-4. Only then does `latest` move — **parent last**.
+1. The eight platform packages publish, and each is waited on until it is
+   readable from the registry.
+2. The parent and the MCP server are packed locally and smoke-tested from those
+   tarballs: a real `npm install` and `prk --version`, with the parent resolving
+   its platform package from the registry exactly as a user's install does.
+3. The MCP server publishes, then the parent. The parent's publish is the moment
+   the release goes live.
 
-A failure before the flip leaves `latest` on the previous good release. Publishes
-are idempotent (an `npm view` check comes first), so re-running the same tag
-resumes rather than starting over.
+Every publish is a plain `npm publish`, which tags `latest` as part of the
+publish. That is the one dist-tag write npm's trusted publishing permits — a
+separate `npm dist-tag add` over the OIDC session is refused with a 401 — so a
+release reaches `latest` with no token and no manual step.
+
+The platform packages go to `latest` too. Nothing resolves one by dist-tag, so
+the tag only decides what npmjs.com and `npm view` show, and keeping it current
+on all ten is the accurate display. A platform package reaching `latest` before
+its parent is harmless for the same reason.
+
+A failure before the parent's publish leaves the previous release current.
+Publishes are idempotent (an `npm view` check comes first), so re-running the
+same tag resumes rather than starting over.
+
+The job runs on a dry run too, with every publishing step gated on the tag push.
+The mode-bit check, the packing and both smoke tests therefore execute on every
+rehearsal; with nothing published, the launcher smoke test installs the
+`linux-x64-gnu` tarball beside the parent's.
 
 Use `npm publish`, not `pnpm publish`: pnpm 11 removed its npm CLI fallback and
 its OIDC path regressed, so npm is the vendor-supported path.
@@ -362,11 +384,11 @@ URL, out of `.git/config` and off the disk. Reading the existing blob sha first
 also makes each write a compare-and-swap, so a concurrent edit is rejected rather
 than clobbered.
 
-The commit is **optional**, on the same terms as npm's `latest` promotion. With
-the App configured it happens; without it the job prints both manifests into the
-summary, attaches them as the `package-manifests` artefact and exits 0. A release
-whose bucket has not caught up is a complete release — the archives, the
-attestations and the release page are all already published.
+The commit is **optional**. With the App configured it happens; without it the
+job prints both manifests into the summary, attaches them as the
+`package-manifests` artefact and exits 0. A release whose bucket has not caught
+up is a complete release — the archives, the attestations and the release page
+are all already published.
 
 The Scoop manifest's `checkver` matches an **asset file name** in the release
 list rather than reading `releases/latest`. Two release lines share this

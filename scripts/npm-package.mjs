@@ -459,7 +459,7 @@ export function renderPackages({
   // --- the MCP server ------------------------------------------------------
   //
   // Rendered before the parent so that `emitted` is in publish order: the
-  // parent's dist-tag flip is what makes a release live, and it goes last.
+  // parent's publish is what makes a release live, and it goes last.
   const mcpDist = path.join(mcpSource, 'dist');
   if (!existsSync(mcpDist)) {
     const message =

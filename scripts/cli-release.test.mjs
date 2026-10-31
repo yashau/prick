@@ -119,7 +119,7 @@ describe('the published set', () => {
     assert.ok(packages.includes(MCP_PACKAGE), 'the MCP server must be published too');
   });
 
-  test('puts the parent last, because `latest` moves last', () => {
+  test('puts the parent last, because its publish makes the release live', () => {
     assert.equal(publishedPackages().at(-1), PARENT_PACKAGE);
     assert.equal(publishedPackages().indexOf(PARENT_PACKAGE), 9);
   });
