@@ -52,14 +52,14 @@ output = "prefix"
 # (~1 GB). Release builds add their target in the workflow, on the one runner
 # that needs it.
 [tools]
-node = "26.10.0"
-pnpm = "12.8.2"
+node = "26.13.0"
+pnpm = "12.16.1"
 
 # Stable does the work; the date-pinned nightly exists only to carry miri.
 # Pinning the date keeps the miri job from breaking on unrelated PRs when a
 # rolling nightly regresses. `rust-src` is required by `cargo miri setup`.
 rust = [
-  { version = "1.99.0", components = [
+  { version = "1.99.1", components = [
     "rustfmt",
     "clippy",
   ] },
@@ -73,25 +73,25 @@ rust = [
 # real Windows support. `cargo:` would compile each of these from source on
 # every fresh Windows clone.
 "aqua:EmbarkStudios/cargo-deny" = "0.20.2"
-"aqua:nextest-rs/nextest/cargo-nextest" = "0.9.146"
+"aqua:nextest-rs/nextest/cargo-nextest" = "0.9.150"
 "aqua:rustsec/rustsec/cargo-audit" = "0.22.2"
-"aqua:crate-ci/typos" = "1.50.3"
+"aqua:crate-ci/typos" = "1.51.1"
 "aqua:rhysd/actionlint" = "1.7.12"
-"aqua:zizmorcore/zizmor" = "1.30.1"
-"aqua:suzuki-shunsuke/pinact" = "5.0.0"
-"aqua:evilmartians/lefthook" = "2.1.15"
+"aqua:zizmorcore/zizmor" = "1.31.1"
+"aqua:suzuki-shunsuke/pinact" = "5.0.2"
+"aqua:evilmartians/lefthook" = "2.2.2"
 
 # The GitHub CLI. Cutting a release needs only git — the tag push is the trigger
 # — but `cli:status`, `docs:status` and `cli:dry` all go through gh, so a
 # contributor without it cannot watch or rehearse a release. Pin it rather than
 # assume it.
-"aqua:cli/cli" = "2.102.0"
+"aqua:cli/cli" = "2.103.3"
 
 # cargo-auditable embeds the dependency list inside the binary so
 # `cargo audit bin ./prk` works on a shipped artefact with no side-car SBOM.
 # It has no aqua package; the cargo backend uses cargo-binstall by default, so
 # this still resolves to a prebuilt release binary rather than a source build.
-"cargo:cargo-auditable" = "0.7.6"
+"cargo:cargo-auditable" = "0.7.7"
 
 # ---------------------------------------------------------------------------
 # ENVIRONMENT

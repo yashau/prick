@@ -128,10 +128,8 @@ jobs:
               # reached CI without running the Action's own suite.
               - 'scripts/**'
               - 'action/**'
-              # A patched dependency is application behaviour, not metadata:
-              # `patches/wrangler@*.patch` is the only thing keeping `wrangler
-              # dev` alive under the e2e suite. Editing it must run the suite
-              # that proves it still works.
+              # A patched dependency is application behaviour, not metadata.
+              # Editing a patch must run the suites that prove it still works.
               - 'patches/**'
               # `docs/openapi.json` lives under `docs/` and is NOT documentation
               # for this purpose. It is generated from the Hono router, and both
