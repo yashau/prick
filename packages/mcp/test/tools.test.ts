@@ -297,9 +297,11 @@ describe("the instance pin", () => {
     ]) {
       const error = await refused(write);
       assert.equal(error.code, "INSTANCE_MISMATCH");
-      assert.ok(error.message.includes(PINNED), error.message);
-      assert.ok(error.message.includes(OTHER), error.message);
-      assert.ok(error.message.includes("secrets.example.com"), error.message);
+      // The whole message, so both ids and the server host are pinned exactly.
+      assert.equal(
+        error.message,
+        `This server is pinned to instance ${PINNED}, but secrets.example.com reports instance ${OTHER}. Nothing was written.`,
+      );
       assert.ok(!error.message.includes(WRITE.value));
     }
 
