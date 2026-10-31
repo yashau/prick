@@ -299,7 +299,7 @@ describe("the instance pin", () => {
       assert.equal(error.code, "INSTANCE_MISMATCH");
       assert.ok(error.message.includes(PINNED), error.message);
       assert.ok(error.message.includes(OTHER), error.message);
-      assert.match(error.message, /secrets\.example\.com/);
+      assert.ok(error.message.includes("secrets.example.com"), error.message);
       assert.ok(!error.message.includes(WRITE.value));
     }
 
