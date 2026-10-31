@@ -122,8 +122,8 @@ prk secrets set STRIPE_SECRET_KEY -E production
 ```
 
 ```
-error: this command changes data, and 2 profiles are configured; name the server with --profile (the default, `acme`, is not used for writes)
-  help: `prk profile list` shows the profiles; a project's .prick.toml can also choose one.
+error: this command changes data, and 2 profiles are configured; name the server with --profile, PRK_PROFILE or .prick.local.toml (`acme`, chosen by the default profile, is not used for writes)
+  help: `prk profile list` shows the profiles; `prk profile pin --local` records this checkout's choice in .prick.local.toml.
 ```
 
 Exit 2, and nothing was sent. With two profiles, the default is not enough to
@@ -194,7 +194,7 @@ prk --profile sandbox secrets list -E production
 ```
 
 ```
-error: /home/you/src/storefront/.prick.toml does not allow instance 5b2d8e0f1a3c4b6d7e9f0a1b2c3d4e5f (prick.sandbox.example); nothing was sent
+error: /home/you/src/storefront/.prick.toml does not allow instance 5b2d8e0f1a3c4b6d7e9f0a1b2c3d4e5f (prick.sandbox.example); nothing beyond the identity check was sent
   help: Choose a profile for a deployment this project allows, or add the instance with `prk profile pin` if it belongs to the project.
 ```
 
@@ -212,14 +212,15 @@ prk --profile acme secrets list -E production
 ```
 
 ```
-error: prick.acme.example is a different deployment than profile `acme` is pinned to (expected instance 3f9c01ab52e84d7a9b0c6e1f2a3b4c5d, it reports 77d0c41e9a8b4f2c8e1d6b3a5f7c9e0d); nothing was sent
+error: prick.acme.example is a different deployment than profile `acme` is pinned to (expected instance 3f9c01ab52e84d7a9b0c6e1f2a3b4c5d, it reports 77d0c41e9a8b4f2c8e1d6b3a5f7c9e0d); nothing beyond the identity check was sent
   help: If this server was replaced on purpose, remove and re-add the profile: `prk profile remove <NAME>`, then `prk login <URL>`.
 ```
 
 Exit 3. `prk` asked the server who it was before sending the command's own
 request, so the server received nothing but the identity check. Find out why
-before you remove and re-add the profile; a restored backup keeps its instance
-id, so a restore does not do this.
+before you remove and re-add the profile; a backup restored from after the
+instance row existed keeps its instance id, so such a restore does not do
+this.
 
 ## 9. Pin the deploy scripts
 
@@ -238,7 +239,7 @@ prk --profile globex --expect-instance 3f9c01ab52e84d7a9b0c6e1f2a3b4c5d secrets 
 ```
 
 ```
-error: prick.globex.example reports instance a71e09d4c3b2a1f0e9d8c7b6a5f4e3d2, not the expected 3f9c01ab52e84d7a9b0c6e1f2a3b4c5d; nothing was sent
+error: prick.globex.example reports instance a71e09d4c3b2a1f0e9d8c7b6a5f4e3d2, not the expected 3f9c01ab52e84d7a9b0c6e1f2a3b4c5d; nothing beyond the identity check was sent
 ```
 
 ## What you have now

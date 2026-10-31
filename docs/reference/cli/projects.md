@@ -26,8 +26,9 @@ going to on stderr, `writing to prick.acme.example (profile acme, instance 3f9c0
 unless `-q` or `--json` is given; under `--json` its result carries the same
 facts as a `destination` object with `server`, `profile` and `instance`. With
 two or more profiles, a write needs its server named by `--profile`,
-`PRK_PROFILE`, `--api-url`, `PRK_API_URL` or a project's `.prick.toml`: the
-default profile alone is refused with
+`PRK_PROFILE`, `--api-url`, `PRK_API_URL` or this checkout's
+`.prick.local.toml`: the default profile, or a committed `.prick.toml`, alone is
+refused with
 [`PROFILE_REQUIRED`](/reference/cli/errors#profile_required-exit-2). See
 [Working with several servers](/guides/multiple-servers/).
 :::

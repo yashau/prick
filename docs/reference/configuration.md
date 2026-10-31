@@ -76,8 +76,8 @@ select, and what selected it. `-v` on any command prints the same as
 On top of the table:
 
 - **Writes.** With two or more profiles, a command that changes data must be
-  aimed by a flag, a variable or a project file; the default alone is
-  refused with `PROFILE_REQUIRED`.
+  aimed by a flag, a variable or `.prick.local.toml`; the default, or a
+  committed `.prick.toml`, alone is refused with `PROFILE_REQUIRED`.
 - **Service tokens.** With two or more profiles, a service token from
   `PRK_ACCESS_CLIENT_*` or `CF_ACCESS_CLIENT_*` is used only with a server
   chosen by the flag or environment tier. With a project file or the default,
@@ -139,19 +139,19 @@ to = "acme"
 instance = "3f9c01ab3f9c01ab3f9c01ab3f9c01ab"
 ```
 
-| Key                       | Where             | Meaning                                                                                                              |
-| ------------------------- | ----------------- | -------------------------------------------------------------------------------------------------------------------- |
-| `version`                 | top level         | The format version. `1`. Any other value is refused: written by a newer `prk`, so update `prk`                       |
-| `default_profile`         | top level         | The profile used when nothing else selects one. Optional; must name a profile                                        |
-| `api_url`                 | `[profiles.NAME]` | The server. `https://`, or `http://` to a loopback address, with no `user@`. Fixed for the profile's life            |
-| `credential`              | `[profiles.NAME]` | Its session file: `credentials.json`, or a 16-hex-digit id naming `credentials/<id>.json`. No two profiles share one |
-| `instance`                | `[profiles.NAME]` | The pinned instance id, 32 lowercase hex digits. Absent until the server first reports one                           |
-| `issuer`                  | `[profiles.NAME]` | The pinned Access issuer, `https://<team>.cloudflareaccess.com`. Absent until the first sign-in                      |
-| `project`                 | `[profiles.NAME]` | The profile's default project slug. Optional                                                                         |
-| `env`                     | `[profiles.NAME]` | The profile's default environment slug. Optional                                                                     |
-| `service_token_client_id` | `[profiles.NAME]` | The only service-token client id this profile accepts from the environment. Optional                                 |
-| `to`                      | `[renamed.NAME]`  | A tombstone: the name a renamed profile has now. `--profile NAME` fails naming it                                    |
-| `instance`                | `[renamed.NAME]`  | The instance the profile was pinned to when renamed, if it was                                                       |
+| Key                       | Where             | Meaning                                                                                                                                                                                                     |
+| ------------------------- | ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `version`                 | top level         | The format version. `1`. Any other value is refused: written by a newer `prk`, so update `prk`                                                                                                              |
+| `default_profile`         | top level         | The profile used when nothing else selects one. Optional; must name a profile                                                                                                                               |
+| `api_url`                 | `[profiles.NAME]` | The server. `https://`, or `http://` to a loopback address, with no `user@`. Fixed for the profile's life. The profile built from a pre-profiles `credentials.json` keeps whatever URL that session records |
+| `credential`              | `[profiles.NAME]` | Its session file: `credentials.json`, or a 16-hex-digit id naming `credentials/<id>.json`. No two profiles share one                                                                                        |
+| `instance`                | `[profiles.NAME]` | The pinned instance id, 32 lowercase hex digits. Absent until the server first reports one                                                                                                                  |
+| `issuer`                  | `[profiles.NAME]` | The pinned Access issuer, `https://<team>.cloudflareaccess.com`. Absent until the first sign-in                                                                                                             |
+| `project`                 | `[profiles.NAME]` | The profile's default project slug. Optional                                                                                                                                                                |
+| `env`                     | `[profiles.NAME]` | The profile's default environment slug. Optional                                                                                                                                                            |
+| `service_token_client_id` | `[profiles.NAME]` | The only service-token client id this profile accepts from the environment. Optional                                                                                                                        |
+| `to`                      | `[renamed.NAME]`  | A tombstone: the name a renamed profile has now. `--profile NAME` fails naming it                                                                                                                           |
+| `instance`                | `[renamed.NAME]`  | The instance the profile was pinned to when renamed, if it was                                                                                                                                              |
 
 `NAME` is lowercase letters, digits and single hyphens, at most 64 characters.
 Every read validates the names, URLs, credential references, instance ids and

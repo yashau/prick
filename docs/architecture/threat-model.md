@@ -213,6 +213,11 @@ repository, not from you. It is constrained accordingly:
   never widens it.
 - **Whatever selects the server**, the server's instance must be on the list.
   A flag can choose among the listed deployments, not escape them.
+- It **does not count as your choice for a write.** With several profiles, a
+  command that changes data needs a flag, an environment variable or
+  `.prick.local.toml` to name its server; a committed `.prick.toml` selects for
+  reads and supplies the project and environment, but a write it alone aimed
+  is refused with `PROFILE_REQUIRED`.
 - It **cannot pair with a service token** when several profiles exist. A token
   in the environment and a server chosen by a file are two decisions nobody
   made together.
@@ -251,6 +256,16 @@ property: under a policy admitting any Access service token, prick's grants
 separate the deployments, because a token holds grants only on the deployment
 that granted it and the other answers `404`; under policies scoped to one token
 each, the edge separates them.
+
+### Copies of one database share an id
+
+The instance id names a database's contents, so a database loaded from
+another one's export answers with the same id: a restore test, or a staging
+copy seeded from production. Every pin keyed on the id then accepts the copy
+as the original, so a copy kept running must be given its own id; the step is
+in [Backup and recovery](/guides/backup-and-recovery). A backup taken before
+the instance row existed has none, and restoring it generates a new id, which
+pinned profiles refuse until they are re-added.
 
 ### The instance id is shown only to authenticated callers
 

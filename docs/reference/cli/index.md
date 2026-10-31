@@ -221,8 +221,8 @@ For the server, first match wins:
 
 Both forms at one tier are refused, and a name that matches no profile is
 refused rather than skipped. With two or more profiles, a command that changes
-data must be aimed by one of the first three; the default alone is refused
-with `PROFILE_REQUIRED`. The full table, and how a project file selects by
+data must be aimed by a flag, a variable or `.prick.local.toml`; the default,
+or a committed `.prick.toml`, alone is refused with `PROFILE_REQUIRED`. The full table, and how a project file selects by
 instance, is under
 [Configuration](/reference/configuration#which-server-a-command-talks-to).
 

@@ -132,7 +132,9 @@ Twelve tables: `projects`, `environments`, `secrets`, `secret_versions`,
 `instance` holds one row: the deployment's permanent random id, written by a
 migration and read by nothing but `whoami` and the `Prick-Instance` response
 header. It lives in D1 so that it names the data: a restored backup answers
-with the id it had, and a fresh database answers with a new one.
+with the id it had, a fresh database answers with a new one, and a database
+loaded from another one's export answers with that one's id until it is given
+its own (see [Backup and recovery](/guides/backup-and-recovery)).
 
 Conventions that hold throughout `packages/app/src/lib/server/db/schema.ts`:
 

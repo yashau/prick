@@ -232,7 +232,14 @@ Updating `prk` needs no step and writes nothing. An existing
 `credentials.json` becomes the profile `default` and stays where it is, in its
 existing format, so a `prk` from before profiles installed on the same machine
 keeps reading it, and downgrading works. That older `prk` ignores
-`config.toml` and `credentials/`.
+`config.toml` and `credentials/`. The profile keeps the URL that session
+records, whatever it is, so an install signed in to an `http://` address an
+older `prk` accepted keeps working.
+
+The first command against a server that reports an instance id records it in
+`config.toml`. If that file cannot be written, the command still runs, checked
+against what the server reported, and warns that the pin was not saved; the
+next run tries again.
 
 If that older `prk` signs in to a different server, it overwrites
 `credentials.json` with that server's session. A session records the URL it
@@ -517,7 +524,7 @@ project's `.prick.toml` or `--expect-instance` requires, and no command sends
 it anything.
 
 ```
-FAIL instance       prick.acme.example is a different deployment than profile `acme` is pinned to (expected instance 3f9c01ab3f9c01ab3f9c01ab3f9c01ab, it reports 7d2e44c07d2e44c07d2e44c07d2e44c0); nothing was sent
+FAIL instance       prick.acme.example is a different deployment than profile `acme` is pinned to (expected instance 3f9c01ab3f9c01ab3f9c01ab3f9c01ab, it reports 7d2e44c07d2e44c07d2e44c07d2e44c0); nothing beyond the identity check was sent
 ```
 
 Each line is marked `ok`, `warn`, `FAIL` or `skip` — plain ASCII, so the report

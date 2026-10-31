@@ -116,7 +116,7 @@ changed default, or a profile name reused for another server fails with
 {
   "error": {
     "code": "INSTANCE_MISMATCH",
-    "message": "prick.globex.example reports instance a71e09d4c3b2a1f0e9d8c7b6a5f4e3d2, not the expected 3f9c01ab52e84d7a9b0c6e1f2a3b4c5d; nothing was sent"
+    "message": "prick.globex.example reports instance a71e09d4c3b2a1f0e9d8c7b6a5f4e3d2, not the expected 3f9c01ab52e84d7a9b0c6e1f2a3b4c5d; nothing beyond the identity check was sent"
   }
 }
 ```

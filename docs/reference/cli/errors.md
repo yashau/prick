@@ -150,7 +150,7 @@ secret.
 | `PROFILE_UNKNOWN`       | 2    | The name selects no profile, or is not a valid profile name                                                                                |
 | `PROFILE_RENAMED`       | 2    | The name belonged to a profile that was renamed; the message names the current one                                                         |
 | `PROFILE_AMBIGUOUS`     | 2    | A URL or an instance matches several profiles, or a `.prick.local.toml` names an instance no profile is pinned to                          |
-| `PROFILE_REQUIRED`      | 2    | A command that changes data, with two or more profiles, was aimed only by the default profile                                              |
+| `PROFILE_REQUIRED`      | 2    | A command that changes data, with two or more profiles, was aimed only by the default profile or a committed `.prick.toml`                 |
 | `SERVICE_TOKEN_REFUSED` | 2    | A service token, with two or more profiles, met a server chosen by a project file or the default; or the profile expects another client id |
 | `PROFILE_EDIT_REFUSED`  | 2    | A change to the profiles was refused: a name taken, tombstoned, unknown or invalid, or a different URL for an existing profile             |
 | `PROJECT_FILE_INVALID`  | 2    | `.prick.toml` or `.prick.local.toml` does not parse or breaks a rule, or `.prick.local.toml` is not ignored by git                         |
@@ -449,17 +449,21 @@ to that deployment first.
 ### `PROFILE_REQUIRED` (exit 2)
 
 A command that changes data, on a machine with two or more profiles, would
-have gone to the default profile without anything naming it:
+have gone to the default profile, or to the one a committed `.prick.toml`
+selected, without anything of yours naming it:
 
 ```
-error: this command changes data, and 2 profiles are configured; name the server with --profile (the default, `acme`, is not used for writes)
-  help: `prk profile list` shows the profiles; a project's .prick.toml can also choose one.
+error: this command changes data, and 2 profiles are configured; name the server with --profile, PRK_PROFILE or .prick.local.toml (`acme`, chosen by the default profile, is not used for writes)
+  help: `prk profile list` shows the profiles; `prk profile pin --local` records this checkout's choice in .prick.local.toml.
 ```
 
 The default is whatever was chosen last, possibly for other work, so it never
-aims a write alone. Name the server with `--profile`, `PRK_PROFILE`,
-`--api-url` or `PRK_API_URL`, or run the command inside a project whose
-`.prick.toml` selects it. Reads use the default as usual.
+aims a write alone. Neither does a committed `.prick.toml`: it arrives with
+`git clone`, so it is the repository author's choice rather than yours. Name
+the server with `--profile`, `PRK_PROFILE`, `--api-url` or `PRK_API_URL`, or
+record this checkout's choice in `.prick.local.toml` with
+`prk profile pin --local`. Reads use the default, or the project file, as
+usual.
 
 ### `SERVICE_TOKEN_REFUSED` (exit 2)
 
@@ -538,14 +542,14 @@ Use the full id `prk whoami` prints, not the eight-character short form.
 The server at this URL is a different deployment from the one required:
 
 ```
-error: prick.acme.example is a different deployment than profile `acme` is pinned to (expected instance 3f9c01ab3f9c01ab3f9c01ab3f9c01ab, it reports 7d2e44c07d2e44c07d2e44c07d2e44c0); nothing was sent
+error: prick.acme.example is a different deployment than profile `acme` is pinned to (expected instance 3f9c01ab3f9c01ab3f9c01ab3f9c01ab, it reports 7d2e44c07d2e44c07d2e44c07d2e44c0); nothing beyond the identity check was sent
   help: If this server was replaced on purpose, remove and re-add the profile: `prk profile remove <NAME>`, then `prk login <URL>`.
 ```
 
 Or, from `--expect-instance`:
 
 ```
-error: prick.acme.example reports instance 3f9c01ab3f9c01ab3f9c01ab3f9c01ab, not the expected 7d2e44c07d2e44c07d2e44c07d2e44c0; nothing was sent
+error: prick.acme.example reports instance 3f9c01ab3f9c01ab3f9c01ab3f9c01ab, not the expected 7d2e44c07d2e44c07d2e44c07d2e44c0; nothing beyond the identity check was sent
 ```
 
 Treat it as the hostname pointing somewhere you did not intend until you know
@@ -560,7 +564,7 @@ The server reports no instance id, and something requires one: a profile
 pinned to an instance, `--expect-instance`, or a project file.
 
 ```
-error: prick.acme.example reports no instance id, so it cannot be verified against profile `acme`'s pin; nothing was sent
+error: prick.acme.example reports no instance id, so it cannot be verified against profile `acme`'s pin; nothing beyond the identity check was sent
 ```
 
 A pinned server that stops reporting its instance cannot be told apart from
@@ -572,7 +576,7 @@ The command ran inside a project whose `.prick.toml` does not list the
 selected server's instance:
 
 ```
-error: /home/you/src/api/.prick.toml does not allow instance 3f9c01ab3f9c01ab3f9c01ab3f9c01ab (prick.acme.example); nothing was sent
+error: /home/you/src/api/.prick.toml does not allow instance 3f9c01ab3f9c01ab3f9c01ab3f9c01ab (prick.acme.example); nothing beyond the identity check was sent
   help: Choose a profile for a deployment this project allows, or add the instance with `prk profile pin` if it belongs to the project.
 ```
 

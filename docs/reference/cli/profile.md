@@ -73,8 +73,9 @@ through to the next tier.
 Two rules apply on top of the table once two or more profiles exist:
 
 - A command that **changes data** needs its server named by a flag, an
-  environment variable or a project file. The default profile alone is
-  refused with `PROFILE_REQUIRED`. Reads, including `prk run` and
+  environment variable or this checkout's `.prick.local.toml`. The default
+  profile, or a committed `.prick.toml`, alone is refused with
+  `PROFILE_REQUIRED`. Reads, including `prk run` and
   `prk secrets download`, use the default.
 - A **service token** from `PRK_ACCESS_CLIENT_*` or `CF_ACCESS_CLIENT_*` pairs
   only with a server chosen by `--profile`, `--api-url`, `PRK_PROFILE` or
@@ -222,9 +223,11 @@ A profile added when there is no default becomes the default, so the first
 profile on a machine always is. `--json` prints
 `{"name": …, "api_url": …, "default": …}`.
 
-The URL is normalised (trailing slashes removed) and refused with
-`INVALID_URL` when it is not `https://`, unless it is `http://` to
-`localhost`, a `.localhost` name, `127.x.x.x` or `[::1]`. A URL carrying
+The URL is normalised (trailing slashes removed, scheme and host lowercased,
+`:443` or `:80` dropped) and refused with `INVALID_URL` when it is not
+`https://`, unless it is `http://` to `localhost`, an IPv4 address in
+`127.0.0.0/8` or `[::1]`. Addresses are parsed, so `127.evil.example.com` is a
+remote name. A URL carrying
 `user@` is refused too. Every request carries a credential, so a plaintext
 URL to a remote host is never accepted.
 
@@ -378,7 +381,9 @@ Removed profile globex (prick.globex.example).
 
 Removing the default profile leaves **no default**. Choosing another would
 decide which deployment an unqualified command reaches, so that is yours to
-do with `prk profile use`. A failed revocation is a warning, and the local
+do with `prk profile use`. Tombstones that pointed at the removed profile go
+with it, so an old name no longer answers "renamed to" a profile that is gone.
+A failed revocation is a warning, and the local
 credential goes either way — the same rule as
 [`prk logout`](/reference/cli/sign-in#the-local-credential-goes-either-way).
 `--json` prints `{"removed": …, "server": …}`.

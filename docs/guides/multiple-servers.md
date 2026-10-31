@@ -136,16 +136,19 @@ acme (selected from the default profile)
 ### A write names its server
 
 With two or more profiles, a command that changes data must have its server
-chosen by a flag, an environment variable or a project file. The default alone
-is refused:
+chosen by a flag, an environment variable or this checkout's
+`.prick.local.toml`. The default alone is refused, and so is a committed
+`.prick.toml` alone: it arrives with `git clone`, so it is the repository
+author's choice, not yours. It still selects the server for reads and supplies
+the project and environment.
 
 ```bash
 prk secrets set STRIPE_SECRET_KEY -P api -E production
 ```
 
 ```
-error: this command changes data, and 2 profiles are configured; name the server with --profile (the default, `acme`, is not used for writes)
-  help: `prk profile list` shows the profiles; a project's .prick.toml can also choose one.
+error: this command changes data, and 2 profiles are configured; name the server with --profile, PRK_PROFILE or .prick.local.toml (`acme`, chosen by the default profile, is not used for writes)
+  help: `prk profile list` shows the profiles; `prk profile pin --local` records this checkout's choice in .prick.local.toml.
 ```
 
 The default is whatever was chosen last, possibly days ago for other work, and
@@ -202,7 +205,7 @@ server who it is (`GET /api/v1/whoami`, which carries no secret) and compares
 the answer with the pin. A different instance, or none, is refused with exit 3:
 
 ```
-error: prick.acme.example is a different deployment than profile `acme` is pinned to (expected instance 3f9c01ab52e84d7a9b0c6e1f2a3b4c5d, it reports 77d0c41e9a8b4f2c8e1d6b3a5f7c9e0d); nothing was sent
+error: prick.acme.example is a different deployment than profile `acme` is pinned to (expected instance 3f9c01ab52e84d7a9b0c6e1f2a3b4c5d, it reports 77d0c41e9a8b4f2c8e1d6b3a5f7c9e0d); nothing beyond the identity check was sent
   help: If this server was replaced on purpose, remove and re-add the profile: `prk profile remove <NAME>`, then `prk login <URL>`.
 ```
 
@@ -211,8 +214,11 @@ point: it catches a hostname repointed at another deployment, a deployment
 rebuilt on a fresh database, and a profile copied from another machine.
 
 **A mismatch means the server at that URL is not the database you pinned.**
-Restoring a D1 backup keeps the instance id, so a restore is not a mismatch;
-a fresh database behind the old hostname is. See
+Restoring a D1 backup taken after the instance row existed keeps the instance
+id, so such a restore is not a mismatch; a fresh database behind the old
+hostname is, and so is a backup from before the row existed. A copy loaded
+from another deployment's export shares that deployment's id until it is given
+its own. See
 [Backup and recovery](/guides/backup-and-recovery). If the replacement was
 intended, remove the profile and sign in again, which pins the new instance:
 
@@ -430,7 +436,7 @@ changing the default, or reusing the name for another server cannot redirect
 it:
 
 ```
-error: prick.globex.example reports instance a71e09d4c3b2a1f0e9d8c7b6a5f4e3d2, not the expected 3f9c01ab52e84d7a9b0c6e1f2a3b4c5d; nothing was sent
+error: prick.globex.example reports instance a71e09d4c3b2a1f0e9d8c7b6a5f4e3d2, not the expected 3f9c01ab52e84d7a9b0c6e1f2a3b4c5d; nothing beyond the identity check was sent
 ```
 
 The value must be the full 32 lowercase hex digits; anything else is
@@ -534,9 +540,9 @@ Three causes, each named in the message:
 
 ### `PROFILE_REQUIRED` (exit 2)
 
-A write, two or more profiles, and only the default chose the server. Pass
-`--profile`, set `PRK_PROFILE`, or work in a repository whose project file
-selects the deployment.
+A write, two or more profiles, and only the default or a committed
+`.prick.toml` chose the server. Pass `--profile`, set `PRK_PROFILE`, or record
+this checkout's choice with `prk profile pin --local`.
 
 ### `SERVICE_TOKEN_REFUSED` (exit 2)
 
