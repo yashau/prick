@@ -1,8 +1,8 @@
 <script lang="ts">
   import ChevronRightIcon from '@lucide/svelte/icons/chevron-right';
 
-  import type { AuditEntryView } from '$lib/client/api';
-  import { Button } from '$lib/components/ui/button/index.js';
+  import type { AuditEntryView } from '#lib/client/api.js';
+  import { Button } from '#lib/components/ui/button/index.js';
 
   let {
     entry,

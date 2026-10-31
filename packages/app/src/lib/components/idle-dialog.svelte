@@ -1,8 +1,8 @@
 <script lang="ts">
   import LockIcon from '@lucide/svelte/icons/lock';
 
-  import { idle, IDLE_AFTER_MS } from '$lib/client/idle.svelte.js';
-  import * as AlertDialog from '$lib/components/ui/alert-dialog/index.js';
+  import { idle, IDLE_AFTER_MS } from '#lib/client/idle.svelte.js';
+  import * as AlertDialog from '#lib/components/ui/alert-dialog/index.js';
 
   /**
    * What the user sees after 15 minutes of nothing.

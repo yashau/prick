@@ -3,18 +3,18 @@
   import TriangleAlertIcon from '@lucide/svelte/icons/triangle-alert';
   import { toast } from 'svelte-sonner';
 
-  import { api, type VersionEntry } from '$lib/client/api';
-  import { ApiError, toApiError } from '$lib/client/errors';
-  import { absoluteTime, relativeTime } from '$lib/client/format';
-  import type { SecretsController } from '$lib/client/secrets.svelte.js';
-  import * as Alert from '$lib/components/ui/alert/index.js';
-  import * as AlertDialog from '$lib/components/ui/alert-dialog/index.js';
-  import { Badge } from '$lib/components/ui/badge/index.js';
-  import { buttonVariants, Button } from '$lib/components/ui/button/index.js';
-  import * as Field from '$lib/components/ui/field/index.js';
-  import { Input } from '$lib/components/ui/input/index.js';
-  import { Skeleton } from '$lib/components/ui/skeleton/index.js';
-  import * as Table from '$lib/components/ui/table/index.js';
+  import { api, type VersionEntry } from '#lib/client/api.js';
+  import { ApiError, toApiError } from '#lib/client/errors.js';
+  import { absoluteTime, relativeTime } from '#lib/client/format.js';
+  import type { SecretsController } from '#lib/client/secrets.svelte.js';
+  import * as Alert from '#lib/components/ui/alert/index.js';
+  import * as AlertDialog from '#lib/components/ui/alert-dialog/index.js';
+  import { Badge } from '#lib/components/ui/badge/index.js';
+  import { buttonVariants, Button } from '#lib/components/ui/button/index.js';
+  import * as Field from '#lib/components/ui/field/index.js';
+  import { Input } from '#lib/components/ui/input/index.js';
+  import { Skeleton } from '#lib/components/ui/skeleton/index.js';
+  import * as Table from '#lib/components/ui/table/index.js';
 
   /**
    * One key's version history, with rollback.

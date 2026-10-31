@@ -5,20 +5,20 @@
   import { toast } from 'svelte-sonner';
 
   import { applyAction, enhance } from '$app/forms';
-  import { invalidateAll } from '$app/navigation';
-  import type { UnknownIdentity } from '$lib/client/api';
-  import { absoluteTime, relativeTime } from '$lib/client/format';
-  import type { FormErrors } from '$lib/client/forms';
-  import GrantDialog from '$lib/components/access/grant-dialog.svelte';
-  import GrantsTable from '$lib/components/access/grants-table.svelte';
-  import UnknownIdentities from '$lib/components/access/unknown-identities.svelte';
-  import CopyButton from '$lib/components/copy-button.svelte';
-  import PageHeader from '$lib/components/page-header.svelte';
-  import * as Alert from '$lib/components/ui/alert/index.js';
-  import { Badge } from '$lib/components/ui/badge/index.js';
-  import { Switch } from '$lib/components/ui/switch/index.js';
-  import * as Table from '$lib/components/ui/table/index.js';
-  import * as Tabs from '$lib/components/ui/tabs/index.js';
+  import { refreshAll } from '$app/navigation';
+  import type { UnknownIdentity } from '#lib/client/api.js';
+  import { absoluteTime, relativeTime } from '#lib/client/format.js';
+  import type { FormErrors } from '#lib/client/forms.js';
+  import GrantDialog from '#lib/components/access/grant-dialog.svelte';
+  import GrantsTable from '#lib/components/access/grants-table.svelte';
+  import UnknownIdentities from '#lib/components/access/unknown-identities.svelte';
+  import CopyButton from '#lib/components/copy-button.svelte';
+  import PageHeader from '#lib/components/page-header.svelte';
+  import * as Alert from '#lib/components/ui/alert/index.js';
+  import { Badge } from '#lib/components/ui/badge/index.js';
+  import { Switch } from '#lib/components/ui/switch/index.js';
+  import * as Table from '#lib/components/ui/table/index.js';
+  import * as Tabs from '#lib/components/ui/tabs/index.js';
   import type { ActionData, PageData } from './$types';
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
@@ -149,7 +149,7 @@
                     return async ({ result }) => {
                       if (result.type === 'success') {
                         toast.success('Identity updated.');
-                        await invalidateAll();
+                        await refreshAll();
                         return;
                       }
                       await applyAction(result);

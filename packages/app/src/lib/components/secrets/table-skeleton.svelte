@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { Skeleton } from '$lib/components/ui/skeleton/index.js';
-  import * as Table from '$lib/components/ui/table/index.js';
+  import { Skeleton } from '#lib/components/ui/skeleton/index.js';
+  import * as Table from '#lib/components/ui/table/index.js';
 
   /**
    * The loading state for the secrets table.

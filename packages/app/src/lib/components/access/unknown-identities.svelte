@@ -3,14 +3,14 @@
   import SearchIcon from '@lucide/svelte/icons/search';
   import UserIcon from '@lucide/svelte/icons/user';
 
-  import type { UnknownIdentity } from '$lib/client/api';
-  import { absoluteTime, pluralise, relativeTime } from '$lib/client/format';
-  import CopyButton from '$lib/components/copy-button.svelte';
-  import * as Alert from '$lib/components/ui/alert/index.js';
-  import { Badge } from '$lib/components/ui/badge/index.js';
-  import { Button } from '$lib/components/ui/button/index.js';
-  import * as Empty from '$lib/components/ui/empty/index.js';
-  import * as Item from '$lib/components/ui/item/index.js';
+  import type { UnknownIdentity } from '#lib/client/api.js';
+  import { absoluteTime, pluralise, relativeTime } from '#lib/client/format.js';
+  import CopyButton from '#lib/components/copy-button.svelte';
+  import * as Alert from '#lib/components/ui/alert/index.js';
+  import { Badge } from '#lib/components/ui/badge/index.js';
+  import { Button } from '#lib/components/ui/button/index.js';
+  import * as Empty from '#lib/components/ui/empty/index.js';
+  import * as Item from '#lib/components/ui/item/index.js';
 
   /**
    * "Seen but not granted".

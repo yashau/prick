@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { Role } from '@prick/shared';
 
-  import { Badge } from '$lib/components/ui/badge/index.js';
+  import { Badge } from '#lib/components/ui/badge/index.js';
 
   /**
    * A role, as a word.

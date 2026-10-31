@@ -11,15 +11,15 @@
   import UsersIcon from '@lucide/svelte/icons/users';
   import UsersRoundIcon from '@lucide/svelte/icons/users-round';
 
-  import { initialsFor } from '$lib/client/format';
+  import { initialsFor } from '#lib/client/format.js';
   import { page } from '$app/state';
-  import type { ProjectSummary, Viewer } from '$lib/client/api';
-  import ProjectSwitcher from '$lib/components/project-switcher.svelte';
-  import * as Avatar from '$lib/components/ui/avatar/index.js';
-  import { Badge } from '$lib/components/ui/badge/index.js';
-  import * as DropdownMenu from '$lib/components/ui/dropdown-menu/index.js';
-  import { ScrollArea } from '$lib/components/ui/scroll-area/index.js';
-  import * as Sidebar from '$lib/components/ui/sidebar/index.js';
+  import type { ProjectSummary, Viewer } from '#lib/client/api.js';
+  import ProjectSwitcher from '#lib/components/project-switcher.svelte';
+  import * as Avatar from '#lib/components/ui/avatar/index.js';
+  import { Badge } from '#lib/components/ui/badge/index.js';
+  import * as DropdownMenu from '#lib/components/ui/dropdown-menu/index.js';
+  import { ScrollArea } from '#lib/components/ui/scroll-area/index.js';
+  import * as Sidebar from '#lib/components/ui/sidebar/index.js';
 
   let {
     projects,

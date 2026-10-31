@@ -7,7 +7,7 @@
  * reach the browser exclusively through `fetch` from here. Everything below
  * `(app)/p/[project]/[env]/` is a client of this module.
  *
- * IT IMPORTS NOTHING FROM `$lib/server`. Not a type, not a constant. The
+ * IT IMPORTS NOTHING FROM `#lib/server`. Not a type, not a constant. The
  * import graph is the enforcement: a value-carrying server module that cannot
  * be reached from the browser bundle cannot leak into it. Shapes below MIRROR
  * `src/lib/server/core/*` deliberately rather than importing them.
@@ -46,7 +46,7 @@ export const API_BASE = "/api/v1";
  * `(app)/+layout.server.ts` builds it from `event.locals.ctx` -- the SAME
  * verified Access actor the API resolves -- and passes it down. The type lives
  * here rather than next to that load because a component renders it, and a
- * component may not import from `$lib/server`.
+ * component may not import from `#lib/server`.
  *
  * `role` is the GLOBAL role and can be `null`: a project-scoped admin holds no
  * role at global scope and is still an admin of that project. Do not render it

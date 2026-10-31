@@ -3,15 +3,15 @@
   import { toast } from 'svelte-sonner';
 
   import { applyAction, enhance } from '$app/forms';
-  import { invalidateAll } from '$app/navigation';
-  import { expiryLabel } from '$lib/client/format';
-  import RoleBadge from '$lib/components/rbac/role-badge.svelte';
-  import ScopeLabel from '$lib/components/rbac/scope-label.svelte';
-  import type { GroupGrantView } from '$lib/components/rbac/types';
-  import * as AlertDialog from '$lib/components/ui/alert-dialog/index.js';
-  import { Button, buttonVariants } from '$lib/components/ui/button/index.js';
-  import * as Empty from '$lib/components/ui/empty/index.js';
-  import * as Table from '$lib/components/ui/table/index.js';
+  import { refreshAll } from '$app/navigation';
+  import { expiryLabel } from '#lib/client/format.js';
+  import RoleBadge from '#lib/components/rbac/role-badge.svelte';
+  import ScopeLabel from '#lib/components/rbac/scope-label.svelte';
+  import type { GroupGrantView } from '#lib/components/rbac/types.js';
+  import * as AlertDialog from '#lib/components/ui/alert-dialog/index.js';
+  import { Button, buttonVariants } from '#lib/components/ui/button/index.js';
+  import * as Empty from '#lib/components/ui/empty/index.js';
+  import * as Table from '#lib/components/ui/table/index.js';
 
   /**
    * The grants one group holds.
@@ -129,7 +129,7 @@
           if (result.type === 'success') {
             confirmOpen = false;
             toast.success('Grant revoked.');
-            await invalidateAll();
+            await refreshAll();
             return;
           }
           await applyAction(result);

@@ -8,13 +8,13 @@
   import XIcon from '@lucide/svelte/icons/x';
   import { toast } from 'svelte-sonner';
 
-  import type { SecretListEntry } from '$lib/client/api';
-  import { ApiError } from '$lib/client/errors';
-  import { MASK } from '$lib/client/format';
-  import type { SecretsController } from '$lib/client/secrets.svelte.js';
-  import * as Alert from '$lib/components/ui/alert/index.js';
-  import * as InputGroup from '$lib/components/ui/input-group/index.js';
-  import { Spinner } from '$lib/components/ui/spinner/index.js';
+  import type { SecretListEntry } from '#lib/client/api.js';
+  import { ApiError } from '#lib/client/errors.js';
+  import { MASK } from '#lib/client/format.js';
+  import type { SecretsController } from '#lib/client/secrets.svelte.js';
+  import * as Alert from '#lib/components/ui/alert/index.js';
+  import * as InputGroup from '#lib/components/ui/input-group/index.js';
+  import { Spinner } from '#lib/components/ui/spinner/index.js';
 
   /**
    * The masked value cell.

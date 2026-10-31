@@ -2,14 +2,14 @@
   import TriangleAlertIcon from '@lucide/svelte/icons/triangle-alert';
   import UsersIcon from '@lucide/svelte/icons/users';
 
-  import { absoluteTime, relativeTime } from '$lib/client/format';
-  import type { FormErrors } from '$lib/client/forms';
-  import PageHeader from '$lib/components/page-header.svelte';
-  import CreateGroupDialog from '$lib/components/rbac/create-group-dialog.svelte';
-  import * as Alert from '$lib/components/ui/alert/index.js';
-  import { Badge } from '$lib/components/ui/badge/index.js';
-  import * as Empty from '$lib/components/ui/empty/index.js';
-  import * as Table from '$lib/components/ui/table/index.js';
+  import { absoluteTime, relativeTime } from '#lib/client/format.js';
+  import type { FormErrors } from '#lib/client/forms.js';
+  import PageHeader from '#lib/components/page-header.svelte';
+  import CreateGroupDialog from '#lib/components/rbac/create-group-dialog.svelte';
+  import * as Alert from '#lib/components/ui/alert/index.js';
+  import { Badge } from '#lib/components/ui/badge/index.js';
+  import * as Empty from '#lib/components/ui/empty/index.js';
+  import * as Table from '#lib/components/ui/table/index.js';
   import type { ActionData, PageData } from './$types';
 
   let { data, form }: { data: PageData; form: ActionData } = $props();

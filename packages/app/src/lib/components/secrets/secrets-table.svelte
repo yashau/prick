@@ -5,45 +5,52 @@
   import Trash2Icon from '@lucide/svelte/icons/trash-2';
   import TriangleAlertIcon from '@lucide/svelte/icons/triangle-alert';
   import {
-    getCoreRowModel,
-    getFilteredRowModel,
-    getSortedRowModel,
+    columnFilteringFeature,
+    columnVisibilityFeature,
+    createFilteredRowModel,
+    createSortedRowModel,
+    filterFn_includesString,
+    rowSelectionFeature,
+    rowSortingFeature,
+    sortFn_alphanumeric,
+    sortFn_text,
+    tableFeatures,
     type ColumnDef,
     type ColumnFiltersState,
     type RowSelectionState,
     type SortingState,
     type Updater,
-    type VisibilityState
+    type ColumnVisibilityState
   } from '@tanstack/table-core';
   import { toast } from 'svelte-sonner';
 
-  import type { SecretListEntry } from '$lib/client/api';
-  import { pluralise } from '$lib/client/format';
-  import { reveal } from '$lib/client/reveal.svelte.js';
-  import type { SecretsController } from '$lib/client/secrets.svelte.js';
-  import SelectCheckbox from '$lib/components/data-table/select-checkbox.svelte';
-  import SortHeader from '$lib/components/data-table/sort-header.svelte';
-  import AddSecretDialog from '$lib/components/secrets/add-secret-dialog.svelte';
-  import ExportDialog from '$lib/components/secrets/export-dialog.svelte';
-  import ImportDialog from '$lib/components/secrets/import-dialog.svelte';
-  import RenameDialog from '$lib/components/secrets/rename-dialog.svelte';
-  import SecretActionsCell from '$lib/components/secrets/secret-actions-cell.svelte';
-  import SecretKeyCell from '$lib/components/secrets/secret-key-cell.svelte';
-  import SecretMetaCell from '$lib/components/secrets/secret-meta-cell.svelte';
-  import SecretValueCell from '$lib/components/secrets/secret-value-cell.svelte';
-  import * as Alert from '$lib/components/ui/alert/index.js';
-  import * as AlertDialog from '$lib/components/ui/alert-dialog/index.js';
-  import { Badge } from '$lib/components/ui/badge/index.js';
-  import { Button, buttonVariants } from '$lib/components/ui/button/index.js';
-  import { ButtonGroup } from '$lib/components/ui/button-group/index.js';
-  import { Checkbox } from '$lib/components/ui/checkbox/index.js';
-  import { createSvelteTable, FlexRender, renderComponent } from '$lib/components/ui/data-table/index.js';
-  import * as Empty from '$lib/components/ui/empty/index.js';
-  import * as InputGroup from '$lib/components/ui/input-group/index.js';
-  import { Kbd } from '$lib/components/ui/kbd/index.js';
-  import { Label } from '$lib/components/ui/label/index.js';
-  import * as Popover from '$lib/components/ui/popover/index.js';
-  import * as Table from '$lib/components/ui/table/index.js';
+  import type { SecretListEntry } from '#lib/client/api.js';
+  import { pluralise } from '#lib/client/format.js';
+  import { reveal } from '#lib/client/reveal.svelte.js';
+  import type { SecretsController } from '#lib/client/secrets.svelte.js';
+  import SelectCheckbox from '#lib/components/data-table/select-checkbox.svelte';
+  import SortHeader from '#lib/components/data-table/sort-header.svelte';
+  import AddSecretDialog from '#lib/components/secrets/add-secret-dialog.svelte';
+  import ExportDialog from '#lib/components/secrets/export-dialog.svelte';
+  import ImportDialog from '#lib/components/secrets/import-dialog.svelte';
+  import RenameDialog from '#lib/components/secrets/rename-dialog.svelte';
+  import SecretActionsCell from '#lib/components/secrets/secret-actions-cell.svelte';
+  import SecretKeyCell from '#lib/components/secrets/secret-key-cell.svelte';
+  import SecretMetaCell from '#lib/components/secrets/secret-meta-cell.svelte';
+  import SecretValueCell from '#lib/components/secrets/secret-value-cell.svelte';
+  import * as Alert from '#lib/components/ui/alert/index.js';
+  import * as AlertDialog from '#lib/components/ui/alert-dialog/index.js';
+  import { Badge } from '#lib/components/ui/badge/index.js';
+  import { Button, buttonVariants } from '#lib/components/ui/button/index.js';
+  import { ButtonGroup } from '#lib/components/ui/button-group/index.js';
+  import { Checkbox } from '#lib/components/ui/checkbox/index.js';
+  import { createSvelteTable, FlexRender, renderComponent } from '#lib/components/ui/data-table/index.js';
+  import * as Empty from '#lib/components/ui/empty/index.js';
+  import * as InputGroup from '#lib/components/ui/input-group/index.js';
+  import { Kbd } from '#lib/components/ui/kbd/index.js';
+  import { Label } from '#lib/components/ui/label/index.js';
+  import * as Popover from '#lib/components/ui/popover/index.js';
+  import * as Table from '#lib/components/ui/table/index.js';
 
   /**
    * The secrets table.
@@ -60,7 +67,7 @@
   let sorting = $state<SortingState>([{ id: 'key', desc: false }]);
   let columnFilters = $state<ColumnFiltersState>([]);
   let rowSelection = $state<RowSelectionState>({});
-  let columnVisibility = $state<VisibilityState>({});
+  let columnVisibility = $state<ColumnVisibilityState>({});
   let filter = $state('');
 
   let renaming = $state<SecretListEntry | null>(null);
@@ -84,7 +91,23 @@
     deleteOpen = true;
   }
 
-  const columns: ColumnDef<SecretListEntry>[] = [
+  /**
+   * Every TanStack capability this table uses, registered by name. A sort or
+   * filter function is reachable from a column only through these slots, so
+   * `'auto'` sorting resolves to the two string sorts listed here.
+   */
+  const features = tableFeatures({
+    columnFilteringFeature,
+    columnVisibilityFeature,
+    rowSelectionFeature,
+    rowSortingFeature,
+    filteredRowModel: createFilteredRowModel(),
+    sortedRowModel: createSortedRowModel(),
+    filterFns: { includesString: filterFn_includesString },
+    sortFns: { alphanumeric: sortFn_alphanumeric, text: sortFn_text }
+  });
+
+  const columns: ColumnDef<typeof features, SecretListEntry>[] = [
     {
       id: 'select',
       enableSorting: false,
@@ -92,7 +115,7 @@
       header: ({ table }) =>
         renderComponent(SelectCheckbox, {
           checked: table.getIsAllRowsSelected(),
-          indeterminate: table.getIsSomeRowsSelected(),
+          indeterminate: table.getIsSomeRowsSelected() && !table.getIsAllRowsSelected(),
           label: 'Select every secret',
           onCheckedChange: (value: boolean) => table.toggleAllRowsSelected(value)
         }),
@@ -136,6 +159,7 @@
   ];
 
   const table = createSvelteTable({
+    features,
     get data() {
       return controller.rows;
     },
@@ -160,10 +184,7 @@
     onSortingChange: (updater) => (sorting = apply(updater, sorting)),
     onColumnFiltersChange: (updater) => (columnFilters = apply(updater, columnFilters)),
     onRowSelectionChange: (updater) => (rowSelection = apply(updater, rowSelection)),
-    onColumnVisibilityChange: (updater) => (columnVisibility = apply(updater, columnVisibility)),
-    getCoreRowModel: getCoreRowModel(),
-    getSortedRowModel: getSortedRowModel(),
-    getFilteredRowModel: getFilteredRowModel()
+    onColumnVisibilityChange: (updater) => (columnVisibility = apply(updater, columnVisibility))
   });
 
   const selectedKeys = $derived(table.getSelectedRowModel().rows.map((row) => row.original.key));
@@ -300,7 +321,7 @@
                     : undefined}
               >
                 {#if !header.isPlaceholder}
-                  <FlexRender content={header.column.columnDef.header} context={header.getContext()} />
+                  <FlexRender {header} />
                 {/if}
               </Table.Head>
             {/each}
@@ -313,7 +334,7 @@
           <Table.Row data-state={row.getIsSelected() ? 'selected' : undefined}>
             {#each row.getVisibleCells() as cell (cell.id)}
               <Table.Cell class={cell.column.id === 'value' ? 'min-w-72' : undefined}>
-                <FlexRender content={cell.column.columnDef.cell} context={cell.getContext()} />
+                <FlexRender {cell} />
               </Table.Cell>
             {/each}
           </Table.Row>

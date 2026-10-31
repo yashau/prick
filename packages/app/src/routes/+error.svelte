@@ -4,10 +4,10 @@
   import ServerCrashIcon from '@lucide/svelte/icons/server-crash';
 
   import { page } from '$app/state';
-  import CopyButton from '$lib/components/copy-button.svelte';
-  import { Button } from '$lib/components/ui/button/index.js';
-  import * as Empty from '$lib/components/ui/empty/index.js';
-  import { Kbd } from '$lib/components/ui/kbd/index.js';
+  import CopyButton from '#lib/components/copy-button.svelte';
+  import { Button } from '#lib/components/ui/button/index.js';
+  import * as Empty from '#lib/components/ui/empty/index.js';
+  import { Kbd } from '#lib/components/ui/kbd/index.js';
 
   /**
    * One error page for every failure the router can produce.

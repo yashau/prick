@@ -1,4 +1,4 @@
-import { listProjects } from "$lib/server/core";
+import { listProjects } from "#lib/server/core/index.js";
 
 import { refuse, viewer } from "./transport";
 import type { LayoutServerLoad } from "./$types";

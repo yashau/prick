@@ -3,8 +3,8 @@
   import OctagonXIcon from '@lucide/svelte/icons/octagon-x';
   import ShieldXIcon from '@lucide/svelte/icons/shield-x';
 
-  import { OUTCOME_LABELS } from '$lib/client/audit';
-  import { Badge } from '$lib/components/ui/badge/index.js';
+  import { OUTCOME_LABELS } from '#lib/client/audit.js';
+  import { Badge } from '#lib/components/ui/badge/index.js';
 
   let { outcome }: { outcome: string } = $props();
 

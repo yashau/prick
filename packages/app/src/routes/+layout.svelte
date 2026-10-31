@@ -2,10 +2,10 @@
   import { mode, ModeWatcher } from 'mode-watcher';
   import type { Snippet } from 'svelte';
 
-  import { writeAppearance } from '$lib/client/theme';
-  import CommandPalette from '$lib/components/command-palette.svelte';
-  import IdleDialog from '$lib/components/idle-dialog.svelte';
-  import { Toaster } from '$lib/components/ui/sonner/index.js';
+  import { writeAppearance } from '#lib/client/theme.js';
+  import CommandPalette from '#lib/components/command-palette.svelte';
+  import IdleDialog from '#lib/components/idle-dialog.svelte';
+  import { Toaster } from '#lib/components/ui/sonner/index.js';
 
   import '../app.css';
 
@@ -43,7 +43,7 @@
   to "fix the flash" -- the flash is already fixed, server-side.
 
   mode-watcher's FOUC-prevention snippet is an INLINE <script>, and the CSP in
-  svelte.config.js is `script-src 'self' 'strict-dynamic'` with SvelteKit-issued
+  vite.config.ts is `script-src 'self' 'strict-dynamic'` with SvelteKit-issued
   nonces. SvelteKit does not expose that nonce to components, so the snippet
   would be injected un-nonced and blocked -- a guaranteed console error on every
   page, in exchange for nothing. Weakening the CSP of a secrets manager to

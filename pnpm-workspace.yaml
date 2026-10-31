@@ -92,7 +92,7 @@ ignoredOptionalDependencies:
 # instead of five.
 #
 # typescript is deliberately held at 6.0.x. svelte-check, @astrojs/check and
-# @sveltejs/kit (2.x and 3.x) all cap their peer range at ^6, because they
+# @sveltejs/kit 3.x all cap their peer range at ^6, because they
 # drive the language-service API that TypeScript 7 (the native port, current
 # `latest`) does not expose. Checked 2026-10-03: `tsc` 7.0.2 passes clean on
 # packages/shared, packages/mcp and e2e, so the blocker is only those three
@@ -123,17 +123,6 @@ catalog:
 # every entry deduplicates onto an existing copy rather than adding one, and
 # none is subject to the `minimumReleaseAge` cooldown above.
 #
-#   cookie <0.7.0 -- GHSA-pxg6-pf52-xh8x
-#     `serialize()` does not reject out-of-bounds characters in the cookie name,
-#     path or domain, so a caller that passes unvalidated input can close the
-#     field with `;` and append attributes of its choosing to the Set-Cookie
-#     header -- `Domain`, or an `Expires` in the past that deletes a different
-#     cookie. It arrives through `@sveltejs/kit`, which still declares
-#     `cookie: ^0.6.0` as of 2.70.3. This is the only one that SHIPS: the
-#     Worker bundle contains Kit's runtime, and Kit's runtime contains cookie.
-#     0.7.2 only tightens validation; the parse/serialize signatures are
-#     unchanged.
-#
 #   esbuild <=0.24.2 -- GHSA-67mh-4wv8-2f99
 #     The development server answers every origin with
 #     `Access-Control-Allow-Origin: *`, so any page the developer happens to
@@ -146,5 +135,4 @@ catalog:
 #     this collapses the stale second copy onto it.
 # -----------------------------------------------------------------------------
 overrides:
-  "cookie@<0.7.0": "0.7.2"
   "esbuild@<0.25.0": "0.25.12"

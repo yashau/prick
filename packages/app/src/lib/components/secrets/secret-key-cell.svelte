@@ -1,7 +1,7 @@
 <script lang="ts">
-  import type { SecretListEntry } from '$lib/client/api';
-  import CopyButton from '$lib/components/copy-button.svelte';
-  import { Badge } from '$lib/components/ui/badge/index.js';
+  import type { SecretListEntry } from '#lib/client/api.js';
+  import CopyButton from '#lib/components/copy-button.svelte';
+  import { Badge } from '#lib/components/ui/badge/index.js';
 
   let { row }: { row: SecretListEntry } = $props();
 </script>

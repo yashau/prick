@@ -4,18 +4,18 @@
   import { toast } from 'svelte-sonner';
 
   import { applyAction, enhance } from '$app/forms';
-  import { invalidateAll } from '$app/navigation';
-  import { absoluteTime, relativeTime } from '$lib/client/format';
-  import type { FormErrors } from '$lib/client/forms';
-  import IdentityCombobox from '$lib/components/access/identity-combobox.svelte';
-  import IdentityCell from '$lib/components/rbac/identity-cell.svelte';
-  import type { GroupMemberView, IdentityView } from '$lib/components/rbac/types';
-  import * as AlertDialog from '$lib/components/ui/alert-dialog/index.js';
-  import { Button, buttonVariants } from '$lib/components/ui/button/index.js';
-  import * as Dialog from '$lib/components/ui/dialog/index.js';
-  import * as Empty from '$lib/components/ui/empty/index.js';
-  import * as Field from '$lib/components/ui/field/index.js';
-  import * as Table from '$lib/components/ui/table/index.js';
+  import { refreshAll } from '$app/navigation';
+  import { absoluteTime, relativeTime } from '#lib/client/format.js';
+  import type { FormErrors } from '#lib/client/forms.js';
+  import IdentityCombobox from '#lib/components/access/identity-combobox.svelte';
+  import IdentityCell from '#lib/components/rbac/identity-cell.svelte';
+  import type { GroupMemberView, IdentityView } from '#lib/components/rbac/types.js';
+  import * as AlertDialog from '#lib/components/ui/alert-dialog/index.js';
+  import { Button, buttonVariants } from '#lib/components/ui/button/index.js';
+  import * as Dialog from '#lib/components/ui/dialog/index.js';
+  import * as Empty from '#lib/components/ui/empty/index.js';
+  import * as Field from '#lib/components/ui/field/index.js';
+  import * as Table from '#lib/components/ui/table/index.js';
 
   /**
    * Who is in a group.
@@ -99,7 +99,7 @@
                 addOpen = false;
                 identityId = '';
                 toast.success('Added to the group.');
-                await invalidateAll();
+                await refreshAll();
                 return;
               }
               await applyAction(result);
@@ -238,7 +238,7 @@
           if (result.type === 'success') {
             removeOpen = false;
             toast.success('Removed from the group.');
-            await invalidateAll();
+            await refreshAll();
             return;
           }
           await applyAction(result);

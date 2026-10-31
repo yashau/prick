@@ -1,7 +1,7 @@
 import { CreateEnvironmentBody } from "@prick/shared";
 import { fail } from "@sveltejs/kit";
 
-import { fieldErrors } from "$lib/client/forms";
+import { fieldErrors } from "#lib/client/forms.js";
 import {
   createEnvironment,
   deleteEnvironment,
@@ -9,7 +9,7 @@ import {
   listEnvironments,
   queryAudit,
   toPrickError,
-} from "$lib/server/core";
+} from "#lib/server/core/index.js";
 
 import { refuse, refuseAction } from "../../transport";
 import type { Actions, PageServerLoad } from "./$types";

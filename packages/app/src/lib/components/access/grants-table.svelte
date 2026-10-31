@@ -8,15 +8,15 @@
   import { toast } from 'svelte-sonner';
 
   import { applyAction, enhance } from '$app/forms';
-  import { invalidateAll } from '$app/navigation';
-  import type { GrantRecord, IdentityRecord } from '$lib/client/api';
-  import { expiryLabel } from '$lib/client/format';
-  import * as AlertDialog from '$lib/components/ui/alert-dialog/index.js';
-  import { Badge } from '$lib/components/ui/badge/index.js';
-  import { Button, buttonVariants } from '$lib/components/ui/button/index.js';
-  import * as Empty from '$lib/components/ui/empty/index.js';
-  import * as Table from '$lib/components/ui/table/index.js';
-  import * as Tooltip from '$lib/components/ui/tooltip/index.js';
+  import { refreshAll } from '$app/navigation';
+  import type { GrantRecord, IdentityRecord } from '#lib/client/api.js';
+  import { expiryLabel } from '#lib/client/format.js';
+  import * as AlertDialog from '#lib/components/ui/alert-dialog/index.js';
+  import { Badge } from '#lib/components/ui/badge/index.js';
+  import { Button, buttonVariants } from '#lib/components/ui/button/index.js';
+  import * as Empty from '#lib/components/ui/empty/index.js';
+  import * as Table from '#lib/components/ui/table/index.js';
+  import * as Tooltip from '#lib/components/ui/tooltip/index.js';
 
   let {
     grants,
@@ -199,7 +199,7 @@
           if (result.type === 'success') {
             confirmOpen = false;
             toast.success('Grant revoked.');
-            await invalidateAll();
+            await refreshAll();
             return;
           }
           await applyAction(result);

@@ -4,7 +4,7 @@
  * This is the only suite in the repository where all three are in one process
  * at once, which is why it is worth having:
  *
- *   svelte.config.js   the CSP on server-rendered pages, emitted as a real
+ *   vite.config.ts     the CSP on server-rendered pages, emitted as a real
  *                      header by SvelteKit.
  *   _headers           the assets runtime, for responses that never invoke the
  *                      Worker at all -- so no Hono middleware can reach them.

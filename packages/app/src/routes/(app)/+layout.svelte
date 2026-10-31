@@ -3,14 +3,14 @@
   import type { Snippet } from 'svelte';
 
   import { page } from '$app/state';
-  import AppSidebar from '$lib/components/app-sidebar.svelte';
-  import ThemeToggle from '$lib/components/theme-toggle.svelte';
-  import * as Alert from '$lib/components/ui/alert/index.js';
-  import * as Breadcrumb from '$lib/components/ui/breadcrumb/index.js';
-  import { Kbd } from '$lib/components/ui/kbd/index.js';
-  import { Separator } from '$lib/components/ui/separator/index.js';
-  import * as Sidebar from '$lib/components/ui/sidebar/index.js';
-  import * as Tooltip from '$lib/components/ui/tooltip/index.js';
+  import AppSidebar from '#lib/components/app-sidebar.svelte';
+  import ThemeToggle from '#lib/components/theme-toggle.svelte';
+  import * as Alert from '#lib/components/ui/alert/index.js';
+  import * as Breadcrumb from '#lib/components/ui/breadcrumb/index.js';
+  import { Kbd } from '#lib/components/ui/kbd/index.js';
+  import { Separator } from '#lib/components/ui/separator/index.js';
+  import * as Sidebar from '#lib/components/ui/sidebar/index.js';
+  import * as Tooltip from '#lib/components/ui/tooltip/index.js';
   import type { LayoutData } from './$types';
 
   let { data, children }: { data: LayoutData; children: Snippet } = $props();

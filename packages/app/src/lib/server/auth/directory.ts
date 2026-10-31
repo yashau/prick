@@ -204,9 +204,8 @@ export async function syncAccessDisplayName(ctx: CoreContext, request: Request):
  * is never awaited. Both matter -- an unhandled rejection from a decoration
  * lookup would surface as a Worker error on a request that otherwise succeeded.
  *
- * `waitUntil` is optional because the two transports disagree about whether one
- * exists: `platform.ctx` can be absent, and Hono's `c.executionCtx` THROWS when
- * the runtime supplied none. Without it the task is still started, and the
+ * `waitUntil` is optional because Hono's `c.executionCtx` THROWS when the
+ * runtime supplied none, and a test harness may supply none. Without it the task is still started, and the
  * runtime may cancel it -- which costs a name that the next request resolves
  * anyway.
  */

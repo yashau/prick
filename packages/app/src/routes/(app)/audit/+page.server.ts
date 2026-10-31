@@ -1,7 +1,7 @@
 import type { AuditQuery } from "@prick/shared";
 
-import type { ScopeNames } from "$lib/client/audit";
-import { listEnvironments, listProjects, queryAudit } from "$lib/server/core";
+import type { ScopeNames } from "#lib/client/audit.js";
+import { listEnvironments, listProjects, queryAudit } from "#lib/server/core/index.js";
 
 import { refuse } from "../transport";
 import type { PageServerLoad } from "./$types";

@@ -165,7 +165,7 @@ describe('the committed version module', () => {
     const app = (...parts) => repoFile('packages', 'app', ...parts);
     assert.match(app('src', 'lib', 'server', 'http', 'routes', 'meta.ts'), /version: APP_VERSION/);
     assert.match(app('src', 'lib', 'server', 'http', 'openapi.ts'), /version: APP_VERSION/);
-    assert.match(app('svelte.config.js'), /name: APP_VERSION/);
+    assert.match(app('vite.config.ts'), /name: APP_VERSION/);
   });
 });
 

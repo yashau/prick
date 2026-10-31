@@ -3,19 +3,19 @@
   import TriangleAlertIcon from '@lucide/svelte/icons/triangle-alert';
 
   import { page } from '$app/state';
-  import { api, type AuditEntryView } from '$lib/client/api';
-  import { toApiError, type ApiError } from '$lib/client/errors';
-  import { SecretsController } from '$lib/client/secrets.svelte.js';
-  import AuditItem from '$lib/components/audit/audit-item.svelte';
-  import KeyVersions from '$lib/components/history/key-versions.svelte';
-  import * as Accordion from '$lib/components/ui/accordion/index.js';
-  import * as Alert from '$lib/components/ui/alert/index.js';
-  import { Badge } from '$lib/components/ui/badge/index.js';
-  import { Button } from '$lib/components/ui/button/index.js';
-  import * as Empty from '$lib/components/ui/empty/index.js';
-  import * as Item from '$lib/components/ui/item/index.js';
-  import { ScrollArea } from '$lib/components/ui/scroll-area/index.js';
-  import { Skeleton } from '$lib/components/ui/skeleton/index.js';
+  import { api, type AuditEntryView } from '#lib/client/api.js';
+  import { toApiError, type ApiError } from '#lib/client/errors.js';
+  import { SecretsController } from '#lib/client/secrets.svelte.js';
+  import AuditItem from '#lib/components/audit/audit-item.svelte';
+  import KeyVersions from '#lib/components/history/key-versions.svelte';
+  import * as Accordion from '#lib/components/ui/accordion/index.js';
+  import * as Alert from '#lib/components/ui/alert/index.js';
+  import { Badge } from '#lib/components/ui/badge/index.js';
+  import { Button } from '#lib/components/ui/button/index.js';
+  import * as Empty from '#lib/components/ui/empty/index.js';
+  import * as Item from '#lib/components/ui/item/index.js';
+  import { ScrollArea } from '#lib/components/ui/scroll-area/index.js';
+  import { Skeleton } from '#lib/components/ui/skeleton/index.js';
 
   /**
    * The environment's change feed, and per-key versions with rollback.

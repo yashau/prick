@@ -4,17 +4,17 @@
   import { toast } from 'svelte-sonner';
 
   import { applyAction, enhance } from '$app/forms';
-  import { invalidateAll } from '$app/navigation';
-  import type { FormErrors } from '$lib/client/forms';
-  import DatePicker from '$lib/components/access/date-picker.svelte';
-  import IdentityCombobox from '$lib/components/access/identity-combobox.svelte';
-  import ScopeFields from '$lib/components/rbac/scope-fields.svelte';
-  import type { AdminScopes, IdentityView } from '$lib/components/rbac/types';
-  import * as Alert from '$lib/components/ui/alert/index.js';
-  import { Button } from '$lib/components/ui/button/index.js';
-  import * as Dialog from '$lib/components/ui/dialog/index.js';
-  import * as Field from '$lib/components/ui/field/index.js';
-  import * as Select from '$lib/components/ui/select/index.js';
+  import { refreshAll } from '$app/navigation';
+  import type { FormErrors } from '#lib/client/forms.js';
+  import DatePicker from '#lib/components/access/date-picker.svelte';
+  import IdentityCombobox from '#lib/components/access/identity-combobox.svelte';
+  import ScopeFields from '#lib/components/rbac/scope-fields.svelte';
+  import type { AdminScopes, IdentityView } from '#lib/components/rbac/types.js';
+  import * as Alert from '#lib/components/ui/alert/index.js';
+  import { Button } from '#lib/components/ui/button/index.js';
+  import * as Dialog from '#lib/components/ui/dialog/index.js';
+  import * as Field from '#lib/components/ui/field/index.js';
+  import * as Select from '#lib/components/ui/select/index.js';
 
   /**
    * Create a grant, for an identity or for a group.
@@ -126,7 +126,7 @@
           if (result.type === 'success') {
             open = false;
             toast.success('Grant created.');
-            await invalidateAll();
+            await refreshAll();
             return;
           }
           await applyAction(result);

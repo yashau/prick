@@ -1,8 +1,8 @@
 import { UpdateProjectBody } from "@prick/shared";
 import { fail } from "@sveltejs/kit";
 
-import { fieldErrors } from "$lib/client/forms";
-import { getProjectBySlug, listEnvironments, updateProject } from "$lib/server/core";
+import { fieldErrors } from "#lib/client/forms.js";
+import { getProjectBySlug, listEnvironments, updateProject } from "#lib/server/core/index.js";
 
 import { refuse, refuseAction } from "../../../transport";
 import type { Actions, PageServerLoad } from "./$types";

@@ -3,13 +3,13 @@
   import TriangleAlertIcon from '@lucide/svelte/icons/triangle-alert';
 
   import { page } from '$app/state';
-  import { SecretsController } from '$lib/client/secrets.svelte.js';
-  import CopyButton from '$lib/components/copy-button.svelte';
-  import SecretsTable from '$lib/components/secrets/secrets-table.svelte';
-  import TableSkeleton from '$lib/components/secrets/table-skeleton.svelte';
-  import * as Alert from '$lib/components/ui/alert/index.js';
-  import { Button } from '$lib/components/ui/button/index.js';
-  import * as Empty from '$lib/components/ui/empty/index.js';
+  import { SecretsController } from '#lib/client/secrets.svelte.js';
+  import CopyButton from '#lib/components/copy-button.svelte';
+  import SecretsTable from '#lib/components/secrets/secrets-table.svelte';
+  import TableSkeleton from '#lib/components/secrets/table-skeleton.svelte';
+  import * as Alert from '#lib/components/ui/alert/index.js';
+  import { Button } from '#lib/components/ui/button/index.js';
+  import * as Empty from '#lib/components/ui/empty/index.js';
 
   /**
    * The secrets table. CLIENT-RENDERED ONLY -- see `+layout.ts` next to this

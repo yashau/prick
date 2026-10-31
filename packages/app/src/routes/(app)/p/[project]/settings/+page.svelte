@@ -3,16 +3,16 @@
   import { toast } from 'svelte-sonner';
 
   import { applyAction, enhance } from '$app/forms';
-  import { invalidateAll } from '$app/navigation';
-  import { pluralise } from '$lib/client/format';
-  import type { FormErrors } from '$lib/client/forms';
-  import PageHeader from '$lib/components/page-header.svelte';
-  import DeleteProjectDialog from '$lib/components/projects/delete-project-dialog.svelte';
-  import { Button } from '$lib/components/ui/button/index.js';
-  import * as Card from '$lib/components/ui/card/index.js';
-  import * as Field from '$lib/components/ui/field/index.js';
-  import { Input } from '$lib/components/ui/input/index.js';
-  import { Textarea } from '$lib/components/ui/textarea/index.js';
+  import { refreshAll } from '$app/navigation';
+  import { pluralise } from '#lib/client/format.js';
+  import type { FormErrors } from '#lib/client/forms.js';
+  import PageHeader from '#lib/components/page-header.svelte';
+  import DeleteProjectDialog from '#lib/components/projects/delete-project-dialog.svelte';
+  import { Button } from '#lib/components/ui/button/index.js';
+  import * as Card from '#lib/components/ui/card/index.js';
+  import * as Field from '#lib/components/ui/field/index.js';
+  import { Input } from '#lib/components/ui/input/index.js';
+  import { Textarea } from '#lib/components/ui/textarea/index.js';
   import type { ActionData, PageData } from './$types';
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
@@ -61,7 +61,7 @@
           saving = false;
           if (result.type === 'success') {
             toast.success('Project updated.');
-            await invalidateAll();
+            await refreshAll();
             return;
           }
           await applyAction(result);

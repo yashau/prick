@@ -133,6 +133,10 @@ the flag stays `false` until the feature is documented and confirmed not to
 swallow service-token requests. If it did swallow them, making it load-bearing
 would break every CI client at once with no local signal.
 
+The Worker reads its bindings through `cloudflare:workers`, where the
+per-request `ctx.access` is never present. Setting the flag to `"true"` therefore
+refuses every request, on the API and in the admin UI alike.
+
 ## `wrangler.jsonc`
 
 The parts that matter, beyond the vars above.

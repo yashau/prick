@@ -5,17 +5,17 @@
   import TriangleAlertIcon from '@lucide/svelte/icons/triangle-alert';
   import { toast } from 'svelte-sonner';
 
-  import { api } from '$lib/client/api';
-  import { copyPlainText } from '$lib/client/clipboard';
-  import { downloadText, toDotenv, toJson, UnrepresentableValueError } from '$lib/client/dotenv';
-  import { ApiError } from '$lib/client/errors';
-  import type { SecretsController } from '$lib/client/secrets.svelte.js';
-  import * as Alert from '$lib/components/ui/alert/index.js';
-  import { Button } from '$lib/components/ui/button/index.js';
-  import * as Dialog from '$lib/components/ui/dialog/index.js';
-  import * as Field from '$lib/components/ui/field/index.js';
-  import { NativeSelect, NativeSelectOption } from '$lib/components/ui/native-select/index.js';
-  import { Spinner } from '$lib/components/ui/spinner/index.js';
+  import { api } from '#lib/client/api.js';
+  import { copyPlainText } from '#lib/client/clipboard.js';
+  import { downloadText, toDotenv, toJson, UnrepresentableValueError } from '#lib/client/dotenv.js';
+  import { ApiError } from '#lib/client/errors.js';
+  import type { SecretsController } from '#lib/client/secrets.svelte.js';
+  import * as Alert from '#lib/components/ui/alert/index.js';
+  import { Button } from '#lib/components/ui/button/index.js';
+  import * as Dialog from '#lib/components/ui/dialog/index.js';
+  import * as Field from '#lib/components/ui/field/index.js';
+  import { NativeSelect, NativeSelectOption } from '#lib/components/ui/native-select/index.js';
+  import { Spinner } from '#lib/components/ui/spinner/index.js';
 
   /**
    * Export the whole environment.

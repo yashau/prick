@@ -5,9 +5,9 @@
 // `app-v*` tag into this file before a deploy, and nothing else writes to it.
 // Never hand-edit it and never commit a stamped value.
 //
-// Plain JavaScript rather than TypeScript so that `svelte.config.js` can import
-// it as well as the Worker: SvelteKit's `version.name` and the API's `/health`
-// then cannot disagree about which build is running.
+// Plain JavaScript, imported by `vite.config.ts` as well as by the Worker, so
+// that SvelteKit's `version.name` and the API's `/health` cannot disagree about
+// which build is running.
 
 /** CalVer `YYYY.MMDD.N` of an `app-v*` release, or `0.0.0-dev` if unstamped. */
 export const APP_VERSION = "0.0.0-dev";

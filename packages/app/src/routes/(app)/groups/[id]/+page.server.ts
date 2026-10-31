@@ -1,14 +1,14 @@
 import { AddGroupMemberBody, CreateGroupGrantBody, UpdateGroupBody } from "@prick/shared";
 import { fail, redirect } from "@sveltejs/kit";
 
-import { fieldErrors } from "$lib/client/forms";
+import { fieldErrors } from "#lib/client/forms.js";
 import type {
   AdminScopes,
   GroupGrantView,
   GroupMemberView,
   GroupView,
   IdentityView,
-} from "$lib/components/rbac/types";
+} from "#lib/components/rbac/types.js";
 import {
   addGroupMember,
   createGroupGrant,
@@ -21,7 +21,7 @@ import {
   removeGroupMember,
   revokeGroupGrant,
   updateGroup,
-} from "$lib/server/core";
+} from "#lib/server/core/index.js";
 
 import { refuse, refuseAction } from "../../transport";
 import { adminScopes, grantScopeFields, grantTerms, isGlobalAdmin } from "../../users/scopes";

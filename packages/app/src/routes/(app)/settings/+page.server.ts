@@ -1,4 +1,4 @@
-import { getKeyringStatus, rekeyPage, REKEY_DEFAULT_PAGE } from "$lib/server/core";
+import { getKeyringStatus, rekeyPage, REKEY_DEFAULT_PAGE } from "#lib/server/core/index.js";
 
 import { refuse, refuseAction, viewer } from "../transport";
 import type { Actions, PageServerLoad } from "./$types";

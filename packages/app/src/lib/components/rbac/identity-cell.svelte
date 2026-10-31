@@ -3,7 +3,7 @@
   import UserIcon from '@lucide/svelte/icons/user';
   import type { IdentityKind } from '@prick/shared';
 
-  import { Badge } from '$lib/components/ui/badge/index.js';
+  import { Badge } from '#lib/components/ui/badge/index.js';
 
   /**
    * An identity, as one table cell.

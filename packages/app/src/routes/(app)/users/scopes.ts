@@ -1,11 +1,11 @@
-import type { AdminEnvironment, AdminProject, AdminScopes } from "$lib/components/rbac/types";
-import { can } from "$lib/server/auth";
+import type { AdminEnvironment, AdminProject, AdminScopes } from "#lib/components/rbac/types.js";
+import { can } from "#lib/server/auth/index.js";
 import {
   environmentScope,
   listEnvironments,
   type CoreContext,
   type ProjectSummary,
-} from "$lib/server/core";
+} from "#lib/server/core/index.js";
 
 /**
  * "Where may I grant?", answered once for the two RBAC screens.
@@ -13,8 +13,8 @@ import {
  * WHY IT LIVES IN A ROUTE DIRECTORY. SvelteKit ignores files under `src/routes`
  * that do not begin with `+`, so a module colocated with its callers is
  * supported -- `(app)/transport.ts` is the same pattern. It cannot live in
- * `$lib/client`, because it imports `$lib/server`; it should not live in
- * `$lib/server/core`, because it is not domain logic. It is a transport's
+ * `#lib/client`, because it imports `#lib/server`; it should not live in
+ * `#lib/server/core`, because it is not domain logic. It is a transport's
  * question: what does this screen offer.
  *
  * `(app)/groups/**` imports it from here rather than keeping a second copy.

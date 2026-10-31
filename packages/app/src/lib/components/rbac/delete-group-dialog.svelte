@@ -4,13 +4,13 @@
   import { toast } from 'svelte-sonner';
 
   import { applyAction, enhance } from '$app/forms';
-  import { pluralise } from '$lib/client/format';
-  import type { FormErrors } from '$lib/client/forms';
-  import type { GroupView } from '$lib/components/rbac/types';
-  import * as AlertDialog from '$lib/components/ui/alert-dialog/index.js';
-  import { Button, buttonVariants } from '$lib/components/ui/button/index.js';
-  import * as Field from '$lib/components/ui/field/index.js';
-  import { Input } from '$lib/components/ui/input/index.js';
+  import { pluralise } from '#lib/client/format.js';
+  import type { FormErrors } from '#lib/client/forms.js';
+  import type { GroupView } from '#lib/components/rbac/types.js';
+  import * as AlertDialog from '#lib/components/ui/alert-dialog/index.js';
+  import { Button, buttonVariants } from '#lib/components/ui/button/index.js';
+  import * as Field from '#lib/components/ui/field/index.js';
+  import { Input } from '#lib/components/ui/input/index.js';
 
   /**
    * Delete a group. Global admin only.

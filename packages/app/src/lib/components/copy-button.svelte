@@ -3,8 +3,8 @@
   import CopyIcon from '@lucide/svelte/icons/copy';
   import { toast } from 'svelte-sonner';
 
-  import { copyPlainText } from '$lib/client/clipboard';
-  import { Button, type ButtonSize, type ButtonVariant } from '$lib/components/ui/button/index.js';
+  import { copyPlainText } from '#lib/client/clipboard.js';
+  import { Button, type ButtonSize, type ButtonVariant } from '#lib/components/ui/button/index.js';
 
   /**
    * Copies something that is NOT a secret: a request id, a key name, a slug.
