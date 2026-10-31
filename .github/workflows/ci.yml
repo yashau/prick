@@ -614,14 +614,14 @@ jobs:
           # functions, and were duly reported as violations. Matching the call
           # is also simply more correct, because the violation is calling one of
           # these from a server load, not mentioning it.
-          hits="$(grep -rlnE '\b(revealSecret|revealSecrets|exportSecrets|decryptSecretValue)[[:space:]]*\(' \
+          hits="$(grep -rlnE '\b(revealSecret|revealSecrets|exportSecrets|decryptSecretValue|createServiceToken|rotateServiceToken)[[:space:]]*\(' \
                     --include='+*.server.ts' packages/app/src/routes || true)"
           if [ -n "$hits" ]; then
             echo "::error::A server load CALLS a secret-revealing function. SvelteKit serialises load return values into the page payload, so this puts plaintext into the HTML. Fetch from the browser inside the ssr=false subtree instead."
             echo "$hits"
             exit 1
           fi
-          echo "No +*.server.ts under src/routes calls a reveal or export path."
+          echo "No +*.server.ts under src/routes calls a reveal, export or service-token secret path."
 
   # ---------------------------------------------------------------------------
   # The version literal must be identical in Cargo.toml, every package.json and
