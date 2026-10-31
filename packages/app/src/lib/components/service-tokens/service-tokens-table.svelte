@@ -59,9 +59,15 @@
     sortFns: { alphanumeric: sortFn_alphanumeric, text: sortFn_text, basic: sortFn_basic }
   });
 
-  /** A token that never expires sorts after every one that does. */
+  /**
+   * A token that never expires sorts after every one that does, and a token
+   * whose expiry is unknown (`cloudflare: null`) sorts after both: an unknown
+   * expiry is not a promise that it never comes.
+   */
   const expirySortKey = (token: ServiceTokenRecord): number =>
-    token.cloudflare?.expiresAt ?? Number.MAX_SAFE_INTEGER;
+    token.cloudflare === null
+      ? Number.MAX_SAFE_INTEGER
+      : (token.cloudflare.expiresAt ?? Number.MAX_SAFE_INTEGER - 1);
 
   const columns: ColumnDef<typeof features, ServiceTokenRecord>[] = [
     {

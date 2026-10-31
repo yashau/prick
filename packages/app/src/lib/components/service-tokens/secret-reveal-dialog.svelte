@@ -145,6 +145,12 @@
           </p>
         </div>
 
+        {#if secret.warning !== null}
+          <p class="text-destructive text-sm" role="alert" data-testid="service-token-rotate-warning">
+            {secret.warning}
+          </p>
+        {/if}
+
         {#if secret.kind === 'rotated'}
           <p class="text-sm">
             {#if secret.previousSecretExpiresAt === null}

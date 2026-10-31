@@ -197,11 +197,17 @@ test.describe("on a Worker that manages service tokens", () => {
     await page.getByRole("button", { name: "I have stored the secret" }).click();
 
     const row = page.getByRole("row").filter({ hasText: name });
+    // The fake, like Cloudflare, reports an expiry and no last-seen time; the
+    // latter reads as unknown, never as "never used".
+    await expect(row).toContainText("Expires");
+    await expect(row).toContainText("Unknown");
     await row.getByRole("button", { name: `Actions for ${name}` }).click();
     await page.getByRole("menuitem", { name: "Revoke…" }).click();
 
     const confirm = page.getByRole("alertdialog");
     await expect(confirm).toContainText(`Revoke ${name}`);
+    // Issued here, not adopted: no warning about other Access applications.
+    await expect(confirm.getByTestId("service-token-revoke-adopted-warning")).toHaveCount(0);
     await confirm.getByRole("button", { name: "Revoke", exact: true }).click();
 
     await expect(row).toHaveCount(0);

@@ -303,7 +303,9 @@ export interface FeatureCapability {
 
 /** Cloudflare's live view of a service token. Epoch ms throughout. */
 export interface ServiceTokenCloudflareView {
+  /** `null`: the token never expires. */
   expiresAt: number | null;
+  /** `null`: unknown. It does not mean the token was never used. */
   lastSeenAt: number | null;
   enabled: boolean;
   duration: string | null;
@@ -318,8 +320,9 @@ export interface ServiceTokenCloudflareView {
  * No secret, ever: the client secret exists only in the response to a create
  * or a rotate, and those have their own shapes below.
  *
- * `cloudflare` is `null` when Cloudflare could not be asked, and for a token
- * Cloudflare no longer has.
+ * `cloudflare` is `null` when Cloudflare could not be asked, when the token's
+ * expiry could not be read back after a create or a rotate, and for a token
+ * Cloudflare no longer has. Its expiry is then unknown -- never "never expires".
  */
 export interface ServiceTokenRecord {
   id: string;
@@ -382,6 +385,8 @@ export interface RotatedServiceToken {
   clientSecret: string;
   /** When the previous secret stops working; `null` means it already has. */
   previousSecretExpiresAt: number | null;
+  /** Set when the rotation succeeded but left something for the operator to do. */
+  warning: string | null;
 }
 
 export interface ReconcileEntry {
@@ -390,6 +395,10 @@ export interface ReconcileEntry {
   clientId: string;
   name: string | null;
   applied: boolean;
+  /** Reported but not repaired: too recent to judge, no longer eligible, or another deployment's. */
+  skipped: boolean;
+  /** Why it was skipped. */
+  reason: string | null;
   error: string | null;
 }
 

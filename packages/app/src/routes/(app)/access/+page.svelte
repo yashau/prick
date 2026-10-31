@@ -9,7 +9,7 @@
   import { refreshAll } from '$app/navigation';
   import type { UnknownIdentity } from '#lib/client/api.js';
   import { absoluteTime, relativeTime } from '#lib/client/format.js';
-  import type { FormErrors } from '#lib/client/forms.js';
+  import { refusalMessage, type FormErrors } from '#lib/client/forms.js';
   import GrantDialog from '#lib/components/access/grant-dialog.svelte';
   import GrantsTable from '#lib/components/access/grants-table.svelte';
   import UnknownIdentities from '#lib/components/access/unknown-identities.svelte';
@@ -169,6 +169,8 @@
                         await refreshAll();
                         return;
                       }
+                      const refused = refusalMessage(result);
+                      if (refused !== null) toast.error('Identity not updated', { description: refused });
                       await applyAction(result);
                     };
                   }}
@@ -176,8 +178,9 @@
                   <input type="hidden" name="identity_id" value={identity.id} />
                   <input type="hidden" name="disabled" value={identity.disabled ? 'false' : 'true'} />
                   <div class="flex items-center gap-2">
+                    <!-- Controlled: it shows the server's state, so a refused toggle snaps back. -->
                     <Switch
-                      checked={!identity.disabled}
+                      bind:checked={() => !identity.disabled, () => {}}
                       aria-label="{identity.disabled ? 'Enable' : 'Disable'} {identity.subject}"
                       onCheckedChange={() => identityForms[identity.id]?.requestSubmit()}
                     />

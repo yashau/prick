@@ -2,6 +2,13 @@
   import type { ServiceTokenRecord } from '#lib/client/api.js';
   import { absoluteTime, relativeTime } from '#lib/client/format.js';
 
+  /**
+   * When Cloudflare last saw the token in use.
+   *
+   * A missing time reads "Unknown", never "Never": Cloudflare does not document
+   * the field, so its absence says nothing about whether the token was used.
+   */
+
   let { token }: { token: ServiceTokenRecord } = $props();
 
   const lastSeenAt = $derived(token.cloudflare?.lastSeenAt ?? null);
@@ -16,5 +23,5 @@
     {relativeTime(lastSeenAt)}
   </time>
 {:else}
-  <span class="text-muted-foreground text-sm">{token.cloudflare === null ? 'Unknown' : 'Never'}</span>
+  <span class="text-muted-foreground text-sm">Unknown</span>
 {/if}

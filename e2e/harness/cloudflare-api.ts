@@ -64,11 +64,25 @@ function hex(bytes: number): string {
   return randomBytes(bytes).toString("hex");
 }
 
-/** The token as Cloudflare lists it: everything but the secret. */
+/** The token as Cloudflare lists and gets it: everything but the secret. */
 function publicView(token: FakeToken): Omit<FakeToken, "client_secret"> {
   const { client_secret: _secret, ...rest } = token;
   return rest;
 }
+
+/**
+ * The token as Cloudflare answers a create or a rotate: the secret, and NO
+ * `expires_at`. The real API leaves the expiry out of both responses, so a
+ * Worker that wants it has to GET the token afterwards -- and this fake makes
+ * it do exactly that, rather than handing it a field production never sends.
+ */
+function issuedView(token: FakeToken): Omit<FakeToken, "expires_at"> {
+  const { expires_at: _expiry, ...rest } = token;
+  return rest;
+}
+
+/** Fields a `PUT` may change. Identity, secret and timestamps are the API's own. */
+const IMMUTABLE = new Set(["id", "client_id", "client_secret", "created_at", "updated_at"]);
 
 function send(response: ServerResponse, status: number, body: unknown): void {
   response.writeHead(status, { "content-type": "application/json" });
@@ -178,7 +192,7 @@ export async function startFakeCloudflareApi(options: {
         updated_at: new Date(now).toISOString(),
       };
       tokens.set(token.id, token);
-      ok(response, token);
+      ok(response, issuedView(token));
       return;
     }
 
@@ -193,12 +207,35 @@ export async function startFakeCloudflareApi(options: {
     if (match[2] === "/rotate" && method === "POST") {
       token.client_secret = issueSecret();
       token.updated_at = new Date(now).toISOString();
-      ok(response, token);
+      ok(response, issuedView(token));
       return;
     }
 
     if (match[2] === "/refresh" && method === "POST") {
       token.expires_at = expiryFor(token.duration, now);
+      token.updated_at = new Date(now).toISOString();
+      ok(response, publicView(token));
+      return;
+    }
+
+    if (match[2] === undefined && method === "GET") {
+      ok(response, publicView(token));
+      return;
+    }
+
+    // A partial update: only the fields the body names change.
+    if (match[2] === undefined && method === "PUT") {
+      const body = await readJson(request);
+      const record = token as unknown as Record<string, unknown>;
+      for (const [field, value] of Object.entries(body)) {
+        if (IMMUTABLE.has(field)) continue;
+        if (typeof value === "string" || typeof value === "boolean" || typeof value === "number") {
+          record[field] = value;
+        }
+      }
+      if (typeof body["duration"] === "string") {
+        token.expires_at = expiryFor(token.duration, now);
+      }
       token.updated_at = new Date(now).toISOString();
       ok(response, publicView(token));
       return;

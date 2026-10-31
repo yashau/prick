@@ -104,7 +104,8 @@
       label: labelOf(result.token),
       clientId: result.clientId,
       clientSecret: result.clientSecret,
-      previousSecretExpiresAt: null
+      previousSecretExpiresAt: null,
+      warning: null
     };
     void load();
   }
@@ -115,7 +116,8 @@
       label: labelOf(result.token),
       clientId: result.clientId,
       clientSecret: result.clientSecret,
-      previousSecretExpiresAt: result.previousSecretExpiresAt
+      previousSecretExpiresAt: result.previousSecretExpiresAt,
+      warning: result.warning
     };
     void load();
   }
@@ -267,6 +269,16 @@
           holds, and Cloudflare then deletes the token. Any job still using it is refused on its
           next request.
         </span>
+        {#if revoking?.adopted}
+          <span
+            class="text-destructive mt-2 block font-medium"
+            data-testid="service-token-revoke-adopted-warning"
+          >
+            This token was adopted from the Cloudflare dashboard. Revoking it deletes it in
+            Cloudflare, so every other Access application or policy that uses it stops accepting it
+            too.
+          </span>
+        {/if}
         <span class="mt-2 block">
           Its grants stay on record as what it held. A revoked token cannot be brought back; issue
           a new one instead.

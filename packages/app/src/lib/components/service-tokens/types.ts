@@ -17,4 +17,6 @@ export interface OneTimeSecret {
   clientSecret: string;
   /** Rotation only: when the previous secret stops working, `null` if it already has. */
   previousSecretExpiresAt: number | null;
+  /** A rotation that succeeded but left something to do, such as a token Cloudflare kept disabled. */
+  warning: string | null;
 }

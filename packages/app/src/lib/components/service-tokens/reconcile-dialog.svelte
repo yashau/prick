@@ -45,7 +45,7 @@
   };
 
   const repairable = $derived(
-    result !== null && !result.applied && result.entries.some((entry) => entry.kind !== 'foreign')
+    result !== null && !result.applied && result.entries.some((entry) => !entry.skipped)
   );
 
   function describe(error: unknown): string {
@@ -150,7 +150,9 @@
                   </Badge>
                 </Table.Cell>
                 <Table.Cell class="text-sm">
-                  {#if !result.applied}
+                  {#if entry.skipped && entry.kind !== 'foreign'}
+                    <span class="text-muted-foreground">Skipped: {entry.reason}</span>
+                  {:else if !result.applied}
                     {KIND_REPAIR[entry.kind]}
                   {:else if entry.error}
                     <span class="text-destructive">{entry.error}</span>
