@@ -53,10 +53,11 @@ use windows_sys::Win32::Security::Authorization::{
     SE_FILE_OBJECT, SetNamedSecurityInfoW,
 };
 use windows_sys::Win32::Security::{
-    ACCESS_ALLOWED_ACE, ACL, ACL_SIZE_INFORMATION, AclSizeInformation, DACL_SECURITY_INFORMATION,
-    EqualSid, GetAce, GetAclInformation, GetSecurityDescriptorControl, GetSecurityDescriptorDacl,
-    INHERITED_ACE, PROTECTED_DACL_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, PSID,
-    SE_DACL_PROTECTED, SECURITY_ATTRIBUTES, TOKEN_QUERY, TOKEN_USER, TokenUser,
+    ACCESS_ALLOWED_ACE, ACE_HEADER, ACL, ACL_SIZE_INFORMATION, AclSizeInformation,
+    DACL_SECURITY_INFORMATION, EqualSid, GetAce, GetAclInformation, GetSecurityDescriptorControl,
+    GetSecurityDescriptorDacl, INHERITED_ACE, PROTECTED_DACL_SECURITY_INFORMATION,
+    PSECURITY_DESCRIPTOR, PSID, SE_DACL_PROTECTED, SECURITY_ATTRIBUTES, TOKEN_QUERY, TOKEN_USER,
+    TokenUser,
 };
 use windows_sys::Win32::Storage::FileSystem::{
     CREATE_NEW, CreateFileW, FILE_ALL_ACCESS, FILE_ATTRIBUTE_NORMAL,
@@ -521,18 +522,18 @@ pub fn is_restricted_to_current_user(path: &Path) -> io::Result<bool> {
             return Err(io::Error::last_os_error());
         }
 
-        // SAFETY: every ACE type this can return begins with an `ACE_HEADER`
-        // followed by a mask and an inline SID, which is the prefix of
-        // `ACCESS_ALLOWED_ACE`. Only the header and the address of `SidStart`
-        // are read, both of which are in that common prefix.
-        let sid = unsafe {
-            let ace = &*ace.cast::<ACCESS_ALLOWED_ACE>();
-            (&raw const ace.SidStart).cast::<c_void>().cast_mut()
+        // An object or callback entry has no inline SID where a plain entry
+        // keeps one, so it cannot be shown to name this user.
+        // SAFETY: `GetAce` succeeded, so `ace` points at an entry inside `dacl`,
+        // which `_owned` keeps alive.
+        let Some(entry) = (unsafe { read_plain_ace(ace) }) else {
+            return Ok(false);
         };
 
-        // SAFETY: `sid` points into the ACE, which points into `descriptor`,
-        // and `expected` points into `sid_buffer`. Both are alive here.
-        let same = unsafe { EqualSid(sid, expected) };
+        // SAFETY: `entry.sid` points into the ACE, which points into
+        // `descriptor`, and `expected` points into `sid_buffer`. Both are alive
+        // here.
+        let same = unsafe { EqualSid(entry.sid, expected) };
         if same == FALSE {
             return Ok(false);
         }
@@ -543,6 +544,58 @@ pub fn is_restricted_to_current_user(path: &Path) -> io::Result<bool> {
 
 /// `ACCESS_ALLOWED_ACE_TYPE`: an entry that grants rather than denies or audits.
 const ACCESS_ALLOWED_ACE_TYPE: u8 = 0;
+
+/// `ACCESS_DENIED_ACE_TYPE`: an entry that denies.
+const ACCESS_DENIED_ACE_TYPE: u8 = 1;
+
+/// The parts of a plain entry that a check reads.
+struct PlainAce {
+    mask: u32,
+    sid: PSID,
+}
+
+/// Copy an entry's header out of the DACL.
+///
+/// # Safety
+///
+/// `ace` must be non-null and point at an entry inside a live DACL, as `GetAce`
+/// returns. The header is copied with an unaligned read, so no reference into
+/// the descriptor is formed.
+unsafe fn read_ace_header(ace: *const c_void) -> ACE_HEADER {
+    // SAFETY: every entry starts with an `ACE_HEADER`; the caller guarantees
+    // `ace` points at one.
+    unsafe { ace.cast::<ACE_HEADER>().read_unaligned() }
+}
+
+/// The mask and inline SID of an allow or deny entry, or `None` for any other
+/// type.
+///
+/// Only `ACCESS_ALLOWED_ACE_TYPE` and `ACCESS_DENIED_ACE_TYPE` have the
+/// header, mask, inline SID layout of `ACCESS_ALLOWED_ACE`. Object and callback
+/// entries put flags, GUIDs or application data before the SID, so reading
+/// them through that layout would take the SID from the wrong offset.
+///
+/// # Safety
+///
+/// As [`read_ace_header`].
+unsafe fn read_plain_ace(ace: *const c_void) -> Option<PlainAce> {
+    // SAFETY: forwarded from the caller.
+    let header = unsafe { read_ace_header(ace) };
+    if header.AceType != ACCESS_ALLOWED_ACE_TYPE && header.AceType != ACCESS_DENIED_ACE_TYPE {
+        return None;
+    }
+    let entry = ace.cast::<ACCESS_ALLOWED_ACE>();
+    // SAFETY: a plain entry has the `ACCESS_ALLOWED_ACE` layout. The field
+    // addresses are taken with `addr_of!`, never through a reference, and the
+    // mask is copied out unaligned.
+    let (mask, sid) = unsafe {
+        (
+            std::ptr::addr_of!((*entry).Mask).read_unaligned(),
+            std::ptr::addr_of!((*entry).SidStart).cast::<c_void>().cast_mut(),
+        )
+    };
+    Some(PlainAce { mask, sid })
+}
 
 /// One entry of a DACL, decoded far enough to judge it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -678,23 +731,21 @@ pub fn dacl_summary(path: &Path) -> io::Result<DaclSummary> {
             return Err(io::Error::last_os_error());
         }
 
-        // SAFETY: every ACE type this can return begins with an `ACE_HEADER`
-        // followed by a mask and an inline SID, which is the prefix of
-        // `ACCESS_ALLOWED_ACE`. Only the header, the mask and the address of
-        // `SidStart` are read, all of which are in that common prefix.
-        let (ace_type, ace_flags, mask, sid) = unsafe {
-            let ace = &*ace.cast::<ACCESS_ALLOWED_ACE>();
-            (
-                ace.Header.AceType,
-                ace.Header.AceFlags,
-                ace.Mask,
-                (&raw const ace.SidStart).cast::<c_void>().cast_mut(),
-            )
+        // SAFETY: `GetAce` succeeded, so `ace` points at an entry inside `dacl`,
+        // which `_owned` keeps alive.
+        let header = unsafe { read_ace_header(ace) };
+        // SAFETY: as above.
+        let (mask, current_user) = match unsafe { read_plain_ace(ace) } {
+            // SAFETY: `entry.sid` points into the ACE, which points into
+            // `descriptor`, and `expected` points into `sid_buffer`. Both are
+            // alive here.
+            Some(entry) => (entry.mask, unsafe { EqualSid(entry.sid, expected) } != FALSE),
+            // An object or callback entry: its mask and SID sit at other
+            // offsets, so neither is read and it never counts as this user's.
+            None => (0, false),
         };
-
-        // SAFETY: `sid` points into the ACE, which points into `descriptor`,
-        // and `expected` points into `sid_buffer`. Both are alive here.
-        let current_user = unsafe { EqualSid(sid, expected) } != FALSE;
+        let ace_type = header.AceType;
+        let ace_flags = header.AceFlags;
 
         entries.push(DaclEntry {
             allows: ace_type == ACCESS_ALLOWED_ACE_TYPE,
