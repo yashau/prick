@@ -164,6 +164,21 @@ These are not mechanically checked.
 6. **Never split a bulk write across multiple `batch()` calls.** That destroys
    atomicity. If it does not fit, reject it with `413`.
 7. **Never swallow a decrypt failure.**
+8. **One `prk` invocation talks to exactly one server instance.** A `Context`
+   is built from one resolved `Target` and has no setter. No code path reads
+   from one profile and writes to another, and none takes a server URL from
+   repository content: a project file may allow instances, never select a URL.
+9. **Verify the instance before a secret value leaves the machine.** Every
+   server request goes through `Context::authenticate`, which checks the
+   server's instance id against the profile's pin, `--expect-instance` and the
+   project's allow list before the command sends anything of its own.
+10. **Never break reading the previous release's on-disk layout.**
+    `credentials.json` stays readable by the previous release and updating
+    writes nothing. A `config.toml` change whose loss on rewrite would weaken a
+    check bumps its `version`, and every layout change adds a test against the
+    old layout.
+11. **A profile name is a local label.** It never identifies a server and never
+    becomes a path; the instance pin identifies the server.
 
 ## Where things live
 
@@ -172,6 +187,9 @@ These are not mechanically checked.
 | Pure logic: parsing, formatting, escaping | `crates/prick-core/`                       |
 | HTTP client, error classification         | `crates/prick-api/`                        |
 | Access OAuth, token storage               | `crates/prick-auth/`                       |
+| Profile model and server selection        | `crates/prick-core/src/profile.rs`         |
+| Profile and project-file persistence      | `crates/prick-auth/src/profiles.rs`        |
+| Which server a run targets, and checks    | `crates/prk/src/target.rs`                 |
 | Process spawn, signals                    | `crates/prick-exec/`                       |
 | CLI commands and rendering                | `crates/prk/`                              |
 | Domain logic, transport-agnostic          | `packages/app/src/lib/server/core/`        |

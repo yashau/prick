@@ -318,6 +318,25 @@ The subject appears in a "seen but not granted" list, and you grant it from
 there. The normal flow is: point CI at prick, watch it 403, grant it. No copying
 opaque identifiers between two consoles.
 
+### One token per deployment
+
+Grants live in each deployment's own database, so a service token granted on
+one deployment holds nothing on another: there it gets the same `404` as any
+token without a grant. That holds even when one Access policy admits any
+service token to every deployment. Scoping each deployment's Access policy to
+its own token adds a second boundary, at the edge.
+
+Either way, create a separate token for each deployment, and record it on the
+deployment's profile so `prk` refuses to send any other:
+
+```bash
+prk profile set acme --service-token-client-id e367826f93b8d71185e03fe518aff3b4.access
+```
+
+See [Multiple servers](/guides/multiple-servers#service-tokens-with-several-profiles).
+
+### Denials are audited best-effort
+
 Denials are audited best-effort, deliberately: an audit failure must not turn a
 `403` into a `500`, because that would let a caller tell "denied" from "denied
 and the log broke". Mutations are the opposite — their audit row rides inside the

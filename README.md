@@ -444,6 +444,9 @@ exit code is in the **[CLI reference](https://docs.getprick.dev/reference/cli/)*
 <tr><td><strong>📢 Failures are loud</strong></td>
 <td>A row that will not decrypt is reported, never skipped. A silently shorter <code>.env</code> is how a deploy loses <code>DATABASE_URL</code> and nobody finds out until the outage.</td></tr>
 
+<tr><td><strong>🎯 A write reaches the deployment you meant</strong></td>
+<td>Each profile holds its own credential, which is never sent to another URL. Each deployment reports a permanent instance id, the profile pins it, and a server that answers as a different deployment is refused before the command sends anything of its own — even behind the same Access organisation, with the same project and key names. With several profiles, a write must name its server, and prints where it is going.</td></tr>
+
 <tr><td><strong>🙈 Secrets never reach the HTML</strong></td>
 <td>The secrets screen is client-rendered on purpose: no server render means no serialised page payload. CI fails the build if a server load so much as calls a reveal function.</td></tr>
 </table>
@@ -509,6 +512,29 @@ pnpm --filter @prick/app exec wrangler deploy
 > Put **Cloudflare Access** in front of the hostname before you put a secret in it. The Worker ships
 > with `workers_dev` and `preview_urls` disabled and CI asserts both on every push, because an
 > unprotected hostname serves the entire application without a JWT.
+
+Then sign in. The first sign-in creates a **profile** — a local name for the server and its session
+— so later commands need no URL:
+
+```bash
+prk login https://secrets.example.com
+```
+
+```
+Signing in to https://secrets.example.com as profile `default`
+Signed in to https://secrets.example.com (profile default)
+```
+
+A second server is a second profile, not a replacement:
+
+```bash
+prk profile add client-b https://secrets.client-b.example
+prk login --profile client-b
+prk --profile client-b secrets list --project api --env production
+```
+
+With two or more profiles, a command that changes data must name its server; the default alone is
+refused. See **[Multiple servers](https://docs.getprick.dev/guides/multiple-servers)**.
 
 **[Quickstart](https://docs.getprick.dev/getting-started/quickstart)** ·
 **[Authentication](https://docs.getprick.dev/guides/authentication)** ·

@@ -5,18 +5,25 @@ sidebar:
   order: 3
 ---
 
-Configuration lives in three places: the CLI's environment, the Worker's secrets,
-and the Worker's `vars` in `packages/app/wrangler.jsonc`.
+Configuration lives in four places: the CLI's environment, the CLI's files
+(its profiles, and the project files a repository carries), the Worker's
+secrets, and the Worker's `vars` in `packages/app/wrangler.jsonc`.
 
 ## CLI environment variables
 
-| Variable                   | Fallback                  | Equivalent flag          | Purpose                            |
-| -------------------------- | ------------------------- | ------------------------ | ---------------------------------- |
-| `PRK_API_URL`              |                           | `--api-url`              | Base URL of the Worker             |
-| `PRK_PROJECT`              |                           | `-P`, `--project`        | Default project                    |
-| `PRK_ENV`                  |                           | `-E`, `--env`            | Default environment                |
-| `PRK_ACCESS_CLIENT_ID`     | `CF_ACCESS_CLIENT_ID`     | `--access-client-id`     | Access service token client id     |
-| `PRK_ACCESS_CLIENT_SECRET` | `CF_ACCESS_CLIENT_SECRET` | `--access-client-secret` | Access service token client secret |
+| Variable                   | Fallback                  | Equivalent flag          | Purpose                                                  |
+| -------------------------- | ------------------------- | ------------------------ | -------------------------------------------------------- |
+| `PRK_PROFILE`              |                           | `--profile`              | The profile to use                                       |
+| `PRK_API_URL`              |                           | `--api-url`              | Base URL of the Worker, instead of a profile             |
+| `PRK_EXPECT_INSTANCE`      |                           | `--expect-instance`      | The instance id the server must report                   |
+| `PRK_PROJECT`              |                           | `-P`, `--project`        | Default project                                          |
+| `PRK_ENV`                  |                           | `-E`, `--env`            | Default environment                                      |
+| `PRK_ACCESS_CLIENT_ID`     | `CF_ACCESS_CLIENT_ID`     | `--access-client-id`     | Access service token client id                           |
+| `PRK_ACCESS_CLIENT_SECRET` | `CF_ACCESS_CLIENT_SECRET` | `--access-client-secret` | Access service token client secret                       |
+| `PRK_CONFIG_DIR`           |                           |                          | The CLI's configuration directory: profiles and sessions |
+
+An empty `PRK_PROFILE`, `PRK_API_URL` or `PRK_EXPECT_INSTANCE` counts as unset,
+so a job can neutralise a variable it inherited by setting it to `""`.
 
 An explicit flag wins over the variable. `PRK_*` is checked before the
 `CF_ACCESS_*` fallbacks, which exist so that CI already configured for
@@ -32,8 +39,199 @@ precisely so the secret never reaches argv or the process environment. It takes
 precedence over both the flag and `PRK_ACCESS_CLIENT_SECRET`. See
 [the CLI reference](/reference/cli/#global-flags).
 
-`PRK_API_URL` is only needed when you have not run `prk login`, which records the
-server it signed in to.
+`PRK_API_URL` is for a machine with no profile for the server, such as a CI
+runner authenticating with a service token. Once `prk login` has created a
+profile, that profile records the server, and `PRK_PROFILE` or `--profile`
+chooses between profiles. `PRK_API_URL` pointing at a URL one profile is for
+uses that profile's session and pins.
+
+## Which server a command talks to
+
+Every `prk` invocation talks to exactly one server, chosen once, before any
+request. Highest tier first:
+
+| Tier        | Profile form                                         | URL form        | Source under `--json`        |
+| ----------- | ---------------------------------------------------- | --------------- | ---------------------------- |
+| Flag        | `--profile NAME`                                     | `--api-url URL` | `flag`                       |
+| Environment | `PRK_PROFILE`                                        | `PRK_API_URL`   | `environment`                |
+| Project     | `.prick.local.toml`, then `.prick.toml`, by instance |                 | `local_file`, `project_file` |
+| Default     | `default_profile` in `config.toml`                   |                 | `default`                    |
+
+- **A higher tier wins outright.** `--profile` beats `PRK_API_URL`; `PRK_PROFILE`
+  beats a project file.
+- **Both forms at one tier are refused** with `SELECTION_CONFLICT`:
+  `--profile` with `--api-url`, or `PRK_PROFILE` with `PRK_API_URL`.
+- **An unknown name is refused**, never skipped: `PROFILE_UNKNOWN`, or
+  `PROFILE_RENAMED` naming the current name of a renamed profile.
+- **The URL form** addresses a server directly. When exactly one profile is
+  for that URL, its session and pins apply; when none is, only a service
+  token can authenticate; when several are, the command is refused with
+  `PROFILE_AMBIGUOUS`.
+- **Nothing at all** is `NO_SERVER`, exit 1.
+
+`prk profile show` prints which profile this command line and directory
+select, and what selected it. `-v` on any command prints the same as
+`talking to <host> (from <source>, instance <id>)`.
+
+On top of the table:
+
+- **Writes.** With two or more profiles, a command that changes data must be
+  aimed by a flag, a variable or a project file; the default alone is
+  refused with `PROFILE_REQUIRED`.
+- **Service tokens.** With two or more profiles, a service token from
+  `PRK_ACCESS_CLIENT_*` or `CF_ACCESS_CLIENT_*` is used only with a server
+  chosen by the flag or environment tier. With a project file or the default,
+  it is refused with `SERVICE_TOKEN_REFUSED`.
+- **Instance checks.** Whenever a profile applies, `--expect-instance` is set,
+  or a project file is in force, `prk` asks the server for its instance id
+  (`/api/v1/whoami`, which carries no secret) before the command sends
+  anything of its own. It must match the profile's pin, `--expect-instance`
+  and the project's allow list. A server addressed by URL with no profile for
+  it, no expectation and no project file gets no extra request.
+
+The project and environment have their own order, first match wins: `-P` /
+`-E`, then `PRK_PROJECT` / `PRK_ENV`, then `.prick.local.toml`, then
+`.prick.toml`, then the profile's own `project` and `env`.
+
+## CLI files
+
+### The configuration directory
+
+`PRK_CONFIG_DIR`, or by default:
+
+| Platform | Directory                                      |
+| -------- | ---------------------------------------------- |
+| Linux    | `$XDG_CONFIG_HOME/prick`, or `~/.config/prick` |
+| macOS    | `~/Library/Application Support/prick`          |
+| Windows  | `%LOCALAPPDATA%\prick`                         |
+
+It holds `config.toml`, `credentials.json` and `credentials/<id>.json`. The
+session files are described under
+[`prk login`](/reference/cli/sign-in#where-the-token-is-stored).
+
+### `config.toml`
+
+The profiles. `prk login` and `prk profile` write it; it is safe to read, and
+a hand edit is validated on the next run.
+
+```toml title="config.toml"
+# prick CLI profiles. Managed by `prk profile` and `prk login`; safe to read,
+# and edits are validated on the next run.
+
+version = 1
+default_profile = "acme"
+
+[profiles.acme]
+api_url = "https://prick.acme.example"
+credential = "credentials.json"
+instance = "3f9c01ab3f9c01ab3f9c01ab3f9c01ab"
+issuer = "https://acme.cloudflareaccess.com"
+project = "api"
+env = "production"
+
+[profiles.globex]
+api_url = "https://prick.globex.example"
+credential = "637b1b2d310b2b96"
+service_token_client_id = "e367826f93b8d71185e03fe518aff3b4.access"
+
+[renamed.prod]
+to = "acme"
+instance = "3f9c01ab3f9c01ab3f9c01ab3f9c01ab"
+```
+
+| Key                       | Where             | Meaning                                                                                                              |
+| ------------------------- | ----------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `version`                 | top level         | The format version. `1`. Any other value is refused: written by a newer `prk`, so update `prk`                       |
+| `default_profile`         | top level         | The profile used when nothing else selects one. Optional; must name a profile                                        |
+| `api_url`                 | `[profiles.NAME]` | The server. `https://`, or `http://` to a loopback address, with no `user@`. Fixed for the profile's life            |
+| `credential`              | `[profiles.NAME]` | Its session file: `credentials.json`, or a 16-hex-digit id naming `credentials/<id>.json`. No two profiles share one |
+| `instance`                | `[profiles.NAME]` | The pinned instance id, 32 lowercase hex digits. Absent until the server first reports one                           |
+| `issuer`                  | `[profiles.NAME]` | The pinned Access issuer, `https://<team>.cloudflareaccess.com`. Absent until the first sign-in                      |
+| `project`                 | `[profiles.NAME]` | The profile's default project slug. Optional                                                                         |
+| `env`                     | `[profiles.NAME]` | The profile's default environment slug. Optional                                                                     |
+| `service_token_client_id` | `[profiles.NAME]` | The only service-token client id this profile accepts from the environment. Optional                                 |
+| `to`                      | `[renamed.NAME]`  | A tombstone: the name a renamed profile has now. `--profile NAME` fails naming it                                    |
+| `instance`                | `[renamed.NAME]`  | The instance the profile was pinned to when renamed, if it was                                                       |
+
+`NAME` is lowercase letters, digits and single hyphens, at most 64 characters.
+Every read validates the names, URLs, credential references, instance ids and
+slugs, that `default_profile` exists, and that no two profiles share a
+credential file; a file that fails is refused with `PROFILE_STORE_FAILED`
+naming the problem. A key this build does not know is accepted on read, so a
+file a slightly newer `prk` wrote with an extra optional field still loads.
+
+Every change is atomic and owner-only, made under the lock file
+`config.toml.lock`. A lock older than ten seconds belongs to a process that
+died and is taken over.
+
+### `.prick.toml`
+
+Committed with a repository, and found by searching up from the current
+directory. The search stops at the first directory containing `.git`, after
+checking it, or at your home directory, so a stray file above a repository
+never applies to it.
+
+```toml title=".prick.toml"
+project = "api"
+env = "staging"
+
+[[allow]]
+instance = "3f9c01ab3f9c01ab3f9c01ab3f9c01ab"
+issuer = "https://acme.cloudflareaccess.com"
+```
+
+| Key         | Required     | Meaning                                                                                                         |
+| ----------- | ------------ | --------------------------------------------------------------------------------------------------------------- |
+| `[[allow]]` | at least one | A deployment this repository may talk to                                                                        |
+| `instance`  | per entry    | Its instance id, 32 lowercase hex digits                                                                        |
+| `issuer`    | no           | The Access issuer that deployment must also be behind; a profile pinned to another issuer is refused            |
+| `project`   | no           | The project when neither `-P` nor `PRK_PROJECT` names one                                                       |
+| `env`       | no           | The environment when neither `-E` nor `PRK_ENV` names one                                                       |
+| `profile`   | no           | A tie-breaker between local profiles pinned to the one allowed instance. Refused with more than one `[[allow]]` |
+
+Every other key is refused, `url` and `api_url` included. **A project file
+never selects a URL, and never holds a credential.** It arrives with
+`git clone`, so it is input from whoever wrote the repository, and it can only
+narrow what this machine does: among the servers you registered yourself, it
+picks the one pinned to an allowed instance.
+
+It does two things:
+
+- **It selects, by instance.** With exactly one `[[allow]]`, the profile used
+  is the one local profile pinned to that instance, whatever it is called on
+  this machine. Two profiles pinned to it, two identities on one server, need
+  `profile` or `--profile` to choose. No profile pinned to it yet falls
+  through to the default profile, which is then held to the allow list. With
+  more than one `[[allow]]`, the committed file does not choose; the choice
+  comes from `--profile`, `PRK_PROFILE` or `.prick.local.toml`.
+- **It refuses.** Whatever selected the server, the server's instance must be
+  on the allow list (`INSTANCE_NOT_ALLOWED`), the profile's issuer must match
+  an entry's `issuer` (`ISSUER_MISMATCH`), and a server that reports no
+  instance cannot satisfy the file at all (`INSTANCE_UNVERIFIED`).
+
+`prk profile pin` writes the file for you.
+
+### `.prick.local.toml`
+
+This checkout's own choice, beside `.prick.toml`, for a repository that
+allows more than one deployment.
+
+```toml title=".prick.local.toml"
+instance = "3f9c01ab3f9c01ab3f9c01ab3f9c01ab"
+env = "production"
+```
+
+| Key        | Meaning                                                                                 |
+| ---------- | --------------------------------------------------------------------------------------- |
+| `instance` | The deployment this checkout uses. Must be in `.prick.toml`'s allow list                |
+| `profile`  | With `instance`, a tie-breaker between profiles pinned to it; alone, the profile to use |
+| `project`  | Overrides `.prick.toml`'s `project` for this checkout                                   |
+| `env`      | Overrides `.prick.toml`'s `env` for this checkout                                       |
+
+Every other key is refused. Inside a git repository it must be ignored by git
+(`git check-ignore`), or every command refuses it with
+`PROJECT_FILE_INVALID`: committed, it would make one checkout's choice for
+everyone who clones. `prk profile pin --local` writes it.
 
 ## Worker secrets
 

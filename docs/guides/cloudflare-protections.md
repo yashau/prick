@@ -161,7 +161,10 @@ prk login https://prick.example.com
 On a headless server there is no browser to open. `prk` prints the URL and keeps
 waiting, so paste it into a browser on your own machine and the login completes
 over the loopback listener. A [service token](/guides/authentication) is usually
-the better fit for anything unattended.
+the better fit for anything unattended. With several deployments, the skip rule has
+to match every prick hostname, and each deployment gets its own service token;
+see
+[Multiple servers](/guides/multiple-servers#service-tokens-with-several-profiles).
 
 ## Next steps
 

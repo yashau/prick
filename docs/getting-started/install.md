@@ -214,7 +214,7 @@ See [`prk completions`](/reference/cli/completions) for every supported shell.
 
 ## Where prk keeps its files
 
-One file, holding the session `prk login` created:
+Everything lives in one directory:
 
 | Platform | Path                                           |
 | -------- | ---------------------------------------------- |
@@ -222,43 +222,62 @@ One file, holding the session `prk login` created:
 | macOS    | `~/Library/Application Support/prick`          |
 | Windows  | `%LOCALAPPDATA%\prick`                         |
 
-It is called `credentials.json`, and it is created owner-only — mode `0600` in a
-directory at `0700`, or on Windows a DACL with a single entry for you.
+| File                    | Holds                                                                       |
+| ----------------------- | --------------------------------------------------------------------------- |
+| `credentials.json`      | The session of your first profile, created by your first `prk login`        |
+| `credentials/<id>.json` | The session of each further profile, one file per profile                   |
+| `config.toml`           | The profiles: each one's server, pinned instance and defaults. Safe to read |
+
+`config.toml` appears the first time there is something to record beyond a
+single sign-in: a second server, a rename, or the instance id your server
+reports. It is managed by `prk login` and `prk profile`, and a hand edit is
+validated on the next run. [Multiple servers](/guides/multiple-servers)
+covers what it holds.
+
+Every credential file is created owner-only — mode `0600` in a directory at
+`0700`, or on Windows a DACL with a single entry for you.
 
 On Windows the session stays in the local half of your profile, which is never
 copied to a file server by roaming profiles or folder redirection. A session
 signed in under `%APPDATA%\prick` is moved there the first time `prk` reads it.
 
-Set `PRK_CONFIG_DIR` to move it, which is how you keep sessions for two servers
-apart:
+Set `PRK_CONFIG_DIR` to use another directory, for example to give a test run a
+clean slate:
 
 ```bash
-PRK_CONFIG_DIR=~/.config/prick-staging prk login https://staging.prick.example.com
+PRK_CONFIG_DIR=/tmp/prk-test prk profile list
 ```
 
-## Upgrading
+## Updating
 
 ```bash
 npm update -g @yashau/prick
 ```
 
-Or replace the binary. A client and a server on different versions is normal and
-supported — the API is versioned at `/api/v1`, and `prk doctor` reports both: the client's
-version, and the version the Worker's `/health` reports (`0.0.0-dev` unless it was deployed from a
-stamped `app-v` release).
+Or replace the binary, through whichever channel you installed with. **Updating
+keeps your sign-in and your server, and there is nothing to do afterwards.** An
+install with a `credentials.json` and no `config.toml` is read as one profile,
+`default`, for the server that session belongs to, and every command behaves as
+it did. An older and a newer `prk` can be installed side by side and share the
+same files.
+
+A client and a server on different versions is normal and supported — the API
+is versioned at `/api/v1`, and `prk doctor` reports both: the client's version,
+and the version the Worker's `/health` reports (`0.0.0-dev` unless it was
+deployed from a stamped `app-v` release).
 
 ## Uninstalling
 
 ```bash
-prk logout
+prk logout --all
 ```
 
 ```bash
 sudo rm /usr/local/bin/prk
 ```
 
-`prk logout` discards the stored session first, so removing the binary does not
-leave a credential file behind.
+`prk logout --all` revokes and discards the session of every profile first, so
+removing the binary does not leave a credential file behind.
 
 ## Next steps
 

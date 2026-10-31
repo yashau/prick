@@ -29,7 +29,9 @@ prk login https://prick.example.com
 ```
 
 Once you have signed in, `prk` remembers which server it signed in to, so no
-later command needs `--api-url`.
+later command needs `--api-url`. Each server you sign in to becomes a
+[profile](/reference/cli/profile); with more than one, `--profile` chooses
+between them.
 
 ## The shape of a command
 
@@ -70,6 +72,7 @@ the rest of the day.
 | [`prk logout`](/reference/cli/sign-in)          | Discard stored credentials                              |
 | [`prk whoami`](/reference/cli/sign-in)          | Show the identity the server sees                       |
 | [`prk doctor`](/reference/cli/sign-in)          | Check connectivity, credentials and configuration       |
+| [`prk profile`](/reference/cli/profile)         | Manage saved servers, and pin a project to one          |
 | [`prk projects`](/reference/cli/projects)       | Create, list, rename and delete projects                |
 | [`prk env`](/reference/cli/env)                 | Create, list and delete environments                    |
 | [`prk secrets`](/reference/cli/secrets)         | Read, write, import, export, version and roll back      |
@@ -117,7 +120,9 @@ These work on every command, and they work in either position:
 | `--verbose`                   | `-v`  | repeatable                | off     |                            |
 | `--no-input`                  |       |                           | off     |                            |
 | `--yes`                       | `-y`  |                           | off     |                            |
+| `--profile`                   |       | `<NAME>`                  |         | `PRK_PROFILE`              |
 | `--api-url`                   |       | `<URL>`                   |         | `PRK_API_URL`              |
+| `--expect-instance`           |       | `<ID>`                    |         | `PRK_EXPECT_INSTANCE`      |
 | `--access-client-id`          |       | `<ID>`                    |         | `PRK_ACCESS_CLIENT_ID`     |
 | `--access-client-secret`      |       | `<SECRET>`                |         | `PRK_ACCESS_CLIENT_SECRET` |
 | `--access-client-secret-file` |       | `<FILE>`, or `-`          |         |                            |
@@ -132,6 +137,21 @@ keep `-p` and `-e` free for individual subcommands.
 
 **`--json` changes the contract, not just the formatting.** See
 [Scripting with `--json`](/examples/scripting-with-json).
+
+**`--profile` and `--api-url` choose the server, and only one of them may.**
+Giving both is refused with `SELECTION_CONFLICT`, and so is setting both
+`PRK_PROFILE` and `PRK_API_URL`. A flag outranks either variable. See
+[Where a setting comes from](#where-a-setting-comes-from).
+
+**`--expect-instance` makes a script reach one deployment or nothing.** It
+takes the 32-hex-digit instance id `prk whoami` prints, and the command is
+refused with `INSTANCE_MISMATCH` (exit 3) unless the server reports exactly
+that id. A script that sets it is unaffected by a renamed profile, a changed
+default, or a profile name reused for another deployment:
+
+```bash
+prk run --expect-instance 3f9c01ab3f9c01ab3f9c01ab3f9c01ab -P api -E production -- ./deploy.sh
+```
 
 **`--no-input` is the CI flag.** It fails instead of prompting, which is what an
 unattended job wants.
@@ -160,32 +180,51 @@ byte-clean for the same reason.
 
 ## Environment variables
 
-| Variable                   | Fallback                  | Purpose                              |
-| -------------------------- | ------------------------- | ------------------------------------ |
-| `PRK_API_URL`              |                           | Base URL of the Worker               |
-| `PRK_PROJECT`              |                           | Default project                      |
-| `PRK_ENV`                  |                           | Default environment                  |
-| `PRK_ACCESS_CLIENT_ID`     | `CF_ACCESS_CLIENT_ID`     | Access service token client id       |
-| `PRK_ACCESS_CLIENT_SECRET` | `CF_ACCESS_CLIENT_SECRET` | Access service token client secret   |
-| `PRK_CONFIG_DIR`           |                           | Directory holding `credentials.json` |
+| Variable                   | Fallback                  | Purpose                                          |
+| -------------------------- | ------------------------- | ------------------------------------------------ |
+| `PRK_PROFILE`              |                           | The profile to use                               |
+| `PRK_API_URL`              |                           | Base URL of the Worker, instead of a profile     |
+| `PRK_EXPECT_INSTANCE`      |                           | The instance id the server must report           |
+| `PRK_PROJECT`              |                           | Default project                                  |
+| `PRK_ENV`                  |                           | Default environment                              |
+| `PRK_ACCESS_CLIENT_ID`     | `CF_ACCESS_CLIENT_ID`     | Access service token client id                   |
+| `PRK_ACCESS_CLIENT_SECRET` | `CF_ACCESS_CLIENT_SECRET` | Access service token client secret               |
+| `PRK_CONFIG_DIR`           |                           | Directory holding `config.toml` and the sessions |
 
-`PRK_API_URL` is only needed when you have not run `prk login`, which records
-the server it signed in to.
+An empty `PRK_PROFILE`, `PRK_API_URL` or `PRK_EXPECT_INSTANCE` counts as unset,
+so a job can neutralise one it inherited.
 
-`PRK_CONFIG_DIR` overrides where the stored session lives, which is how you keep
-two servers' sessions apart or point a CI job at a scratch directory. See
+`PRK_API_URL` addresses a server directly, for a machine with no profile for
+it, such as a CI runner authenticating with a service token. With a profile
+for that URL, the profile's session and pins apply.
+
+`PRK_CONFIG_DIR` moves the whole configuration directory, profiles and
+sessions together, which is how a CI job starts from a scratch directory. See
 [`prk login`](/reference/cli/sign-in#where-the-token-is-stored).
+
+[`prk run`](/reference/cli/run#names-prk-run-does-not-inject) does not inject
+a secret named like one of the `PRK_*` server and credential variables, or
+the `CF_*` fallbacks, so a `prk` inside the child cannot be pointed at
+another server by a secret's value.
 
 The `CF_*` fallbacks exist so that a pipeline already configured for
 `cloudflared access` works with no changes.
 
 ### Where a setting comes from
 
-For the server URL, first match wins:
+For the server, first match wins:
 
-1. `--api-url`
-2. `PRK_API_URL`
-3. The server recorded by your last `prk login`
+1. `--profile` or `--api-url`
+2. `PRK_PROFILE` or `PRK_API_URL`
+3. A project's `.prick.local.toml`, then its `.prick.toml`
+4. The default profile
+
+Both forms at one tier are refused, and a name that matches no profile is
+refused rather than skipped. With two or more profiles, a command that changes
+data must be aimed by one of the first three; the default alone is refused
+with `PROFILE_REQUIRED`. The full table, and how a project file selects by
+instance, is under
+[Configuration](/reference/configuration#which-server-a-command-talks-to).
 
 For the service token:
 
@@ -193,6 +232,12 @@ For the service token:
 2. `--access-client-id` / `--access-client-secret`
 3. `PRK_ACCESS_CLIENT_ID` / `PRK_ACCESS_CLIENT_SECRET`
 4. `CF_ACCESS_CLIENT_ID` / `CF_ACCESS_CLIENT_SECRET`
+
+With two or more profiles, a service token is used only when the server was
+chosen by `--profile`, `--api-url`, `PRK_PROFILE` or `PRK_API_URL`; chosen by a
+project file or the default, it is refused with `SERVICE_TOKEN_REFUSED`. A
+profile can also name the one client id it accepts, with
+[`prk profile set --service-token-client-id`](/reference/cli/profile#prk-profile-set).
 
 :::caution[Both halves must come from the same place]
 A `PRK_` client id paired with a `CF_` client secret is not a credential. Mixing
@@ -250,7 +295,8 @@ module lifts the ban — so a secret reaching a log line is a build failure.
 
 - [Exit codes and errors](/reference/cli/errors) — what each failure means and whether to retry.
 - [Examples](/examples/) — complete, runnable walkthroughs.
-- [Configuration](/reference/configuration) — the server side.
+- [Working with several servers](/guides/multiple-servers/) — profiles, project files and instance pins.
+- [Configuration](/reference/configuration) — the CLI's files and the server side.
 
 :::note[Where this page comes from]
 `crates/prk/src/cli.rs` is the single source of truth for the interface. The

@@ -72,12 +72,16 @@ you changed a route, regenerate it in the same commit.
 Not debated: rustfmt, `clippy -D warnings`, oxfmt, oxlint. Hooks run automatically via lefthook.
 `LEFTHOOK=0 git push` skips them; CI will still fail, so this only buys you a faster local loop.
 
-### Two rules that are enforced by tooling, not review
+### Rules that are enforced by tooling, not review
 
 **Nothing writes to stdout/stderr outside `crates/prk/src/output/`.** `print_stdout` and
 `print_stderr` are denied workspace-wide. This is deliberate: it turns "a secret leaked into a log
 line" from something a reviewer might catch into something the compiler rejects. If you need to
 print, add a helper to `output`, don't widen the allow.
+
+**Every `prk` command is classified as a read or a write.** `Command::writes_server` matches every
+subcommand by name, so a new one does not compile until it is classified. With two or more profiles a
+write must name its server deliberately, and that rule is only as good as this list.
 
 **Do not describe this project by comparison to another.** It stands on its own, so a reader has no
 referent for "what X used to do". State the property and the hazard directly — "a decrypt failure

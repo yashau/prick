@@ -18,6 +18,18 @@ This is the command-line half of the settings screen. Same two operations, same
 two endpoints, same domain function underneath — see
 [Key rotation](/guides/key-rotation) for the whole job, of which this is step 5.
 
+:::note[Which server a write reaches]
+`rekey` changes data. Before its first page, it prints the server it is going
+to on stderr, `writing to prick.acme.example (profile acme, instance 3f9c01ab)`,
+unless `-q` or `--json` is given; under `--json` its result carries the same
+facts as a `destination` object with `server`, `profile` and `instance`. With
+two or more profiles, a write needs its server named by `--profile`,
+`PRK_PROFILE`, `--api-url`, `PRK_API_URL` or a project's `.prick.toml`: the
+default profile alone is refused with
+[`PROFILE_REQUIRED`](/reference/cli/errors#profile_required-exit-2). See
+[Working with several servers](/guides/multiple-servers/).
+:::
+
 ## `prk keyring status`
 
 Every key id the installation has ever written under, and how many rows still

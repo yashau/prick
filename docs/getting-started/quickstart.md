@@ -232,8 +232,8 @@ prk login https://prick.example.com
 ```
 
 ```
-Signing in to https://prick.example.com
-Signed in to https://prick.example.com
+Signing in to https://prick.example.com as profile `default`
+Signed in to https://prick.example.com (profile default)
 ```
 
 `prk login` probes `/api/v1/health`, discovers the authorization server,
@@ -241,6 +241,12 @@ registers a client for a loopback redirect, runs the PKCE handshake in your
 browser, and stores the resulting token in a file only you can read. The whole
 handshake — and the service-token path CI uses instead — is described in
 [Authentication](/guides/authentication).
+
+This first sign-in creates your first **profile**, named `default`: a local
+name for this server and the session signed in to it. Later commands use it
+without `--api-url`, and it pins the server's instance id, so a different
+deployment answering at this hostname later is refused. To add a second
+server, see [Multiple servers](/guides/multiple-servers).
 
 Then confirm the server agrees about who you are:
 
@@ -250,6 +256,8 @@ prk whoami
 
 ```
 you@example.com (user)
+server: prick.example.com (profile default)
+instance: 3f9c01ab52e84d7a9b0c6e1f2a3b4c5d
 role: admin (global)
 ```
 
@@ -263,15 +271,17 @@ prk doctor
 ```
 
 ```
-ok   server url     https://prick.example.com (from the stored login)
-ok   token storage  /home/you/.config/prick/credentials.json is owner-only
-ok   api            /api/v1/health answered, version 0.0.0-dev
+ok   server url     https://prick.example.com (from the default profile)
+ok   profile        default (instance 3f9c01ab)
+ok   token storage  /home/you/.config/prick/credentials.json (profile default) is owner-only
+ok   api            /api/v1/health is reachable and refuses an anonymous caller
 ok   access         Cloudflare Access with managed OAuth is in front of this server
 ok   identity       you@example.com (user)
+ok   instance       instance 3f9c01ab
 ok   installation   running as a native binary
 ```
 
-Six `ok` lines means you are done. Any `FAIL` is explained in
+Eight `ok` lines means you are done. Any `FAIL` is explained in
 [Exit codes and errors](/reference/cli/errors).
 
 ## Store your first secret

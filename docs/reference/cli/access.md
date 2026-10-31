@@ -28,6 +28,18 @@ you@example.com
 e367826f93b8d71185e03fe518aff3b4.access
 ```
 
+:::note[Which server a write reaches]
+`grant`, `revoke`, `disable`, `enable` and `rename` change data. Before sending the change, each prints the server it is
+going to on stderr, `writing to prick.acme.example (profile acme, instance 3f9c01ab)`,
+unless `-q` or `--json` is given; under `--json` its result carries the same
+facts as a `destination` object with `server`, `profile` and `instance`. With
+two or more profiles, a write needs its server named by `--profile`,
+`PRK_PROFILE`, `--api-url`, `PRK_API_URL` or a project's `.prick.toml`: the
+default profile alone is refused with
+[`PROFILE_REQUIRED`](/reference/cli/errors#profile_required-exit-2). See
+[Working with several servers](/guides/multiple-servers/).
+:::
+
 ## Roles
 
 | Role     | Can                                         |

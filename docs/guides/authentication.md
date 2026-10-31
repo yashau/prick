@@ -33,13 +33,16 @@ prk login https://prick.example.com
 ```
 
 ```
-Signing in to https://prick.example.com
-Signed in to https://prick.example.com
+Signing in to https://prick.example.com as profile `default`
+Signed in to https://prick.example.com (profile default)
 ```
 
 Your browser opens, you complete the Access sign-in, and the token lands on
-disk. `prk login` records which server it signed in to, so later commands need
-neither `--api-url` nor `PRK_API_URL`.
+disk. The sign-in creates a **profile**: a local name, `default` for the first
+one, bound to this server and the session signed in under it. Later commands
+use it, so they need neither `--api-url` nor `PRK_API_URL`. The profile also
+pins the deployment's instance id and the Access issuer it signed in through;
+see [Pointing at a server](#pointing-at-a-server).
 
 Confirm the server agrees about who you are:
 
@@ -49,6 +52,8 @@ prk whoami
 
 ```
 you@example.com (user)
+server: prick.example.com (profile default)
+instance: 3f9c01ab52e84d7a9b0c6e1f2a3b4c5d
 role: admin (global)
 ```
 
@@ -77,7 +82,11 @@ and is still an admin of that project.
 4. PKCE with S256.
 5. Open the browser, accept exactly one request on the loopback listener, and
    compare `state` in constant time.
-6. Exchange the code and store the tokens.
+6. Exchange the code.
+7. Check the new session against the profile's pins: the Access issuer, and
+   the instance id the server reports to the new token. A session that fails
+   either check is revoked and never saved.
+8. Store the tokens in the profile's credential file.
 
 Refresh is transparent: a token within a minute of expiring is renewed before
 the request goes out, and the renewal is written back — so a short Access
@@ -109,7 +118,8 @@ The keyring backend is not available yet. When it lands it stays opt-in, because
 and on macOS the Keychain ACL binds to the binary's code signature, so every
 update re-prompts — which is unusable from inside `prk run`.
 
-Paths, and the `PRK_CONFIG_DIR` override, are in
+Each profile has its own credential file, so renewing or signing out of one
+never touches another. Paths, and the `PRK_CONFIG_DIR` override, are in
 [Install](/getting-started/install#where-prk-keeps-its-files).
 
 ### Signing out
@@ -119,11 +129,13 @@ prk logout
 ```
 
 ```
-Signed out.
+Signed out of default.
 ```
 
-This revokes the session at the authorization server and then deletes the local
-credential. Both halves matter: a refresh token stays valid until it expires or
+This revokes the selected profile's session at the authorization server and
+then deletes its credential file. The profile itself stays, ready for the next
+`prk login`; `prk logout --all` signs out of every profile, and
+`prk profile remove` deletes one. Both halves matter: a refresh token stays valid until it expires or
 is revoked, so deleting the file alone would leave a working credential behind
 on a machine you thought you had signed out of.
 
@@ -255,6 +267,37 @@ secret was just read off disk is the failure mode that rule designs out.
 
 ## Pointing at a server
 
+Every command talks to exactly one server, and on a workstation that server is
+a **profile**. `prk login <url>` creates one; with one profile, every command
+uses it and you never name it.
+
+```bash
+prk profile list
+```
+
+```
+* default  prick.example.com  instance 3f9c01ab  signed in
+```
+
+A second `prk login <other-url>` creates a second profile rather than
+replacing the first, and from then on you choose between them. A command picks
+its server from, highest first:
+
+| Tier        | Profile form                            | URL form        |
+| ----------- | --------------------------------------- | --------------- |
+| Flag        | `--profile NAME`                        | `--api-url URL` |
+| Environment | `PRK_PROFILE`                           | `PRK_API_URL`   |
+| Project     | `.prick.local.toml`, then `.prick.toml` | —               |
+| Default     | the default profile                     | —               |
+
+Both forms at one tier are refused rather than guessed between. With two or
+more profiles, a command that changes data must name its server; the default
+alone is refused. [Multiple servers](/guides/multiple-servers) covers all of
+it, including project files and renaming.
+
+CI has no profiles and needs none. It names the server by URL and
+authenticates with a service token:
+
 | Variable      | Equivalent flag   | Meaning                   |
 | ------------- | ----------------- | ------------------------- |
 | `PRK_API_URL` | `--api-url`       | Base URL of the Worker    |
@@ -265,10 +308,8 @@ secret was just read off disk is the failure mode that rule designs out.
 export PRK_API_URL=https://prick.example.com
 ```
 
-`PRK_API_URL` is only needed when you have not run `prk login`. An explicit flag
-wins over the environment variable of the same name.
-
-The project and environment shorts are **uppercase**: `-P` and `-E`. See
+An explicit flag wins over the environment variable of the same name. The
+project and environment shorts are **uppercase**: `-P` and `-E`. See
 [Global flags](/reference/cli/#global-flags).
 
 For CI, add `--no-input` so a missing credential fails immediately rather than
@@ -277,6 +318,53 @@ waiting on a prompt nobody can answer:
 ```bash
 prk secrets download --no-input --format env --output .env
 ```
+
+## What keeps servers apart
+
+These hold for every profile, on every command:
+
+- **One credential per profile.** Each profile's session lives in its own
+  file, and an invocation loads exactly one: the selected profile's. Nothing
+  searches other profiles for a session that might work.
+- **A credential is never sent to another URL.** A session records the server
+  it was issued for, and is used only for that URL. A profile's server never
+  changes; changing it means removing the profile, which discards its
+  credential. Renewal and revocation go to the session's own authorization
+  server and write back only to its own file.
+- **The server proves which deployment it is before the command's own first
+  request.** When a profile, `--expect-instance` or a project file applies,
+  `prk` first asks the server for its instance id, on a request that carries no
+  secret, and refuses a server that is not the deployment the profile is
+  pinned to. A profile is pinned the first time it talks to its server, on the
+  same trust you gave the URL when you signed in to it.
+- **The Access issuer is pinned.** A later sign-in to the same URL through a
+  different Access organisation is refused, and nothing is saved.
+
+A bare `--api-url` or `PRK_API_URL` with no profile for that URL, no
+expectation and no project file sends no extra request. That is the CI shape.
+
+### Service tokens and several deployments
+
+With one profile, or none, a service token is sent to whichever server was
+selected. With two or more profiles, a service token from the environment is
+paired only with a server chosen by `--profile`, `--api-url`, `PRK_PROFILE` or
+`PRK_API_URL`; a project file or the default alone is refused, so a cloned
+repository or a stale default cannot steer the token anywhere.
+
+Use **one service token per deployment**, and pin it on the profile:
+
+```bash
+prk profile set acme --service-token-client-id e367826f93b8d71185e03fe518aff3b4.access
+```
+
+`prk` then refuses any other client id for that profile before sending a
+request. On the Cloudflare side, either setup keeps deployments apart:
+
+- **One Service Auth policy admitting any Access service token.** prick's
+  grants do the separating: a token is granted only on the deployment that
+  granted it, and any other deployment answers it with `404`.
+- **Each token with an Access policy scoped to it.** The edge does the
+  separating: a token reaches only the application whose policy names it.
 
 ## What the verifier checks
 
@@ -312,20 +400,23 @@ Run this first — it checks the whole chain at once:
 prk doctor
 ```
 
-| Symptom                                                             | Cause                                         | Fix                                                               |
-| ------------------------------------------------------------------- | --------------------------------------------- | ----------------------------------------------------------------- |
-| `UNAUTHENTICATED`, exit 3                                           | No credential, or an expired one              | `prk login <url>`, or set the service-token variables             |
-| `FORBIDDEN`, exit 4                                                 | Authenticated, but no grant covers this scope | Ask an admin for a grant; `prk whoami` shows the subject to grant |
-| A service token gets Access's login page, or a non-JSON `401`/`403` | No Service Auth policy admits the token       | Step 2 of [Authenticate a machine](#authenticate-a-machine)       |
-| `NOT_A_PRICK_SERVER`, exit 7                                        | The URL answered but is not this Worker       | Point `--api-url` at the Worker's hostname, not at a proxy        |
-| `SERVICE_UNAVAILABLE` with `NO_ADMINS_CONFIGURED`                   | Nobody can administer this install            | Set `BOOTSTRAP_ADMINS` and redeploy                               |
-| Login warns that `/health` returned 200 unauthenticated             | Access is not attached to the hostname        | Fix the Access application before storing anything                |
+| Symptom                                                             | Cause                                                     | Fix                                                                                                          |
+| ------------------------------------------------------------------- | --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| `UNAUTHENTICATED`, exit 3                                           | No credential, or an expired one                          | `prk login <url>`, or set the service-token variables                                                        |
+| `INSTANCE_MISMATCH`, exit 3                                         | The server is not the deployment the profile is pinned to | Find out why before anything else; see [Multiple servers](/guides/multiple-servers#instance_mismatch-exit-3) |
+| `PROFILE_REQUIRED`, exit 2                                          | A write with several profiles named no server             | Pass `--profile`                                                                                             |
+| `FORBIDDEN`, exit 4                                                 | Authenticated, but no grant covers this scope             | Ask an admin for a grant; `prk whoami` shows the subject to grant                                            |
+| A service token gets Access's login page, or a non-JSON `401`/`403` | No Service Auth policy admits the token                   | Step 2 of [Authenticate a machine](#authenticate-a-machine)                                                  |
+| `NOT_A_PRICK_SERVER`, exit 7                                        | The URL answered but is not this Worker                   | Point `--api-url` at the Worker's hostname, not at a proxy                                                   |
+| `SERVICE_UNAVAILABLE` with `NO_ADMINS_CONFIGURED`                   | Nobody can administer this install                        | Set `BOOTSTRAP_ADMINS` and redeploy                                                                          |
+| Login warns that `/health` returned 200 unauthenticated             | Access is not attached to the hostname                    | Fix the Access application before storing anything                                                           |
 
 Every code, and what to do about it, is in
 [Exit codes and errors](/reference/cli/errors).
 
 ## Next steps
 
+- [Multiple servers](/guides/multiple-servers) — profiles, project files and the instance pin.
 - [Access control](/guides/access-control) — grants, roles and scopes.
 - [Give CI read-only access](/examples/ci-read-only)
 - [Configuration](/reference/configuration) — the server side.
