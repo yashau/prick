@@ -1,8 +1,11 @@
 import adapter from "@sveltejs/adapter-cloudflare";
 import { sveltekit } from "@sveltejs/kit/vite";
 import { vitePreprocess } from "@sveltejs/vite-plugin-svelte";
+import { mkdirSync, renameSync, writeFileSync } from "node:fs";
+import { resolve } from "node:path";
+
 import tailwindcss from "@tailwindcss/vite";
-import { defineConfig } from "vite";
+import { defineConfig, type Plugin } from "vite";
 
 import { APP_VERSION } from "./src/lib/version.js";
 
@@ -22,6 +25,49 @@ import { APP_VERSION } from "./src/lib/version.js";
  * `@theme` in `src/app.css`, which is where the shadcn-svelte design tokens
  * live. The Vite plugin is the whole of the build-side configuration.
  */
+
+/**
+ * Wraps the adapter's generated Worker entry so every request carries the
+ * runtime's `ExecutionContext` to `hooks.server.ts`.
+ *
+ * The adapter writes `.svelte-kit/cloudflare/_worker.js` -- the path wrangler's
+ * `main` names -- with a `fetch(req, env)` that drops `ctx`. This runs after the
+ * adapter (both are `buildApp` hooks ordered `post`, and this plugin is listed
+ * after `sveltekit()`), moves that entry next to the server bundle it imports,
+ * and writes a `_worker.js` in its place that hands it to
+ * `withExecutionContext`. See `src/lib/server/execution-context.ts`.
+ *
+ * The moved entry lands in `cloudflare-tmp`, outside the assets directory, so
+ * it is never served as a static file. Its own relative import of
+ * `./../cloudflare-tmp/server.js` resolves the same from either directory.
+ */
+function wrapWorkerEntry(): Plugin {
+  return {
+    name: "wrap-worker-entry",
+    apply: "build",
+    buildApp: {
+      order: "post",
+      async handler() {
+        const kit = resolve(import.meta.dirname, ".svelte-kit");
+        const entry = resolve(kit, "cloudflare/_worker.js");
+        const moved = resolve(kit, "cloudflare-tmp/sveltekit-worker.js");
+
+        mkdirSync(resolve(kit, "cloudflare-tmp"), { recursive: true });
+        renameSync(entry, moved);
+        writeFileSync(
+          entry,
+          [
+            'import sveltekit from "../cloudflare-tmp/sveltekit-worker.js";',
+            'import { withExecutionContext } from "../../src/lib/server/execution-context.ts";',
+            "export default withExecutionContext(sveltekit);",
+            "",
+          ].join("\n"),
+        );
+      },
+    },
+  };
+}
+
 export default defineConfig({
   plugins: [
     tailwindcss(),
@@ -100,5 +146,6 @@ export default defineConfig({
         name: APP_VERSION,
       },
     }),
+    wrapWorkerEntry(),
   ],
 });

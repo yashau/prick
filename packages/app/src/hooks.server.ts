@@ -1,7 +1,6 @@
 import { error } from "@sveltejs/kit";
 import type { Handle, HandleServerError } from "@sveltejs/kit/hooks";
-import type { ExecutionContext } from "hono";
-import { env, waitUntil } from "cloudflare:workers";
+import { env } from "cloudflare:workers";
 
 import { readAppearance, THEME_COOKIE, type Appearance } from "#lib/client/theme.js";
 import {
@@ -20,6 +19,7 @@ import { loadRuntimeConfig, toPrickError, type CoreContext } from "#lib/server/c
 import { crossSiteFormRefusal, isCrossSiteFormSubmission } from "#lib/server/csrf.js";
 import { getKeyring, type MasterKeyEnv } from "#lib/server/crypto/index.js";
 import { createDatabase, uuidv7 } from "#lib/server/db/index.js";
+import { currentExecutionContext } from "#lib/server/execution-context.js";
 import { createApi } from "#lib/server/http/app.js";
 
 /**
@@ -59,22 +59,6 @@ import { createApi } from "#lib/server/http/app.js";
  */
 
 const api = createApi();
-
-/**
- * The execution context the Hono app runs under.
- *
- * The adapter's Worker entry keeps the runtime's per-request `ExecutionContext`
- * to itself and hands SvelteKit the bindings through `cloudflare:workers`, so
- * that module is where both transports get them. Its `waitUntil` is bound to
- * the request in flight, which is the one context member either transport
- * calls. `access` is never present here, so with `REQUIRE_CTX_ACCESS` set to
- * `"true"` the assertion refuses every request on both transports.
- */
-const executionContext: ExecutionContext = {
-  waitUntil,
-  passThroughOnException() {},
-  props: {},
-};
 
 /** `X-Request-Id`, echoed on the response and stored on every audit row. */
 const REQUEST_ID_HEADER = "X-Request-Id";
@@ -142,7 +126,7 @@ export const handle: Handle = async ({ event, resolve }) => {
   }
 
   if (pathname === "/api" || pathname.startsWith("/api/")) {
-    return api.fetch(event.request, env, executionContext);
+    return api.fetch(event.request, env, currentExecutionContext());
   }
 
   // Before anything is read or written. See `csrf.ts` for why this guard runs
@@ -213,8 +197,8 @@ export const handle: Handle = async ({ event, resolve }) => {
  *     cannot make this Worker write anything at all.
  *  3. `assertCtxAccess`, defence in depth, gated behind `REQUIRE_CTX_ACCESS`.
  *     Called unconditionally because it returns immediately when the flag is
- *     off, and because `executionContext` -- unlike Hono's `c.executionCtx`
- *     -- is a plain object that never throws on read.
+ *     off, and because `currentExecutionContext()` -- unlike Hono's
+ *     `c.executionCtx` -- always returns an object and never throws.
  *  4. Build the `CoreContext`. FRESH PER REQUEST, and the object identity
  *     matters: `resolveAuthorization` memoises the authorization snapshot in a
  *     `WeakMap` keyed by this exact reference, which is what makes a layout
@@ -246,6 +230,7 @@ async function createContext(request: Request, requestId: string): Promise<CoreC
 
     const claims = await verifyAccessRequest(request, accessOptionsFromConfig(config, now));
 
+    const executionContext = currentExecutionContext();
     assertCtxAccess(executionContext, { requireCtxAccess: config.requireCtxAccess });
 
     const ctx: CoreContext = {
@@ -276,7 +261,7 @@ async function createContext(request: Request, requestId: string): Promise<CoreC
      *     response depends on it, so the response does not wait. A name
      *     resolved now appears on the next navigation.
      */
-    scheduleAccessDisplayNameSync(ctx, request, waitUntil);
+    scheduleAccessDisplayNameSync(ctx, request, (task) => executionContext.waitUntil(task));
 
     return ctx;
   } catch (cause) {
