@@ -243,7 +243,9 @@ impl AuthError {
             // declared, so being refused for it means the metadata and the
             // Access application disagree about what this hostname is.
             Self::Denied { error } if error == INVALID_TARGET => Some(
-                "The authorization server did not accept the resource this server's metadata                  names. Check that the URL you passed is the hostname of the Access application                  in front of it.",
+                "The authorization server did not accept the resource this server's metadata \
+                names. Check that the URL you passed is the hostname of the Access application \
+                in front of it.",
             ),
             Self::Api(err) => err.hint(),
             Self::Discovery { .. }
