@@ -276,7 +276,8 @@ impl TargetError {
                  `prk profile pin` if it belongs to the project."
             }
             Self::WriteNeedsProfile { .. } => {
-                "`prk profile list` shows the profiles; `prk profile pin --local` records this                  checkout's choice in .prick.local.toml."
+                "`prk profile list` shows the profiles; `prk profile pin --local` records this \
+                checkout's choice in .prick.local.toml."
             }
             Self::TokenNeedsSelection { .. } => "`prk profile list` shows the profiles.",
             _ => return None,
@@ -524,7 +525,8 @@ fn adopt_legacy_session(
     })?;
 
     Ok(Some(format!(
-        "the session in {LEGACY_CREDENTIAL} is for {}, signed in by an older prk; it now belongs to          profile `{name}`, and profile `{owner}` is signed out (`prk login --profile {owner}`)",
+        "the session in {LEGACY_CREDENTIAL} is for {}, signed in by an older prk; it now belongs to \
+        profile `{name}`, and profile `{owner}` is signed out (`prk login --profile {owner}`)",
         host_of(&session.api_url)
     )))
 }
@@ -804,7 +806,8 @@ impl Target {
         match saved {
             Ok(()) => self.pinned_now = true,
             Err(err) => self.warnings.push(format!(
-                "could not record profile `{name}`'s instance pin ({err}); the server was checked for                  this run, and the pin is saved the next time it can be"
+                "could not record profile `{name}`'s instance pin ({err}); the server was checked for \
+                this run, and the pin is saved the next time it can be"
             )),
         }
     }
