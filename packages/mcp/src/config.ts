@@ -44,6 +44,16 @@ export interface ServerConfig {
   workspaceRoot: string;
   requestTimeoutMs: number;
   logLevel: LogLevel;
+  /**
+   * The instance id every write must land on, or `null` for no pin.
+   *
+   * Thirty-two lowercase hex characters, the permanent id a deployment reports
+   * from `/api/v1/whoami`. When set, the first write in the process checks it
+   * and every write is refused unless the server answers with exactly this id
+   * -- see `verifyInstance` in tools.ts. Settled by the operator at startup,
+   * like everything above: no tool argument can clear it.
+   */
+  expectInstance: string | null;
 }
 
 export class ConfigError extends Error {
@@ -67,6 +77,7 @@ export const ENV_NAMES = {
   workspace: ["PRICK_MCP_WORKSPACE"],
   timeoutMs: ["PRICK_MCP_TIMEOUT_MS"],
   logLevel: ["PRICK_MCP_LOG_LEVEL"],
+  expectInstance: ["PRICK_MCP_EXPECT_INSTANCE"],
 } as const;
 
 export const DEFAULT_TIMEOUT_MS = 15_000;
@@ -264,6 +275,31 @@ export function parseAllowReveal(raw: string | undefined): boolean {
   return raw === "true";
 }
 
+/** The shape of an instance id: what `/api/v1/whoami` reports as `instance`. */
+export const INSTANCE_ID = /^[0-9a-f]{32}$/;
+
+/**
+ * Validate the instance pin, or return `null` when none is set.
+ *
+ * A malformed pin fails startup rather than being ignored. A pin that silently
+ * did nothing is worse than no pin, because the operator who set it believes
+ * writes are guarded. Upper-case hex is folded to lower-case, since that is a
+ * transcription difference and not a different id.
+ */
+export function parseExpectInstance(raw: string | undefined): string | null {
+  if (raw === undefined) return null;
+
+  const id = raw.toLowerCase();
+  if (!INSTANCE_ID.test(id)) {
+    throw new ConfigError(
+      `${ENV_NAMES.expectInstance[0]} is not an instance id.`,
+      "An instance id is 32 hexadecimal characters, as reported in the `instance` field of /api/v1/whoami (`prk whoami` prints it). Unset the variable to run without a pin.",
+    );
+  }
+
+  return id;
+}
+
 const WORKSPACE_HINT = [
   "`secrets_diff` reads a local .env, and it may only read one from inside this directory.",
   `Set ${ENV_NAMES.workspace[0]} or pass --workspace <dir>, or start the server with the project as its working directory.`,
@@ -359,6 +395,7 @@ export function loadConfig(
     workspaceRoot: resolveWorkspaceRoot(args.workspace ?? pick(env, ENV_NAMES.workspace), cwd),
     requestTimeoutMs: parseTimeout(pick(env, ENV_NAMES.timeoutMs)),
     logLevel: logLevelRaw,
+    expectInstance: parseExpectInstance(pick(env, ENV_NAMES.expectInstance)),
   };
 }
 
@@ -389,6 +426,7 @@ export function helpText(): string {
     `  ${ENV_NAMES.workspace[0]}       as --workspace.`,
     `  ${ENV_NAMES.timeoutMs[0]}       per-request timeout in ms. Default ${String(DEFAULT_TIMEOUT_MS)}.`,
     `  ${ENV_NAMES.logLevel[0]}        as --log-level.`,
+    `  ${ENV_NAMES.expectInstance[0]} instance id every write must land on. Unset: no pin.`,
     "",
     "NOTES",
     "  The Access service token secret is read from the environment only. There is",
@@ -398,6 +436,9 @@ export function helpText(): string {
     "  secrets_diff reads a local file only from inside the workspace directory. A",
     "  path that leaves it -- `..`, an absolute path elsewhere, or a symbolic link",
     "  pointing out -- is refused, because the path comes from a language model.",
+    "",
+    "  With PRICK_MCP_EXPECT_INSTANCE set, the first write checks /api/v1/whoami",
+    "  and every write is refused unless the server reports that instance id.",
     "",
     "  All logging goes to stderr. stdout carries the MCP transport and nothing else.",
   ].join("\n");

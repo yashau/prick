@@ -167,12 +167,30 @@ describe("secrets_set", () => {
     });
 
     assert.deepEqual(result, {
+      server: "secrets.example.com",
       project: "app",
       environment: "prod",
       key: "NEW_KEY",
       outcome: "created",
       rev: 8,
     });
+  });
+
+  test("names the server host, with a port when the URL carries one", async () => {
+    const { ctx } = context(
+      () => jsonResponse({ rev: 1, added: ["K"], changed: [], removed: [] }),
+      {
+        apiBaseUrl: "https://secrets.acme.example:8443/base",
+      },
+    );
+
+    const result = await secretsSet(ctx, {
+      project: "app",
+      environment: "prod",
+      key: "K",
+      value: "v",
+    });
+    assert.equal(result.server, "secrets.acme.example:8443");
   });
 
   test("the successful result says nothing about the value, not even its length", async () => {
@@ -211,6 +229,115 @@ describe("secrets_delete", () => {
       reason: "superseded",
     });
     assert.equal(result.removed, true);
+    assert.equal(result.server, "secrets.example.com");
+  });
+});
+
+describe("the instance pin", () => {
+  const PINNED = "0123456789abcdef0123456789abcdef";
+  const OTHER = "fedcba9876543210fedcba9876543210";
+  const WRITE = { project: "app", environment: "prod", key: "K", value: "pinned-test-value" };
+  const BATCH = { rev: 1, added: ["K"], changed: [], removed: [] };
+
+  /** A server that reports `instance` from whoami and accepts every batch. */
+  const server =
+    (instance: unknown, whoamiStatus = 200) =>
+    (call: StubCall): Response =>
+      call.url.endsWith("/api/v1/whoami")
+        ? jsonResponse(
+            whoamiStatus === 200
+              ? {
+                  subject: "svc.access",
+                  kind: "service",
+                  ...(instance === undefined ? {} : { instance }),
+                }
+              : { error: { code: "INTERNAL", message: "boom" } },
+            whoamiStatus,
+          )
+        : jsonResponse(BATCH);
+
+  const batches = (calls: StubCall[]): StubCall[] =>
+    calls.filter((call) => call.url.endsWith("secrets:batch"));
+
+  /** Asserts a write was refused as a mismatch, and returns the error. */
+  const refused = async (write: () => Promise<unknown>): Promise<ToolError> => {
+    let thrown: unknown;
+    await assert.rejects(write, (error: unknown) => {
+      thrown = error;
+      return true;
+    });
+    assert.ok(thrown instanceof ToolError);
+    return thrown;
+  };
+
+  test("with no pin, a write sends no whoami", async () => {
+    const { ctx, calls } = context(server(OTHER));
+    await secretsSet(ctx, WRITE);
+    assert.equal(calls.length, 1);
+    assert.equal(batches(calls).length, 1);
+  });
+
+  test("a matching instance lets writes through, and is checked once per process", async () => {
+    const { ctx, calls } = context(server(PINNED), { expectInstance: PINNED });
+
+    await secretsSet(ctx, WRITE);
+    await secretsDelete(ctx, { project: "app", environment: "prod", key: "K" });
+
+    assert.equal(calls.filter((call) => call.url.endsWith("/whoami")).length, 1);
+    assert.equal(calls[0]?.url, "https://secrets.example.com/api/v1/whoami");
+    assert.equal(batches(calls).length, 2);
+  });
+
+  test("a different instance refuses every write, naming both ids", async () => {
+    const { ctx, calls, logs } = context(server(OTHER), { expectInstance: PINNED });
+
+    for (const write of [
+      () => secretsSet(ctx, WRITE),
+      () => secretsDelete(ctx, { project: "app", environment: "prod", key: "K" }),
+    ]) {
+      const error = await refused(write);
+      assert.equal(error.code, "INSTANCE_MISMATCH");
+      assert.ok(error.message.includes(PINNED), error.message);
+      assert.ok(error.message.includes(OTHER), error.message);
+      assert.match(error.message, /secrets\.example\.com/);
+      assert.ok(!error.message.includes(WRITE.value));
+    }
+
+    assert.equal(batches(calls).length, 0, "a refused write must never be sent");
+    assert.ok(!logs().includes(WRITE.value));
+  });
+
+  test("a server that reports no instance fails the check", async () => {
+    const { ctx, calls } = context(server(undefined), { expectInstance: PINNED });
+    const error = await refused(() => secretsSet(ctx, WRITE));
+
+    assert.equal(error.code, "INSTANCE_MISMATCH");
+    assert.match(error.message, /reports no instance id/);
+    assert.equal(batches(calls).length, 0);
+  });
+
+  test("a non-string instance fails the check", async () => {
+    const { ctx, calls } = context(server(42), { expectInstance: PINNED });
+    assert.equal((await refused(() => secretsSet(ctx, WRITE))).code, "INSTANCE_MISMATCH");
+    assert.equal(batches(calls).length, 0);
+  });
+
+  test("a whoami that fails refuses the write, and is asked again next time", async () => {
+    const { ctx, calls } = context(server(PINNED, 500), { expectInstance: PINNED });
+
+    await refused(() => secretsSet(ctx, WRITE));
+    await refused(() => secretsSet(ctx, WRITE));
+
+    assert.equal(calls.filter((call) => call.url.endsWith("/whoami")).length, 2);
+    assert.equal(batches(calls).length, 0);
+  });
+
+  test("reads are never gated by the pin", async () => {
+    const { ctx, calls } = context(() => jsonResponse({ projects: [] }), {
+      expectInstance: PINNED,
+    });
+    await projectsList(ctx);
+    assert.equal(calls.length, 1);
   });
 });
 

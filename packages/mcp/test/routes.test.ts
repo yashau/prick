@@ -8,7 +8,7 @@ import { routes } from "../src/routes.ts";
 /**
  * ROUTE DRIFT GUARD.
  *
- * `src/routes.ts` names five paths on a server this package never builds. The
+ * `src/routes.ts` names six paths on a server this package never builds. The
  * README used to say they were assumed, because when it was written the router
  * served only `/api/v1/health`; the router is mounted now, so the honest thing
  * is to check rather than to restate the assumption.
@@ -42,6 +42,7 @@ const KEY = "ZZKEY";
 
 /** Every path this package can produce, with the function that produced it. */
 const CALLS: readonly { readonly op: string; readonly path: string }[] = [
+  { op: "routes.whoami", path: routes.whoami() },
   { op: "routes.projects", path: routes.projects() },
   { op: "routes.environments", path: routes.environments(PROJECT) },
   { op: "routes.secrets", path: routes.secrets(PROJECT, ENVIRONMENT) },
@@ -100,7 +101,7 @@ describe("routes", () => {
     // Without this the test above passes vacuously against an empty set, which
     // is the shape of failure a drift guard must not have.
     assert.ok(specPaths().size > 10, "the spec should serve a few dozen routes");
-    assert.equal(CALLS.length, 5, "every function in `routes` is exercised here");
+    assert.equal(CALLS.length, 6, "every function in `routes` is exercised here");
   });
 
   test("an interpolated segment is percent-encoded", () => {

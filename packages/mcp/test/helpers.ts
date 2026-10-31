@@ -11,6 +11,7 @@ export function stubConfig(overrides: Partial<ServerConfig> = {}): ServerConfig 
     workspaceRoot: process.cwd(),
     requestTimeoutMs: 5_000,
     logLevel: "debug",
+    expectInstance: null,
     ...overrides,
   };
 }

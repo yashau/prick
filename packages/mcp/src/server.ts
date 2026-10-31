@@ -225,6 +225,8 @@ export function createMcpServer(options: CreateServerOptions): McpServer {
         "If you are generating the value, use a cryptographically secure random source and a length appropriate to the credential.",
         "",
         "The write is a merge applied in one atomic server-side transaction: no other key in the environment is touched, and the previous value is kept as a version, so an operator can roll a mistake back.",
+        "",
+        "The result names the `server` host the value was written to. Report it with the key, so the user can see which deployment now holds the value.",
       ].join("\n"),
       inputSchema: {
         project: SlugInput.describe("Project slug."),
@@ -261,6 +263,8 @@ export function createMcpServer(options: CreateServerOptions): McpServer {
         "The version history is retained on the server as a tombstone, but the key stops being served to anything reading the environment immediately. Deleting a key a running service depends on is an outage, not a tidy-up.",
         "",
         "Confirm with the user before deleting a key you did not create in this session, and use secrets_list first if you are unsure whether it is still in use.",
+        "",
+        "The result names the `server` host the key was deleted from.",
       ].join("\n"),
       inputSchema: {
         project: SlugInput.describe("Project slug."),

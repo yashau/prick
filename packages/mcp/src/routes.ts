@@ -32,6 +32,9 @@ const enc = encodeURIComponent;
 export const API_PREFIX = "/api/v1";
 
 export const routes = {
+  /** `GET` -> the caller's identity, and the deployment's permanent `instance` id. */
+  whoami: (): string => `${API_PREFIX}/whoami`,
+
   /** `GET` -> the projects visible to the caller. */
   projects: (): string => `${API_PREFIX}/projects`,
 

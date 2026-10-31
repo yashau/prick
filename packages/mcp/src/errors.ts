@@ -31,6 +31,8 @@ export const TOOL_ERROR_CODES = [
   "LOCAL_FILE",
   /** `secrets_get` was invoked while reveal is disabled. */
   "REVEAL_DISABLED",
+  /** A write was refused: the server is not the instance the operator pinned. */
+  "INSTANCE_MISMATCH",
 ] as const;
 
 export type ToolErrorCode = (typeof TOOL_ERROR_CODES)[number];

@@ -86,6 +86,7 @@ async function main(): Promise<void> {
     // having to work out what the client set as the working directory.
     workspace_root: config.workspaceRoot,
     timeout_ms: config.requestTimeoutMs,
+    expect_instance: config.expectInstance ?? "none",
   });
 
   const server = createMcpServer({ config, logger });
