@@ -5,7 +5,7 @@ use clap::Parser as _;
 use prick_api::models::ServiceToken;
 use secrecy::SecretString;
 
-use super::render::{date, flags, row, seconds, timestamp, token_json};
+use super::render::{date, expiry, flags, reconcile_row, row, seconds, timestamp, token_json};
 use super::*;
 use crate::cli::{Cli, Command};
 use crate::commands::access::AccessCommand;
@@ -276,6 +276,8 @@ fn an_unconfigured_deployment_stops_with_the_servers_hint() {
     }));
     let err = require_service_tokens(Ok(answer)).expect_err("unconfigured");
     assert!(err.to_string().contains("SERVICE_TOKENS_UNCONFIGURED"), "{err}");
+    assert_eq!(err.server_code(), Some("SERVICE_TOKENS_UNCONFIGURED"));
+    assert_eq!(err.code(), "SERVICE_UNAVAILABLE");
     assert_eq!(
         err.hint(),
         Some("Set the CF_API_TOKEN secret and the CF_ACCOUNT_ID var, then redeploy.")
@@ -427,4 +429,99 @@ fn a_deployment_is_named_by_host_and_short_instance() {
         instance: Some("3f9c01ab3f9c01ab3f9c01ab3f9c01ab".to_owned()),
     };
     assert_eq!(deployment.label(), "prick.example.com (instance 3f9c01ab)");
+}
+
+/// A record whose `cloudflare` member is exactly `cloudflare`.
+fn with_cloudflare_member(cloudflare: &serde_json::Value) -> ServiceToken {
+    serde_json::from_value(serde_json::json!({
+        "id": "t", "clientId": "abc.access", "name": "ci", "status": "active",
+        "cloudflare": cloudflare,
+    }))
+    .expect("the shape matches")
+}
+
+#[test]
+fn an_unreported_last_use_is_unknown_never_never() {
+    let token = with_cloudflare_member(&serde_json::json!({
+        "expiresAt": 1_790_000_000_000_i64, "lastSeenAt": null, "enabled": true,
+        "duration": "8760h", "leakReportedAt": null,
+    }));
+    let line = row(&token, 0);
+    assert!(line.contains("last seen unknown"), "{line}");
+    assert!(!line.contains("never"), "{line}");
+}
+
+#[test]
+fn only_a_forever_token_with_no_expiry_never_expires() {
+    let forever = with_cloudflare_member(&serde_json::json!({
+        "expiresAt": null, "enabled": true, "duration": "forever",
+    }));
+    let yearly = with_cloudflare_member(&serde_json::json!({
+        "expiresAt": null, "enabled": true, "duration": "8760h",
+    }));
+    let unstated = with_cloudflare_member(&serde_json::json!({ "enabled": true }));
+
+    assert_eq!(expiry(forever.cloudflare.as_ref().expect("present")), "never");
+    assert_eq!(expiry(yearly.cloudflare.as_ref().expect("present")), "unknown");
+    assert_eq!(expiry(unstated.cloudflare.as_ref().expect("present")), "unknown");
+    assert!(row(&forever, 0).contains("expires never"));
+    assert!(row(&yearly, 0).contains("expires unknown"));
+
+    // No `cloudflare` at all, as straight after a create whose follow-up read
+    // failed: unknown, not never.
+    let absent = with_cloudflare_member(&serde_json::Value::Null);
+    assert!(row(&absent, 0).contains("expires unknown\tlast seen unknown"));
+}
+
+#[test]
+fn revoking_an_adopted_token_warns_that_other_applications_lose_it() {
+    let mut adopted: serde_json::Value = serde_json::json!({
+        "id": "t", "clientId": "abc.access", "name": "shared", "status": "active",
+        "adopted": true,
+    });
+    let token: ServiceToken = serde_json::from_value(adopted.clone()).expect("shape");
+    let warning = adopted_revoke_warning(&token).expect("an adopted token warns");
+    assert!(warning.contains("abc.access"), "{warning}");
+    assert!(warning.contains("deletes it in Cloudflare"), "{warning}");
+    assert!(warning.contains("every application"), "{warning}");
+
+    adopted["adopted"] = false.into();
+    let created: ServiceToken = serde_json::from_value(adopted).expect("shape");
+    assert_eq!(adopted_revoke_warning(&created), None);
+}
+
+#[test]
+fn skipped_and_foreign_reconcile_entries_are_not_repairs() {
+    let result: prick_api::models::ReconcileResult = serde_json::from_value(serde_json::json!({
+        "applied": false,
+        "entries": [
+            {"kind": "missing", "clientId": "a.access", "skipped": false},
+            {"kind": "missing", "clientId": "b.access", "skipped": true,
+             "reason": "Created moments ago; too new to judge."},
+            {"kind": "foreign", "clientId": "c.access", "skipped": true},
+            {"kind": "orphan", "clientId": "d.access"},
+        ],
+    }))
+    .expect("the shape matches");
+    assert_eq!(repair_count(&result.entries), 2);
+
+    let only_skipped: prick_api::models::ReconcileResult =
+        serde_json::from_value(serde_json::json!({
+            "applied": false,
+            "entries": [{"kind": "missing", "clientId": "b.access", "skipped": true}],
+        }))
+        .expect("the shape matches");
+    assert_eq!(repair_count(&only_skipped.entries), 0);
+}
+
+#[test]
+fn a_skipped_reconcile_entry_shows_its_reason_instead_of_a_repair() {
+    let entry: prick_api::models::ReconcileEntry = serde_json::from_value(serde_json::json!({
+        "kind": "missing", "clientId": "b.access", "name": "ci", "skipped": true,
+        "reason": "Created moments ago; too new to judge.",
+    }))
+    .expect("the shape matches");
+    let line = reconcile_row(&entry);
+    assert!(line.ends_with("skipped: Created moments ago; too new to judge."), "{line}");
+    assert!(!line.contains("apply marks it revoked"), "{line}");
 }

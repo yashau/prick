@@ -128,7 +128,11 @@ pub enum TokenCommand {
         secret_file: Option<PathBuf>,
     },
 
-    /// Re-read a token's expiry and last use from Cloudflare.
+    /// Extend a token's expiry in Cloudflare by its duration, and show the
+    /// new expiry.
+    ///
+    /// A token created with `--duration 8760h` gets another 8760 hours. The
+    /// client id and secret stay as they are.
     Refresh {
         /// The token: its prick id, its client id, or its name.
         #[arg(value_name = "TOKEN")]
@@ -136,6 +140,9 @@ pub enum TokenCommand {
     },
 
     /// Revoke a token: disable its identity, then delete it in Cloudflare.
+    ///
+    /// An adopted token is deleted in Cloudflare too, so every other Access
+    /// application that accepts it stops accepting it.
     Revoke {
         /// The token: its prick id, its client id, or its name.
         #[arg(value_name = "TOKEN")]
@@ -271,9 +278,13 @@ pub fn run(command: &TokenCommand, global: &GlobalArgs, out: Output) -> Result<(
     let prepared = prepare(command, global)?;
 
     let mut context = Context::new(global)?;
-    context.authenticate(out)?;
+    // Every instance check runs here, before `/capabilities` is asked. Only
+    // the "writing to" line waits until the deployment has said a write can
+    // happen at all.
+    context.authenticate_before_announcing(out)?;
     let capabilities =
         require_service_tokens(context.block_on(ops::capabilities(context.client())))?;
+    context.announce_destination(out);
     let deployment = Deployment {
         host: context.target().host(),
         instance: capabilities
@@ -313,6 +324,11 @@ pub fn run(command: &TokenCommand, global: &GlobalArgs, out: Output) -> Result<(
         TokenCommand::Revoke { token } => {
             let tokens = context.block_on(ops::list_service_tokens(context.client()))?.tokens;
             let found = resolve(&tokens, token)?;
+            // Shown with `--yes` too: the confirmation is skipped, the hazard
+            // is not.
+            if let Some(warning) = adopted_revoke_warning(found) {
+                out.warn(&warning);
+            }
             let question = format!(
                 "Revoke `{}` ({}) on {}, disabling its identity and deleting the token in \
                  Cloudflare",
@@ -396,8 +412,7 @@ fn reconcile(
     out: Output,
 ) -> Result<(), CliError> {
     let found = context.block_on(ops::reconcile_service_tokens(context.client(), false))?;
-    // `foreign` entries belong to another deployment and are never repaired.
-    let repairs = found.entries.iter().filter(|entry| entry.kind != "foreign").count();
+    let repairs = repair_count(&found.entries);
     if !apply || repairs == 0 {
         render::reconciled(&found, deployment, global, out);
         return Ok(());
@@ -410,6 +425,32 @@ fn reconcile(
     let applied = context.block_on(ops::reconcile_service_tokens(context.client(), true))?;
     render::reconciled(&applied, deployment, global, out);
     Ok(())
+}
+
+/// How many entries an `--apply` would act on.
+///
+/// `foreign` entries belong to another deployment and skipped ones were judged
+/// unsafe to touch; neither is ever repaired, so neither is counted.
+pub(crate) fn repair_count(entries: &[prick_api::models::ReconcileEntry]) -> usize {
+    entries.iter().filter(|entry| entry.kind != "foreign" && !entry.skipped).count()
+}
+
+/// The warning revoking an adopted token carries, or `None` for a token prick
+/// created.
+///
+/// An adopted token was made outside prick and may be what other Access
+/// applications accept. Revoking deletes it in Cloudflare, which ends it for
+/// every one of them, not only for this deployment.
+pub(crate) fn adopted_revoke_warning(token: &prick_api::models::ServiceToken) -> Option<String> {
+    token.adopted.then(|| {
+        format!(
+            "`{}` ({}) was adopted: it was made outside prick, and other Access applications \
+             may accept it. Revoking deletes it in Cloudflare, so every application that uses \
+             it stops accepting it, not only this deployment.",
+            token.label(),
+            token.client_id
+        )
+    })
 }
 
 /// What a subcommand settled before contacting the server.
@@ -506,7 +547,8 @@ pub(crate) fn require_service_tokens(
             ErrorKind::ServiceUnavailable,
             "this server does not have service-token management configured \
              (SERVICE_TOKENS_UNCONFIGURED)",
-        );
+        )
+        .with_server_code("SERVICE_TOKENS_UNCONFIGURED");
         return Err(match feature.hint.as_deref() {
             Some(hint) => err.with_server_hint(hint),
             None => err,

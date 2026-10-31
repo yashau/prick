@@ -168,6 +168,15 @@ impl CliError {
         }
     }
 
+    /// The server's own error code, such as `SERVICE_TOKENS_UNCONFIGURED`,
+    /// when the failure came from a server that named one.
+    pub fn server_code(&self) -> Option<&str> {
+        match self {
+            Self::Api(err) => err.server_code(),
+            _ => None,
+        }
+    }
+
     /// The actionable next step, rendered as `help:` under the error.
     ///
     /// Borrowed rather than `'static`, because the best hint for an API failure

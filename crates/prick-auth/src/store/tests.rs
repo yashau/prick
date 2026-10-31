@@ -116,11 +116,13 @@ fn a_leftover_temporary_file_does_not_block_a_save() {
     let (_dir, store) = store();
     store.save(&session()).expect("first save");
 
+    // The name a build that used the process id would have chosen. Every
+    // temporary name is random now, so a leftover never collides.
     let stale = store.dir().join(format!(".{TOKEN_FILE_NAME}.{}.tmp", std::process::id()));
     std::fs::write(&stale, b"leftover from a crash").expect("write");
 
     store.save(&session()).expect("a stale temporary file must not wedge the store");
-    assert!(!stale.exists());
+    assert!(store.load().expect("load").is_some());
 }
 
 #[test]
@@ -504,4 +506,48 @@ fn an_operator_named_file_in_a_missing_directory_fails_without_creating_it() {
     let err = write_owner_only_file(&missing.join("secret"), b"x").expect_err("no directory");
     assert_eq!(err.kind(), std::io::ErrorKind::NotFound);
     assert!(!missing.exists());
+}
+
+/// `--secret-file` into a directory whose new files inherit an `Everyone` read
+/// entry: the secret file carries the owner's entry alone, protected, and no
+/// temporary file is left behind under any name.
+#[cfg(windows)]
+#[test]
+fn an_operator_named_file_ignores_a_directory_that_grants_everyone_read() {
+    use prick_exec::winsec::{current_user_sid_string, dacl_sddl};
+
+    let dir = tempfile::tempdir().expect("a temporary directory");
+    let granted = std::process::Command::new("icacls")
+        .arg(dir.path())
+        .args(["/grant", "*S-1-1-0:(OI)(CI)(R)"])
+        .output()
+        .expect("icacls runs");
+    assert!(granted.status.success(), "icacls failed: {granted:?}");
+
+    let control = dir.path().join("control");
+    std::fs::write(&control, b"x").expect("write");
+    let inherited = dacl_sddl(&control).expect("the control's DACL");
+    assert!(inherited.contains("ID;") && inherited.contains(";WD)"), "{inherited}");
+    std::fs::remove_file(&control).expect("remove the control");
+
+    let target = dir.path().join("client-secret");
+    write_owner_only_file(&target, b"the secret").expect("the write succeeds");
+
+    let sid = current_user_sid_string().expect("the process has a user");
+    assert_eq!(dacl_sddl(&target).expect("the secret's DACL"), format!("D:P(A;;FA;;;{sid})"));
+    let names: Vec<String> = std::fs::read_dir(dir.path())
+        .expect("listable")
+        .filter_map(Result::ok)
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(names, ["client-secret"], "only the secret file remains");
+}
+
+#[test]
+fn temporary_names_are_unpredictable() {
+    let first = random_suffix().expect("randomness");
+    let second = random_suffix().expect("randomness");
+    assert_eq!(first.len(), 32);
+    assert!(first.bytes().all(|byte| byte.is_ascii_hexdigit()), "{first}");
+    assert_ne!(first, second);
 }

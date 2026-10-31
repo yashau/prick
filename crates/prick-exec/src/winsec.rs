@@ -27,23 +27,38 @@
 //! correctly sized allocation, and getting the ACE alignment right.
 //! `ConvertStringSecurityDescriptorToSecurityDescriptorW` does all of that from
 //! `D:P(A;;FA;;;<sid>)`, and the string is reviewable at a glance.
+//!
+//! # Born restricted, not narrowed afterwards
+//!
+//! [`create_owner_only_file`] hands that descriptor to `CreateFileW`, so a new
+//! file never exists with its parent's inherited entries. Narrowing an existing
+//! file with [`restrict_to_current_user`] is for paths created elsewhere: a
+//! file written and then narrowed is readable, for that interval, by anyone
+//! the directory lets in.
 
 use std::ffi::{OsStr, c_void};
+use std::fs::File;
 use std::io;
 use std::os::windows::ffi::OsStrExt as _;
+use std::os::windows::io::FromRawHandle as _;
 use std::path::Path;
 
-use windows_sys::Win32::Foundation::{CloseHandle, ERROR_SUCCESS, FALSE, HANDLE, LocalFree};
+use windows_sys::Win32::Foundation::{
+    CloseHandle, ERROR_SUCCESS, FALSE, GENERIC_READ, GENERIC_WRITE, HANDLE, INVALID_HANDLE_VALUE,
+    LocalFree,
+};
 use windows_sys::Win32::Security::Authorization::{
-    ConvertSidToStringSidW, ConvertStringSecurityDescriptorToSecurityDescriptorW,
-    GetNamedSecurityInfoW, SDDL_REVISION_1, SE_FILE_OBJECT, SetNamedSecurityInfoW,
+    ConvertSecurityDescriptorToStringSecurityDescriptorW, ConvertSidToStringSidW,
+    ConvertStringSecurityDescriptorToSecurityDescriptorW, GetNamedSecurityInfoW, SDDL_REVISION_1,
+    SE_FILE_OBJECT, SetNamedSecurityInfoW,
 };
 use windows_sys::Win32::Security::{
     ACCESS_ALLOWED_ACE, ACL, ACL_SIZE_INFORMATION, AclSizeInformation, DACL_SECURITY_INFORMATION,
     EqualSid, GetAce, GetAclInformation, GetSecurityDescriptorDacl,
-    PROTECTED_DACL_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, PSID, TOKEN_QUERY, TOKEN_USER,
-    TokenUser,
+    PROTECTED_DACL_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, PSID, SECURITY_ATTRIBUTES,
+    TOKEN_QUERY, TOKEN_USER, TokenUser,
 };
+use windows_sys::Win32::Storage::FileSystem::{CREATE_NEW, CreateFileW, FILE_ATTRIBUTE_NORMAL};
 use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
 
 /// Whether the entry should propagate to things created inside it.
@@ -188,8 +203,12 @@ unsafe fn sid_from_buffer(buffer: &[u64]) -> PSID {
     token_user.User.Sid
 }
 
-/// The current user's SID in string form, for an SDDL descriptor.
-fn current_user_sid_string() -> io::Result<String> {
+/// The current user's SID in string form, such as `S-1-5-21-...`.
+///
+/// # Errors
+///
+/// Whatever the underlying Windows security API reported.
+pub fn current_user_sid_string() -> io::Result<String> {
     let buffer = current_user_sid_buffer()?;
     // SAFETY: `buffer` was produced by `current_user_sid_buffer` and outlives
     // `sid`, which is used only within this function.
@@ -219,21 +238,17 @@ fn current_user_sid_string() -> io::Result<String> {
     Ok(text)
 }
 
-/// Replaces a path's DACL with a single entry for the current user.
+/// An owner-only security descriptor, built from SDDL.
 ///
-/// The DACL is marked protected, so the parent directory's entries are not
-/// merged back in later.
+/// - `D`: a discretionary ACL follows
+/// - `P`: protected -- do not inherit entries from the parent
+/// - `A`: access allowed
+/// - `FA`: file all access
 ///
-/// # Errors
-///
-/// Whatever the underlying Windows security API reported. A path that does not
-/// exist produces `ERROR_FILE_NOT_FOUND`.
-pub fn restrict_to_current_user(path: &Path, inheritance: Inheritance) -> io::Result<()> {
+/// The descriptor is self-relative and `LocalAlloc`ed; the returned
+/// [`LocalPtr`] owns it.
+fn owner_only_descriptor(inheritance: Inheritance) -> io::Result<LocalPtr> {
     let sid = current_user_sid_string()?;
-    // D  : a discretionary ACL follows
-    // P  : protected -- do not inherit entries from the parent
-    // A  : access allowed
-    // FA : file all access
     let sddl = format!("D:P(A;{};FA;;;{sid})", inheritance.ace_flags());
     let sddl_wide = wide(OsStr::new(&sddl));
 
@@ -253,7 +268,21 @@ pub fn restrict_to_current_user(path: &Path, inheritance: Inheritance) -> io::Re
     if ok == FALSE {
         return Err(io::Error::last_os_error());
     }
-    let owned = LocalPtr(descriptor.cast());
+    Ok(LocalPtr(descriptor.cast()))
+}
+
+/// Replaces a path's DACL with a single entry for the current user.
+///
+/// The DACL is marked protected, so the parent directory's entries are not
+/// merged back in later.
+///
+/// # Errors
+///
+/// Whatever the underlying Windows security API reported. A path that does not
+/// exist produces `ERROR_FILE_NOT_FOUND`.
+pub fn restrict_to_current_user(path: &Path, inheritance: Inheritance) -> io::Result<()> {
+    let owned = owner_only_descriptor(inheritance)?;
+    let descriptor: PSECURITY_DESCRIPTOR = owned.0;
 
     let mut present: i32 = 0;
     let mut dacl: *mut ACL = std::ptr::null_mut();
@@ -296,6 +325,127 @@ pub fn restrict_to_current_user(path: &Path, inheritance: Inheritance) -> io::Re
         return Err(io::Error::from_raw_os_error(i32::try_from(status).unwrap_or(i32::MAX)));
     }
     Ok(())
+}
+
+/// Creates a new file that only the current user can open, from the moment it
+/// exists.
+///
+/// The owner-only, protected DACL is passed to `CreateFileW` in its
+/// `SECURITY_ATTRIBUTES`, so the file is born with it: there is no instant in
+/// which it carries the parent directory's inherited entries, and so no window
+/// in which another account allowed into that directory could open it.
+/// Creating the file first and narrowing it afterwards would leave exactly that
+/// window, in a directory an operator chose and this code does not control.
+///
+/// The file is opened for reading and writing with no sharing, and creation is
+/// `CREATE_NEW`: an existing file at `path` -- including one another account
+/// planted there -- is an `AlreadyExists` error, never opened.
+///
+/// # Errors
+///
+/// Whatever the underlying Windows API reported. An existing path produces
+/// `ERROR_FILE_EXISTS`, which reads as [`io::ErrorKind::AlreadyExists`].
+pub fn create_owner_only_file(path: &Path) -> io::Result<File> {
+    let owned = owner_only_descriptor(Inheritance::ObjectOnly)?;
+    let attributes = SECURITY_ATTRIBUTES {
+        nLength: u32::try_from(size_of::<SECURITY_ATTRIBUTES>())
+            .map_err(|_| io::Error::other("security attributes are implausibly large"))?,
+        lpSecurityDescriptor: owned.0,
+        bInheritHandle: FALSE,
+    };
+    let name = wide(path.as_os_str());
+
+    // SAFETY: `name` is a NUL-terminated wide path alive for the call.
+    // `attributes` is a live, fully initialised local whose descriptor is owned
+    // by `owned`, which outlives the call; the system copies the descriptor
+    // into the new file and keeps no pointer to it. The template handle is
+    // null, which the API documents as "none".
+    let handle = unsafe {
+        CreateFileW(
+            name.as_ptr(),
+            GENERIC_READ | GENERIC_WRITE,
+            0,
+            &raw const attributes,
+            CREATE_NEW,
+            FILE_ATTRIBUTE_NORMAL,
+            std::ptr::null_mut(),
+        )
+    };
+    if handle == INVALID_HANDLE_VALUE || handle.is_null() {
+        return Err(io::Error::last_os_error());
+    }
+    drop(owned);
+
+    // SAFETY: `handle` is a valid file handle that `CreateFileW` just returned
+    // and that nothing else owns. Ownership moves into the `File`, which closes
+    // it exactly once on drop.
+    Ok(unsafe { File::from_raw_handle(handle.cast()) })
+}
+
+/// A path's DACL in SDDL form, such as `D:P(A;;FA;;;S-1-5-21-...)`.
+///
+/// For tests and diagnostics. An inherited entry carries the `ID` flag, and a
+/// protected DACL starts `D:P`, so one string answers both "what is granted"
+/// and "where did it come from".
+///
+/// # Errors
+///
+/// Whatever the underlying Windows security API reported.
+pub fn dacl_sddl(path: &Path) -> io::Result<String> {
+    let mut descriptor: PSECURITY_DESCRIPTOR = std::ptr::null_mut();
+    let mut object = wide(path.as_os_str());
+
+    // SAFETY: `object` is a NUL-terminated wide path alive for the call. Only
+    // the descriptor out-parameter is requested; the owner, group, DACL and
+    // SACL pointers are null, which the API documents as "not requested". On
+    // success `descriptor` is a `LocalAlloc` allocation `LocalPtr` frees.
+    let status = unsafe {
+        GetNamedSecurityInfoW(
+            object.as_mut_ptr(),
+            SE_FILE_OBJECT,
+            DACL_SECURITY_INFORMATION,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            &raw mut descriptor,
+        )
+    };
+    if status != ERROR_SUCCESS {
+        return Err(io::Error::from_raw_os_error(i32::try_from(status).unwrap_or(i32::MAX)));
+    }
+    let _owned = LocalPtr(descriptor.cast());
+
+    let mut raw: *mut u16 = std::ptr::null_mut();
+    // SAFETY: `descriptor` is valid and kept alive by `_owned`. The string
+    // out-parameter is a live local whose value is wrapped in `LocalPtr`
+    // immediately; the length out-parameter is null, which the API documents
+    // as "not requested".
+    let ok = unsafe {
+        ConvertSecurityDescriptorToStringSecurityDescriptorW(
+            descriptor,
+            SDDL_REVISION_1,
+            DACL_SECURITY_INFORMATION,
+            &raw mut raw,
+            std::ptr::null_mut(),
+        )
+    };
+    if ok == FALSE {
+        return Err(io::Error::last_os_error());
+    }
+    let _text = LocalPtr(raw.cast());
+
+    // SAFETY: on success the API returns a NUL-terminated wide string, so
+    // scanning for the terminator is bounded by the allocation, which `_text`
+    // keeps alive until the end of this function.
+    let text = unsafe {
+        let mut len = 0usize;
+        while *raw.add(len) != 0 {
+            len += 1;
+        }
+        String::from_utf16_lossy(std::slice::from_raw_parts(raw, len))
+    };
+    Ok(text)
 }
 
 /// Whether a path's DACL grants access to nobody but the current user.

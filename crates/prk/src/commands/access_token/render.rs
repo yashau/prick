@@ -12,7 +12,7 @@ use secrecy::ExposeSecret as _;
 
 use prick_api::models::{
     IssuedServiceToken, ReconcileEntry, ReconcileResult, RotatedServiceToken, ServiceToken,
-    ServiceTokenList,
+    ServiceTokenCloudflare, ServiceTokenList,
 };
 
 use super::{Deployment, PreparedGrant, SecretSink};
@@ -65,8 +65,15 @@ pub(super) fn created(
             issued.client_id
         )),
     }
+    if issued.token.cloudflare.is_none() {
+        out.note(UNKNOWN_STATE);
+    }
     show_secret(&issued.client_id, &issued.client_secret, sink, out);
 }
+
+/// The note for a record whose Cloudflare state could not be read back.
+const UNKNOWN_STATE: &str = "Cloudflare could not be asked for the token's expiry just now; \
+                             `prk access token list` shows it once it can.";
 
 /// Reports a rotation.
 pub(super) fn rotated(
@@ -81,7 +88,13 @@ pub(super) fn rotated(
         document["token"] = token_json(&rotated.token, super::now_ms());
         document["client_id"] = rotated.client_id.clone().into();
         document["previous_secret_expires_at"] = rotated.previous_secret_expires_at.into();
+        document["warning"] = rotated.warning.clone().into();
         emit_with_secret(document, &rotated.client_secret, sink, out);
+        // On stderr as well as in the document, so an operator watching the
+        // run sees it without parsing the JSON.
+        if let Some(warning) = &rotated.warning {
+            out.warn(warning);
+        }
         return;
     }
 
@@ -95,6 +108,17 @@ pub(super) fn rotated(
         None => "The previous secret has stopped working.".to_owned(),
     });
     show_secret(&rotated.client_id, &rotated.client_secret, sink, out);
+    // After the secret, wherever it went: the warning is the last thing the
+    // operator reads, not something scrolled past on the way to the value.
+    match (&rotated.warning, &rotated.token.cloudflare) {
+        (Some(warning), _) => out.warn(warning),
+        (None, Some(cloudflare)) if !cloudflare.enabled => out.warn(
+            "Cloudflare reports the token disabled, so it cannot authenticate until it is \
+             enabled.",
+        ),
+        (None, None) => out.note(UNKNOWN_STATE),
+        (None, Some(_)) => {}
+    }
 }
 
 /// The object every `--json` document starts from.
@@ -252,6 +276,8 @@ pub(super) fn reconciled(
                     "client_id": entry.client_id,
                     "name": entry.name,
                     "applied": entry.applied,
+                    "skipped": entry.skipped,
+                    "reason": entry.reason,
                     "error": entry.error,
                 })
             })
@@ -267,16 +293,23 @@ pub(super) fn reconciled(
     for entry in &result.entries {
         out.data(&reconcile_row(entry));
     }
-    if !result.applied {
-        out.note("Run again with `--apply` to repair these. `foreign` entries are left alone.");
+    if !result.applied && super::repair_count(&result.entries) > 0 {
+        out.note(
+            "Run again with `--apply` to repair these. `foreign` and skipped entries are left \
+             alone.",
+        );
     }
 }
 
 /// One reconciliation entry, as a line.
-fn reconcile_row(entry: &ReconcileEntry) -> String {
+pub(crate) fn reconcile_row(entry: &ReconcileEntry) -> String {
     let outcome = match (&entry.error, entry.applied) {
         (Some(error), _) => format!("FAILED: {error}"),
         (None, true) => "repaired".to_owned(),
+        (None, false) if entry.skipped => match entry.reason.as_deref() {
+            Some(reason) if !reason.is_empty() => format!("skipped: {reason}"),
+            _ => "skipped".to_owned(),
+        },
         (None, false) => reconcile_meaning(&entry.kind).to_owned(),
     };
     format!(
@@ -302,8 +335,10 @@ fn reconcile_meaning(kind: &str) -> &'static str {
 pub(crate) fn row(token: &ServiceToken, now: i64) -> String {
     let (expires, seen) = match &token.cloudflare {
         Some(cloudflare) => (
-            cloudflare.expires_at.map_or_else(|| "never".to_owned(), date),
-            cloudflare.last_seen_at.map_or_else(|| "never".to_owned(), date),
+            expiry(cloudflare),
+            // Undocumented by Cloudflare, so its absence is "unknown", never
+            // "never used".
+            cloudflare.last_seen_at.map_or_else(|| "unknown".to_owned(), date),
         ),
         None => ("unknown".to_owned(), "unknown".to_owned()),
     };
@@ -318,6 +353,19 @@ pub(crate) fn row(token: &ServiceToken, now: i64) -> String {
         line.push_str(flag);
     }
     line
+}
+
+/// A token's expiry as a listing shows it.
+///
+/// No expiry means "never" only for a token whose duration is `forever`. For
+/// any other duration -- or none reported -- a missing expiry is unknown, and
+/// calling it "never" would hide a token that is about to stop working.
+pub(crate) fn expiry(cloudflare: &ServiceTokenCloudflare) -> String {
+    match (cloudflare.expires_at, cloudflare.duration.as_deref()) {
+        (Some(at), _) => date(at),
+        (None, Some("forever")) => "never".to_owned(),
+        (None, _) => "unknown".to_owned(),
+    }
 }
 
 /// What a listing calls out about a token.

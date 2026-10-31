@@ -131,7 +131,9 @@ fn grant_body(grant: &ServiceTokenGrant<'_>) -> serde_json::Value {
 ///
 /// # Errors
 ///
-/// Any transport or response failure.
+/// Any transport or response failure, including a refusal of a grace period
+/// for a token Cloudflare reported as leaked, whose message and `hint` the
+/// error carries.
 pub async fn rotate_service_token(
     client: &Client,
     id: &str,
@@ -150,7 +152,8 @@ fn rotate_body(grace_seconds: Option<u32>) -> serde_json::Value {
     }
 }
 
-/// `POST /service-tokens/{id}/refresh`. Re-reads the token from Cloudflare.
+/// `POST /service-tokens/{id}/refresh`. Extends the token's expiry in
+/// Cloudflare by its duration, and answers with the record as it then stands.
 ///
 /// # Errors
 ///
@@ -194,16 +197,26 @@ pub async fn adopt_service_token(
 /// `POST /service-tokens/reconcile`. Compares prick's records with
 /// Cloudflare's, and repairs the differences when `apply` is set.
 ///
+/// An apply goes out exactly once. It changes Cloudflare as well as prick, and
+/// its `409` -- the server refusing a missing set too large to be anything but
+/// a misconfiguration -- is a verdict, not contention, so repeating it would
+/// only delay the hint that explains it.
+///
 /// # Errors
 ///
-/// Any transport or response failure.
+/// Any transport or response failure, including `409 CONFLICT` with a `hint`
+/// when the server declines to apply.
 pub async fn reconcile_service_tokens(
     client: &Client,
     apply: bool,
 ) -> Result<ReconcileResult, ApiError> {
     let body = serde_json::json!({ "apply": apply });
     let url = client.url(&["service-tokens", "reconcile"]);
-    client.request_json(Method::POST, &url, Body::Json(&body)).await
+    if apply {
+        client.request_json_once(Method::POST, &url, Body::Json(&body)).await
+    } else {
+        client.request_json(Method::POST, &url, Body::Json(&body)).await
+    }
 }
 
 #[cfg(test)]

@@ -107,6 +107,7 @@ async fn an_unconfigured_deployment_carries_the_servers_hint_and_exits_eight() {
     assert_eq!(err.exit_code(), 8);
     assert!(err.to_string().contains("SERVICE_TOKENS_UNCONFIGURED"), "{err}");
     assert_eq!(err.server_hint(), Some("Set the CF_API_TOKEN secret and the CF_ACCOUNT_ID var."));
+    assert_eq!(err.server_code(), Some("SERVICE_TOKENS_UNCONFIGURED"));
 }
 
 #[tokio::test]
@@ -124,6 +125,7 @@ async fn a_cloudflare_failure_is_a_server_error_with_its_code() {
         .expect_err("Cloudflare refused");
     assert_eq!(err.kind(), ErrorKind::ServerError);
     assert!(err.to_string().contains("UPSTREAM_FAILED"), "{err}");
+    assert_eq!(err.server_code(), Some("UPSTREAM_FAILED"));
 
     // Sent once, although this client retries a 5xx: a repeat could mint a
     // second token whose secret only the lost response carried.
@@ -240,4 +242,54 @@ async fn the_remaining_routes_use_their_documented_verbs() {
     let sent = bodies(&server).await;
     assert_eq!(sent[2], serde_json::json!({ "client_id": "abc.access" }));
     assert_eq!(sent[3], serde_json::json!({ "apply": false }));
+}
+
+#[tokio::test]
+async fn a_grace_refused_for_a_leaked_token_carries_the_servers_message_and_hint() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/api/v1/service-tokens/0199a0c0-0000-7000-8000-000000000010/rotate"))
+        .respond_with(json(
+            409,
+            r#"{"code":"CONFLICT",
+                "message":"Cloudflare reported this token's secret as leaked, so the previous secret cannot be kept.",
+                "hint":"Rotate without a grace period."}"#,
+        ))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let err = ops::rotate_service_token(
+        &retrying_client_for(&server),
+        "0199a0c0-0000-7000-8000-000000000010",
+        Some(3600),
+    )
+    .await
+    .expect_err("refused");
+    assert_eq!(err.kind(), ErrorKind::Conflict);
+    assert!(err.to_string().contains("reported this token's secret as leaked"), "{err}");
+    assert_eq!(err.server_hint(), Some("Rotate without a grace period."));
+}
+
+#[tokio::test]
+async fn a_refused_reconcile_apply_is_sent_once_and_carries_its_hint() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/api/v1/service-tokens/reconcile"))
+        .respond_with(json(
+            409,
+            r#"{"code":"CONFLICT",
+                "message":"Cloudflare reports 5 of the 5 live service tokens missing. Nothing was changed.",
+                "hint":"Check the account id."}"#,
+        ))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let err = ops::reconcile_service_tokens(&retrying_client_for(&server), true)
+        .await
+        .expect_err("refused");
+    assert_eq!(err.kind(), ErrorKind::Conflict);
+    assert!(err.to_string().contains("Nothing was changed"), "{err}");
+    assert_eq!(err.server_hint(), Some("Check the account id."));
 }

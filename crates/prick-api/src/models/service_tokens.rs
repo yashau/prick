@@ -145,7 +145,10 @@ pub struct ServiceToken {
     /// Who revoked it.
     #[serde(default)]
     pub revoked_by: Option<String>,
-    /// What Cloudflare says about the token, when Cloudflare answered.
+    /// What Cloudflare says about the token, when Cloudflare answered. `None`
+    /// when it could not be asked -- including straight after a create or a
+    /// rotate whose follow-up read failed -- so expiry and last use are
+    /// unknown, not absent.
     #[serde(default)]
     pub cloudflare: Option<ServiceTokenCloudflare>,
 }
@@ -167,10 +170,14 @@ impl ServiceToken {
 #[serde(rename_all = "camelCase")]
 #[non_exhaustive]
 pub struct ServiceTokenCloudflare {
-    /// When the token stops authenticating, epoch milliseconds.
+    /// When the token stops authenticating, epoch milliseconds. `None` with
+    /// a [`duration`](Self::duration) of `forever` means it never does; with
+    /// any other duration, the expiry is unknown.
     #[serde(default)]
     pub expires_at: Option<i64>,
-    /// When Access last saw the token used, epoch milliseconds.
+    /// When Access last saw the token used, epoch milliseconds. `None` means
+    /// unknown: Cloudflare reports this field without documenting it, so its
+    /// absence says nothing about whether the token was ever used.
     #[serde(default)]
     pub last_seen_at: Option<i64>,
     /// Whether Cloudflare will accept the token.
@@ -232,6 +239,10 @@ pub struct RotatedServiceToken {
     /// means it already has.
     #[serde(default)]
     pub previous_secret_expires_at: Option<i64>,
+    /// Something the rotation did not finish, such as Cloudflare declining to
+    /// re-enable the token, so it still cannot authenticate.
+    #[serde(default)]
+    pub warning: Option<String>,
 }
 
 /// `POST /service-tokens/reconcile`.
@@ -267,6 +278,14 @@ pub struct ReconcileEntry {
     /// Whether this entry was repaired by this call.
     #[serde(default)]
     pub applied: bool,
+    /// Whether the entry is reported and deliberately left alone: too recent
+    /// to judge safely, no longer eligible when an apply re-checked it, or
+    /// another deployment's. A skipped entry is never a repair.
+    #[serde(default)]
+    pub skipped: bool,
+    /// Why it was skipped.
+    #[serde(default)]
+    pub reason: Option<String>,
     /// Why the repair failed, when it did.
     #[serde(default)]
     pub error: Option<String>,
@@ -384,5 +403,34 @@ mod tests {
         .expect("the shape matches");
         assert_eq!(result.entries.len(), 1);
         assert_eq!(result.entries[0].kind, "orphan");
+        assert!(!result.entries[0].skipped, "an older server's entry is not skipped");
+    }
+
+    #[test]
+    fn a_skipped_reconcile_entry_carries_its_reason() {
+        let result: ReconcileResult = serde_json::from_str(
+            r#"{"applied":true,"entries":[{"kind":"missing","cloudflareId":"cf-9",
+                "clientId":"abc.access","name":"ci","applied":false,"skipped":true,
+                "reason":"Created moments ago; too new to judge.","error":null}]}"#,
+        )
+        .expect("the shape matches");
+        assert!(result.entries[0].skipped);
+        assert_eq!(
+            result.entries[0].reason.as_deref(),
+            Some("Created moments ago; too new to judge.")
+        );
+    }
+
+    #[test]
+    fn a_rotation_carries_a_warning_and_a_record_without_cloudflare() {
+        let mut record: serde_json::Value = serde_json::from_str(RECORD).expect("JSON");
+        record["cloudflare"] = serde_json::Value::Null;
+        let rotated: RotatedServiceToken = serde_json::from_value(serde_json::json!({
+            "token": record, "clientId": "abc.access", "clientSecret": "s",
+            "previousSecretExpiresAt": null, "warning": "not re-enabled",
+        }))
+        .expect("the shape matches");
+        assert_eq!(rotated.warning.as_deref(), Some("not re-enabled"));
+        assert!(rotated.token.cloudflare.is_none());
     }
 }

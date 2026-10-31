@@ -444,6 +444,7 @@ fn decode<T: DeserializeOwned>(received: &Received) -> Result<T, ApiError> {
     if received.facts.status >= 400 {
         let body = serde_json::from_slice::<ApiErrorBody>(&received.body).ok();
         let hint = body.as_ref().and_then(|body| body.hint.clone());
+        let code = body.as_ref().map(|body| body.code.clone()).filter(|code| !code.is_empty());
         let message = body.map_or_else(
             || format!("the server returned HTTP {}", received.facts.status),
             ApiErrorBody::into_message,
@@ -453,11 +454,14 @@ fn decode<T: DeserializeOwned>(received: &Received) -> Result<T, ApiError> {
         // same value the `X-Request-Id` header carries, the header is set by
         // middleware mounted ahead of every route, and taking it from one place
         // means there is no case where the two could be reported differently.
-        let err = ApiError::from_server(received.facts.clone(), message);
-        return Err(match hint {
-            Some(hint) => err.with_server_hint(hint),
-            None => err,
-        });
+        let mut err = ApiError::from_server(received.facts.clone(), message);
+        if let Some(hint) = hint {
+            err = err.with_server_hint(hint);
+        }
+        if let Some(code) = code {
+            err = err.with_server_code(code);
+        }
+        return Err(err);
     }
 
     serde_json::from_slice(&received.body).map_err(|err| {

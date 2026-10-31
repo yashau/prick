@@ -464,6 +464,11 @@ fn envelope(err: &CliError) -> serde_json::Value {
     if let Some(hint) = err.hint() {
         envelope["error"]["hint"] = serde_json::Value::String(hint.to_owned());
     }
+    // The server's own code, finer than `code`: `SERVICE_TOKENS_UNCONFIGURED`
+    // rather than `SERVICE_UNAVAILABLE`. Present only when a server said it.
+    if let Some(server_code) = err.server_code() {
+        envelope["error"]["server_code"] = serde_json::Value::String(server_code.to_owned());
+    }
     envelope
 }
 
@@ -558,6 +563,27 @@ mod tests {
         let envelope = envelope(&err);
         assert_eq!(envelope["error"]["code"], "NOT_IMPLEMENTED");
         assert!(envelope["error"]["message"].as_str().is_some_and(|m| m.contains("secrets set")));
+    }
+
+    #[test]
+    fn the_json_envelope_carries_the_servers_code_only_when_it_named_one() {
+        let from_server = CliError::Api(
+            prick_api::ApiError::new(
+                prick_core::classify::ErrorKind::ServiceUnavailable,
+                "not configured",
+            )
+            .with_server_code("SERVICE_TOKENS_UNCONFIGURED"),
+        );
+        let envelope = envelope(&from_server);
+        assert_eq!(envelope["error"]["code"], "SERVICE_UNAVAILABLE");
+        assert_eq!(envelope["error"]["server_code"], "SERVICE_TOKENS_UNCONFIGURED");
+
+        let local = envelope_without_server_code();
+        assert!(local["error"].get("server_code").is_none(), "{local}");
+    }
+
+    fn envelope_without_server_code() -> serde_json::Value {
+        envelope(&CliError::NotImplemented { command: "secrets set" })
     }
 
     #[test]
