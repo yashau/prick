@@ -249,7 +249,7 @@ pub fn plan_login(
 
     match (named, url) {
         (Some(name), Some(url)) => match config.profiles.get(&name) {
-            Some(existing) if existing.api_url != url => {
+            Some(existing) if !prick_core::profile::same_server(&existing.api_url, &url) => {
                 Err(TargetError::Edit(EditError::UrlMismatch {
                     name,
                     existing: existing.api_url.clone(),
@@ -369,7 +369,7 @@ fn record_profile(
 ) -> Result<(), CliError> {
     profiles.update(|config| -> Result<(), CliError> {
         if let Some(profile) = config.profiles.get_mut(&plan.name) {
-            if profile.api_url != plan.url {
+            if !prick_core::profile::same_server(&profile.api_url, &plan.url) {
                 return Err(TargetError::Edit(EditError::UrlMismatch {
                     name: plan.name.clone(),
                     existing: profile.api_url.clone(),
@@ -521,11 +521,9 @@ fn logout_stores(
             if let Some(name) = target.selection.profile() {
                 return Ok(vec![(Some(name.to_owned()), target.tokens())]);
             }
-            let ours = legacy
-                .load()
-                .ok()
-                .flatten()
-                .is_some_and(|session| session.api_url == target.api_url);
+            let ours = legacy.load().ok().flatten().is_some_and(|session| {
+                prick_core::profile::same_server(&session.api_url, &target.api_url)
+            });
             Ok(if ours { vec![(None, legacy)] } else { Vec::new() })
         }
         // Nothing selects a server and no profile exists: there is at most the

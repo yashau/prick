@@ -13,8 +13,9 @@
 //! Before a credential is resolved:
 //!
 //! - a write, with more than one profile configured, must have been aimed
-//!   deliberately: by a flag, an environment variable or a project file, not
-//!   by the default alone;
+//!   deliberately: by a flag, an environment variable or this checkout's
+//!   `.prick.local.toml`, not by the default or a committed `.prick.toml`
+//!   alone;
 //! - a service token, with more than one profile configured, pairs only with a
 //!   server chosen by a flag or the environment, and only with the client id
 //!   the profile expects, if it records one;
@@ -104,11 +105,13 @@ pub enum TargetError {
 
     /// A write, with several profiles, selected only by the default.
     #[error(
-        "this command changes data, and {count} profiles are configured; name the server with --profile (the default, `{default}`, is not used for writes)"
+        "this command changes data, and {count} profiles are configured; name the server with --profile, PRK_PROFILE or .prick.local.toml (`{default}`, chosen by {source_desc}, is not used for writes)"
     )]
     WriteNeedsProfile {
-        /// The default profile.
+        /// The profile that was selected.
         default: String,
+        /// What selected it.
+        source_desc: &'static str,
         /// How many profiles exist.
         count: usize,
     },
@@ -137,7 +140,7 @@ pub enum TargetError {
 
     /// The server reports a different instance than the profile is pinned to.
     #[error(
-        "{host} is a different deployment than profile `{profile}` is pinned to (expected instance {pinned}, it reports {reported}); nothing was sent"
+        "{host} is a different deployment than profile `{profile}` is pinned to (expected instance {pinned}, it reports {reported}); nothing beyond the identity check was sent"
     )]
     InstanceMismatch {
         /// The profile.
@@ -152,7 +155,7 @@ pub enum TargetError {
 
     /// The server reports no instance where one is required.
     #[error(
-        "{host} reports no instance id, so it cannot be verified against {what}; nothing was sent"
+        "{host} reports no instance id, so it cannot be verified against {what}; nothing beyond the identity check was sent"
     )]
     InstanceUnreported {
         /// The server's host.
@@ -162,7 +165,9 @@ pub enum TargetError {
     },
 
     /// The server's instance is not on the project's allow list.
-    #[error("{path} does not allow instance {instance} ({host}); nothing was sent")]
+    #[error(
+        "{path} does not allow instance {instance} ({host}); nothing beyond the identity check was sent"
+    )]
     NotAllowed {
         /// The project file.
         path: String,
@@ -173,7 +178,9 @@ pub enum TargetError {
     },
 
     /// The server's instance is not the one `--expect-instance` names.
-    #[error("{host} reports instance {reported}, not the expected {expected}; nothing was sent")]
+    #[error(
+        "{host} reports instance {reported}, not the expected {expected}; nothing beyond the identity check was sent"
+    )]
     ExpectMismatch {
         /// The server's host.
         host: String,
@@ -268,9 +275,10 @@ impl TargetError {
                 "Choose a profile for a deployment this project allows, or add the instance with \
                  `prk profile pin` if it belongs to the project."
             }
-            Self::WriteNeedsProfile { .. } | Self::TokenNeedsSelection { .. } => {
-                "`prk profile list` shows the profiles; a project's .prick.toml can also choose one."
+            Self::WriteNeedsProfile { .. } => {
+                "`prk profile list` shows the profiles; `prk profile pin --local` records this                  checkout's choice in .prick.local.toml."
             }
+            Self::TokenNeedsSelection { .. } => "`prk profile list` shows the profiles.",
             _ => return None,
         })
     }
@@ -323,6 +331,9 @@ pub struct Target {
     /// Things worth telling the operator, printed when the command
     /// authenticates.
     pub notes: Vec<String>,
+    /// Things that went wrong without stopping the command, printed as
+    /// warnings once the server has been verified.
+    pub warnings: Vec<String>,
 }
 
 /// Resolves the target from the flags, the environment and the files.
@@ -440,6 +451,7 @@ fn resolve_with(
         verified_instance: None,
         pinned_now: false,
         notes,
+        warnings: Vec::new(),
     })
 }
 
@@ -470,7 +482,7 @@ fn adopt_legacy_session(
     let Ok(Some(session)) = legacy.load() else {
         return Ok(None);
     };
-    if session.api_url == profile.api_url {
+    if prick_core::profile::same_server(&session.api_url, &profile.api_url) {
         return Ok(None);
     }
 
@@ -578,6 +590,7 @@ impl Target {
             verified_instance: None,
             pinned_now: false,
             notes: Vec::new(),
+            warnings: Vec::new(),
         }
     }
 
@@ -646,6 +659,7 @@ impl Target {
         if writes && several && !source.is_deliberate() {
             return Err(TargetError::WriteNeedsProfile {
                 default: self.selection.profile().unwrap_or_default().to_owned(),
+                source_desc: source.describe(),
                 count: self.profile_count,
             });
         }
@@ -721,7 +735,7 @@ impl Target {
         if let (Some(reported), Some((name, profile))) = (reported, &self.profile)
             && profile.instance.is_none()
         {
-            self.pin(&name.clone(), &profile.api_url.clone(), reported)?;
+            self.pin(&name.clone(), &profile.api_url.clone(), reported);
         }
         self.verified_instance = reported.map(str::to_owned);
         Ok(())
@@ -767,21 +781,31 @@ impl Target {
     /// Under the configuration lock, and only if the profile still has the
     /// same URL and still has no pin, so a concurrent change is never
     /// overwritten.
-    fn pin(&mut self, name: &str, api_url: &str, instance: &str) -> Result<(), TargetError> {
-        self.store.update(|config| -> Result<(), TargetError> {
+    ///
+    /// Saving is best effort. The check this run makes is already done, in
+    /// memory, against what the server reported; a configuration directory
+    /// that cannot be written (read-only, or a profile file this build cannot
+    /// rewrite) costs the pin being recorded, not the command. The failure is
+    /// reported through [`Target::warnings`], and the next run tries again.
+    fn pin(&mut self, name: &str, api_url: &str, instance: &str) {
+        if let Some((_, profile)) = &mut self.profile {
+            profile.instance = Some(instance.to_owned());
+        }
+        let saved = self.store.update(|config| -> Result<(), TargetError> {
             if let Some(profile) = config.profiles.get_mut(name)
-                && profile.api_url == api_url
+                && prick_core::profile::same_server(&profile.api_url, api_url)
                 && profile.instance.is_none()
             {
                 profile.instance = Some(instance.to_owned());
             }
             Ok(())
-        })?;
-        if let Some((_, profile)) = &mut self.profile {
-            profile.instance = Some(instance.to_owned());
+        });
+        match saved {
+            Ok(()) => self.pinned_now = true,
+            Err(err) => self.warnings.push(format!(
+                "could not record profile `{name}`'s instance pin ({err}); the server was checked for                  this run, and the pin is saved the next time it can be"
+            )),
         }
-        self.pinned_now = true;
-        Ok(())
     }
 
     /// One line naming where a write is going.

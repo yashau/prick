@@ -272,6 +272,19 @@ fn nothing_configured_says_whether_any_profile_exists() {
 }
 
 #[test]
+fn a_committed_project_file_selects_but_does_not_count_as_a_deliberate_choice_for_writes() {
+    for (source, deliberate) in [
+        (Source::Flag, true),
+        (Source::Environment, true),
+        (Source::LocalFile, true),
+        (Source::ProjectFile, false),
+        (Source::Default, false),
+    ] {
+        assert_eq!(source.is_deliberate(), deliberate, "{source:?}");
+    }
+}
+
+#[test]
 fn only_the_flag_and_environment_tiers_may_carry_an_environment_service_token() {
     for (source, allowed) in [
         (Source::Flag, true),

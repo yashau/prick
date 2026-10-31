@@ -171,6 +171,9 @@ pub fn remove(config: &Config, name: &str) -> Result<(Config, Profile), EditErro
     if next.default_profile.as_deref() == Some(name) {
         next.default_profile = None;
     }
+    // A tombstone pointing at a profile that no longer exists would answer
+    // "renamed to `x`" for a name that leads nowhere.
+    next.renamed.retain(|_, tombstone| tombstone.to != name);
     Ok((next, profile))
 }
 
@@ -285,6 +288,13 @@ mod tests {
         let (config, removed) = remove(&two(), "prod").unwrap();
         assert_eq!(removed.api_url, "https://a.example");
         assert_eq!(config.default_profile, None);
+    }
+
+    #[test]
+    fn removing_a_profile_drops_the_tombstones_that_point_at_it() {
+        let config = rename(&rename(&two(), "prod", "acme").unwrap(), "acme", "acme-eu").unwrap();
+        let (config, _) = remove(&config, "acme-eu").unwrap();
+        assert!(config.renamed.is_empty(), "{:?}", config.renamed);
     }
 
     #[test]

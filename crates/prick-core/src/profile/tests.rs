@@ -27,12 +27,28 @@ fn instance_ids_and_credential_refs_have_fixed_shapes() {
 #[test]
 fn urls_must_be_https_or_loopback_and_carry_no_userinfo() {
     assert_eq!(validate_url("https://prick.example.com/").unwrap(), "https://prick.example.com");
-    for loopback in
-        ["http://localhost:8787", "http://127.0.0.1:7788", "http://[::1]:1", "http://app.localhost"]
-    {
+    for loopback in [
+        "http://localhost:8787",
+        "http://LOCALHOST",
+        "http://127.0.0.1:7788",
+        "http://127.1.2.3",
+        "http://[::1]:1",
+        "http://[0:0:0:0:0:0:0:1]",
+    ] {
         assert!(validate_url(loopback).is_ok(), "{loopback}");
     }
-    assert!(matches!(validate_url("http://prick.example.com"), Err(UrlError::Insecure { .. })));
+    for remote in [
+        "http://prick.example.com",
+        // Four labels starting with 127, and a name anyone can register.
+        "http://127.evil.example.com",
+        "http://127.0.0.1.evil.example",
+        "http://127.0.0.256",
+        "http://app.localhost",
+        "http://localhost.evil.example",
+        "http://10.0.0.5:8787",
+    ] {
+        assert!(matches!(validate_url(remote), Err(UrlError::Insecure { .. })), "{remote}");
+    }
     assert!(matches!(
         validate_url("https://u:p@prick.example.com"),
         Err(UrlError::Userinfo { .. })
@@ -40,6 +56,29 @@ fn urls_must_be_https_or_loopback_and_carry_no_userinfo() {
     for malformed in ["prick.example.com", "ftp://x", "https://"] {
         assert!(matches!(validate_url(malformed), Err(UrlError::Malformed { .. })), "{malformed}");
     }
+}
+
+#[test]
+fn a_legacy_url_needs_only_a_well_formed_shape() {
+    assert_eq!(validate_url_shape("http://10.0.0.5:8787/").unwrap(), "http://10.0.0.5:8787");
+    assert!(validate_url_shape("http://u@x").is_err());
+    assert!(validate_url_shape("x").is_err());
+}
+
+#[test]
+fn normalising_lowercases_scheme_and_host_and_drops_the_default_port() {
+    for (given, expected) in [
+        ("HTTPS://Prick.Example.com:443/", "https://prick.example.com"),
+        ("https://prick.example.com:8443", "https://prick.example.com:8443"),
+        ("http://LOCALHOST:80", "http://localhost"),
+        ("http://localhost:8080", "http://localhost:8080"),
+        ("https://prick.example.com:443/Base/", "https://prick.example.com/Base"),
+        ("  https://prick.example.com//  ", "https://prick.example.com"),
+    ] {
+        assert_eq!(normalize_url(given), expected, "{given}");
+    }
+    assert!(same_server("https://PRICK.example.com:443", "https://prick.example.com/"));
+    assert!(!same_server("https://prick.example.com", "https://prick.example.com:8443"));
 }
 
 #[test]
@@ -71,6 +110,14 @@ fn validation_catches_what_a_hand_edit_gets_wrong() {
     let mut config = Config::from_legacy("https://a.example", "");
     config.default_profile = Some("nope".to_owned());
     assert!(matches!(config.validate(), Err(ConfigError::MissingDefault { .. })));
+
+    // The legacy profile tolerates an http URL an older prk accepted; any other
+    // profile does not.
+    let legacy = Config::from_legacy("http://10.0.0.5:8787", "");
+    legacy.validate().expect("an updated install keeps its session");
+    let mut other = legacy.clone();
+    other.profiles.get_mut(DEFAULT_NAME).unwrap().credential = "0000000000000001".to_owned();
+    assert!(matches!(other.validate(), Err(ConfigError::Field { field: "api_url", .. })));
 
     let mut config = Config::from_legacy("https://a.example", "");
     config.profiles.get_mut(DEFAULT_NAME).unwrap().credential = "../../etc/passwd".to_owned();

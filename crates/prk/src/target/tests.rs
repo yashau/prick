@@ -268,7 +268,13 @@ fn a_project_file_selects_by_instance_and_refuses_a_deployment_it_does_not_allow
             .unwrap();
     assert_eq!(target.selection.profile(), Some("globex"));
     assert_eq!(target.default_project().as_deref(), Some("api"));
-    target.check_before_credentials(true, None).expect("a project file is a deliberate choice");
+    target.check_before_credentials(false, None).expect("a committed file selects for reads");
+    // A cloned repository's file is the author's choice, not the operator's:
+    // with two profiles it does not satisfy the write guard.
+    assert!(matches!(
+        target.check_before_credentials(true, None),
+        Err(TargetError::WriteNeedsProfile { .. })
+    ));
 
     // The acme profile is pinned to an instance this project does not list:
     // refused before a credential is even resolved.
@@ -297,6 +303,7 @@ fn a_project_file_cannot_choose_among_several_deployments_but_a_local_file_can()
         resolve_in(&global(&[]), &EnvVars::default(), Some(project.path()), None, store).unwrap();
     assert_eq!(target.selection.profile(), Some("globex"));
     assert_eq!(target.selection.source(), Source::LocalFile);
+    target.check_before_credentials(true, None).expect("this checkout's own choice is deliberate");
 }
 
 #[test]
@@ -387,4 +394,36 @@ fn a_session_an_older_prk_wrote_for_another_server_is_moved_to_its_own_profile()
         "the profile that owned the legacy file is signed out, not handed another server's session"
     );
     assert_eq!(config.profiles["default"].api_url, ACME_URL);
+}
+
+#[test]
+fn a_failed_first_pin_save_warns_and_the_command_carries_on() {
+    // An updated install whose stored URL an older prk accepted, in a
+    // configuration directory that cannot be written.
+    let dir = tempfile::tempdir().unwrap();
+    let store = ProfileStore::in_dir(dir.path());
+    store.legacy_tokens().save(&session("http://10.0.0.5:8787")).unwrap();
+
+    let mut target = resolve_with(&global(&[]), &EnvVars::default(), &store).unwrap();
+    assert_eq!(target.api_url, "http://10.0.0.5:8787", "the legacy URL is kept as it is");
+    // A directory where config.toml should be makes the write fail.
+    std::fs::create_dir(store.config_path()).unwrap();
+
+    target.verify(Some(ACME)).expect("a pin that cannot be saved does not stop the command");
+    assert!(!target.pinned_now);
+    assert_eq!(target.warnings.len(), 1, "{:?}", target.warnings);
+    assert_eq!(target.verified_instance.as_deref(), Some(ACME));
+    // The check made in memory still holds for the rest of the run.
+    assert!(matches!(target.verify(Some(GLOBEX)), Err(TargetError::InstanceMismatch { .. })));
+}
+
+#[test]
+fn a_legacy_url_an_older_prk_accepted_can_still_be_pinned_and_saved() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = ProfileStore::in_dir(dir.path());
+    store.legacy_tokens().save(&session("http://10.0.0.5:8787")).unwrap();
+    let mut target = resolve_with(&global(&[]), &EnvVars::default(), &store).unwrap();
+    target.verify(Some(ACME)).unwrap();
+    assert!(target.pinned_now, "{:?}", target.warnings);
+    assert_eq!(store.load().unwrap().config.profiles["default"].instance.as_deref(), Some(ACME));
 }

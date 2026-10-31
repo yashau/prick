@@ -107,7 +107,9 @@ pub fn run(args: &RunArgs, global: &GlobalArgs, out: Output) -> Result<(), CliEr
 /// The variables `prk` reads to decide which server it talks to and as whom.
 ///
 /// Exactly these names, not a `PRK_` prefix, so an application's own
-/// `PRK_`-prefixed secrets are injected as usual.
+/// `PRK_`-prefixed secrets are injected as usual. Compared without regard to
+/// case on every platform: Windows environment names ignore case, so a secret
+/// called `prk_api_url` is `PRK_API_URL` to a nested `prk` there.
 pub const PRK_VARS: &[&str] = &[
     "PRK_API_URL",
     "PRK_PROFILE",
@@ -132,7 +134,7 @@ fn skip_prk_vars<V>(secrets: Vec<(String, V)>, allow: bool, out: Output) -> Vec<
     secrets
         .into_iter()
         .filter(|(name, _)| {
-            let reserved = PRK_VARS.contains(&name.as_str());
+            let reserved = PRK_VARS.iter().any(|reserved| reserved.eq_ignore_ascii_case(name));
             if reserved {
                 out.warn(&format!(
                     "not injecting `{name}`: prk reads it, so a prk inside the command would follow it; \
@@ -166,6 +168,8 @@ mod tests {
         let secrets = vec![
             ("PRK_API_URL".to_owned(), "https://elsewhere.example"),
             ("CF_ACCESS_CLIENT_SECRET".to_owned(), "x"),
+            ("prk_profile".to_owned(), "other"),
+            ("Cf_Access_Client_Id".to_owned(), "x"),
             ("PRK_FEATURE_FLAG".to_owned(), "on"),
             ("DATABASE_URL".to_owned(), "postgres://"),
         ];
@@ -174,7 +178,7 @@ mod tests {
             .map(|(name, _)| name)
             .collect();
         assert_eq!(kept, ["PRK_FEATURE_FLAG", "DATABASE_URL"], "only prk's own names are skipped");
-        assert_eq!(super::skip_prk_vars(secrets, true, out).len(), 4);
+        assert_eq!(super::skip_prk_vars(secrets, true, out).len(), 6);
     }
 
     #[test]

@@ -14,8 +14,8 @@ use prick_auth::profiles::{
     serialize_toml,
 };
 use prick_core::profile::{
-    Allow, Config, LocalFile, Profile, ProjectFile, edit, host_of, is_profile_name, short_instance,
-    validate_url,
+    Allow, Config, LocalFile, Profile, ProjectFile, edit, host_of, is_profile_name, same_server,
+    short_instance, validate_url,
 };
 use prick_core::slug::is_slug;
 
@@ -208,7 +208,9 @@ fn describe(
 ) -> serde_json::Value {
     let session = store.tokens(profile).load();
     let (signed_in, expires_at, unreadable) = match &session {
-        Ok(Some(session)) => (session.api_url == profile.api_url, session.tokens.expires_at, false),
+        Ok(Some(session)) => {
+            (same_server(&session.api_url, &profile.api_url), session.tokens.expires_at, false)
+        }
         Ok(None) => (false, None, false),
         Err(_) => (false, None, true),
     };
@@ -254,7 +256,7 @@ fn list(store: &ProfileStore, out: Output) -> Result<(), CliError> {
             .as_deref()
             .map_or_else(|| "unverified".to_owned(), |id| short_instance(id).to_owned());
         let state = match store.tokens(profile).load() {
-            Ok(Some(session)) if session.api_url == profile.api_url => "signed in",
+            Ok(Some(session)) if same_server(&session.api_url, &profile.api_url) => "signed in",
             Ok(_) => "signed out",
             Err(_) => "credential unreadable",
         };
@@ -322,8 +324,8 @@ fn show(
         ("env", &profile.env),
         ("token", &profile.service_token_client_id),
     ] {
-        if let Some(value) = field {
-            out.data(&format!("  {label}:{:pad$}{value}", "", pad = 9 - label.len()));
+        if let Some(setting) = field {
+            out.data(&format!("  {label}:{:pad$}{}", "", setting, pad = 9 - label.len()));
         }
     }
     if config.default_profile.as_deref() == Some(name.as_str()) {
@@ -440,7 +442,7 @@ fn remove(
 
     let tokens = store.tokens(&profile);
     if let Some(session) = tokens.load().unwrap_or(None)
-        && session.api_url == profile.api_url
+        && same_server(&session.api_url, &profile.api_url)
         && !no_revoke
     {
         auth::revoke_quietly(&session, global, out);
@@ -470,12 +472,22 @@ fn pin(local: bool, global: &GlobalArgs, out: Output) -> Result<(), CliError> {
 
     let mut context = Context::with_target(global, target)?;
     context.authenticate(out)?;
-    let instance = context.target().verified_instance.clone().ok_or_else(|| {
-        CliError::Other(format!(
-            "{} reports no instance id, so there is nothing to pin",
-            context.target().host()
-        ))
-    })?;
+    // Asked of the server directly: with a bare URL and nothing to check
+    // against, authentication does not probe, and there is still an instance
+    // to record.
+    let instance = match context.target().verified_instance.clone() {
+        Some(instance) => instance,
+        None => context
+            .identity()?
+            .instance
+            .filter(|id| prick_core::profile::is_instance_id(id))
+            .ok_or_else(|| {
+            CliError::Other(format!(
+                "{} reports no instance id, so there is nothing to pin",
+                context.target().host()
+            ))
+        })?,
+    };
 
     let dir = match project_dir {
         Some(dir) => dir,

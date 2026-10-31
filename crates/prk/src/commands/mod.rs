@@ -169,6 +169,9 @@ impl Context {
         if self.target.needs_verification() {
             let identity = self.runtime.block_on(prick_api::ops::whoami(&self.client))?;
             self.target.verify(identity.instance.as_deref())?;
+            for warning in &self.target.warnings {
+                out.warn(warning);
+            }
             if self.target.pinned_now {
                 out.note(&format!(
                     "pinned {} to {}",

@@ -85,10 +85,42 @@ pub fn short_instance(id: &str) -> &str {
     id.get(..8).unwrap_or(id)
 }
 
-/// Normalises a server URL the way every comparison in this module expects:
-/// surrounding whitespace and trailing slashes removed.
+/// Normalises a server URL the way every comparison of servers expects.
+///
+/// Surrounding whitespace and trailing slashes go, the scheme and host are
+/// lowercased, and the default port is dropped (`:443` for https, `:80` for
+/// http). The path is kept as written. Two spellings of one server then
+/// compare equal, and comparison stays exact after that.
 pub fn normalize_url(url: &str) -> String {
-    url.trim().trim_end_matches('/').to_owned()
+    let trimmed = url.trim().trim_end_matches('/');
+    let Some((scheme, rest)) = trimmed.split_once("://") else {
+        return trimmed.to_owned();
+    };
+    let scheme = scheme.to_ascii_lowercase();
+    let split = rest.find(['/', '?', '#']).unwrap_or(rest.len());
+    let (authority, tail) = rest.split_at(split);
+    let (userinfo, hostport) = match authority.rsplit_once('@') {
+        Some((userinfo, hostport)) => (Some(userinfo), hostport),
+        None => (None, authority),
+    };
+    let mut hostport = hostport.to_ascii_lowercase();
+    let default_port = match scheme.as_str() {
+        "https" => Some(":443"),
+        "http" => Some(":80"),
+        _ => None,
+    };
+    if let Some(port) = default_port
+        && hostport.ends_with(port)
+    {
+        hostport.truncate(hostport.len() - port.len());
+    }
+    let userinfo = userinfo.map(|userinfo| format!("{userinfo}@")).unwrap_or_default();
+    format!("{scheme}://{userinfo}{hostport}{tail}")
+}
+
+/// Whether two URLs name the same server, after [`normalize_url`].
+pub fn same_server(a: &str, b: &str) -> bool {
+    normalize_url(a) == normalize_url(b)
 }
 
 /// Why a server URL was refused.
@@ -122,6 +154,29 @@ pub enum UrlError {
 ///
 /// [`UrlError`] naming what is wrong.
 pub fn validate_url(url: &str) -> Result<String, UrlError> {
+    let (normalized, secure, host) = parse_server_url(url)?;
+    if !secure && !is_loopback(&host) {
+        return Err(UrlError::Insecure { url: url.to_owned() });
+    }
+    Ok(normalized)
+}
+
+/// [`validate_url`] without the https rule: an http or https URL with a host
+/// and no `user@`.
+///
+/// For the URL a pre-profiles session already records, which an older build
+/// accepted and the user is signed in to.
+///
+/// # Errors
+///
+/// [`UrlError::Malformed`] or [`UrlError::Userinfo`].
+pub fn validate_url_shape(url: &str) -> Result<String, UrlError> {
+    parse_server_url(url).map(|(normalized, _, _)| normalized)
+}
+
+/// Splits a server URL into its normalised form, whether it is https, and its
+/// host.
+fn parse_server_url(url: &str) -> Result<(String, bool, String), UrlError> {
     let normalized = normalize_url(url);
     let lower = normalized.to_ascii_lowercase();
     let (secure, rest) = if let Some(rest) = lower.strip_prefix("https://") {
@@ -140,10 +195,8 @@ pub fn validate_url(url: &str) -> Result<String, UrlError> {
     if host.is_empty() {
         return Err(UrlError::Malformed { url: url.to_owned() });
     }
-    if !secure && !is_loopback(host) {
-        return Err(UrlError::Insecure { url: url.to_owned() });
-    }
-    Ok(normalized)
+    let host = host.to_owned();
+    Ok((normalized, secure, host))
 }
 
 /// The host part of a URL, lowercased, without scheme, port or path.
@@ -165,11 +218,20 @@ fn host_of_authority(authority: &str) -> &str {
     authority.split(':').next().unwrap_or("")
 }
 
+/// Whether a host is a loopback address: `localhost` exactly, an IPv4
+/// address in `127.0.0.0/8`, or the IPv6 loopback.
+///
+/// The addresses are parsed, not pattern-matched: `127.evil.example.com` has
+/// four labels and starts with `127`, and it is a name anyone can register.
+/// Parsing a string is pure, so this stays within this crate's contract.
 fn is_loopback(host: &str) -> bool {
-    host == "localhost"
-        || host.ends_with(".localhost")
-        || host == "::1"
-        || host.split('.').next() == Some("127") && host.split('.').count() == 4
+    if host.eq_ignore_ascii_case("localhost") {
+        return true;
+    }
+    if let Ok(address) = host.parse::<std::net::Ipv4Addr>() {
+        return address.is_loopback();
+    }
+    host.parse::<std::net::Ipv6Addr>().is_ok_and(|address| address.is_loopback())
 }
 
 /// One saved server.
@@ -349,7 +411,17 @@ impl Config {
                 field,
                 reason,
             };
-            validate_url(&profile.api_url).map_err(|err| field("api_url", err.to_string()))?;
+            // The profile built from a pre-profiles `credentials.json` keeps
+            // the URL an older prk signed in to, whatever it is: refusing it
+            // here would lock an updated install out of its own session. Every
+            // URL entered through `prk login` or `prk profile add` is checked
+            // in full there.
+            let checked = if profile.credential == LEGACY_CREDENTIAL {
+                validate_url_shape(&profile.api_url)
+            } else {
+                validate_url(&profile.api_url)
+            };
+            checked.map_err(|err| field("api_url", err.to_string()))?;
             if !is_credential_ref(&profile.credential) {
                 return Err(field("credential", "not a credential id".to_owned()));
             }
@@ -385,7 +457,7 @@ impl Config {
         let wanted = normalize_url(url);
         self.profiles
             .iter()
-            .filter(|(_, profile)| profile.api_url == wanted)
+            .filter(|(_, profile)| normalize_url(&profile.api_url) == wanted)
             .map(|(name, _)| name.as_str())
             .collect()
     }

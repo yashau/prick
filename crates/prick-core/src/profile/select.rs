@@ -51,10 +51,16 @@ impl Source {
     }
 
     /// Whether this selection is deliberate enough for a write when more than
-    /// one profile exists. The default alone is not: it is whatever was chosen
-    /// last, possibly days ago, for some other piece of work.
+    /// one profile exists.
+    ///
+    /// A flag, an environment variable, or this checkout's own
+    /// `.prick.local.toml` is. The default is not: it is whatever was chosen
+    /// last, possibly days ago, for some other piece of work. Nor is a
+    /// committed `.prick.toml`: it arrives with `git clone`, so it is the
+    /// repository author's choice, not the operator's. It still selects for
+    /// reads and supplies project and environment defaults.
     pub fn is_deliberate(self) -> bool {
-        !matches!(self, Self::Default)
+        matches!(self, Self::Flag | Self::Environment | Self::LocalFile)
     }
 
     /// Whether a service token from the environment may be paired with this
