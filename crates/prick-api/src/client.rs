@@ -275,6 +275,27 @@ impl Client {
         decode(&received)
     }
 
+    /// Sends a request exactly once and deserialises a successful JSON response.
+    ///
+    /// For a request whose repeat is a second, different action: one that mints
+    /// a credential. A `502` after Cloudflare has already created a token means
+    /// a retry creates another one, and the secret of the first is gone with the
+    /// response that carried it. The failure is reported instead, and the
+    /// operator decides.
+    ///
+    /// # Errors
+    ///
+    /// See [`Client::request_json`].
+    pub async fn request_json_once<T: DeserializeOwned>(
+        &self,
+        method: reqwest::Method,
+        url: &str,
+        body: Body<'_>,
+    ) -> Result<T, ApiError> {
+        let received = self.fetch_once(method, url, body).await?;
+        decode(&received)
+    }
+
     /// Sends a request that is not expected to answer with a document.
     ///
     /// A `204`, or a `200` with an empty body, is success. Anything else goes
@@ -423,6 +444,7 @@ fn decode<T: DeserializeOwned>(received: &Received) -> Result<T, ApiError> {
     if received.facts.status >= 400 {
         let body = serde_json::from_slice::<ApiErrorBody>(&received.body).ok();
         let hint = body.as_ref().and_then(|body| body.hint.clone());
+        let code = body.as_ref().map(|body| body.code.clone()).filter(|code| !code.is_empty());
         let message = body.map_or_else(
             || format!("the server returned HTTP {}", received.facts.status),
             ApiErrorBody::into_message,
@@ -432,11 +454,14 @@ fn decode<T: DeserializeOwned>(received: &Received) -> Result<T, ApiError> {
         // same value the `X-Request-Id` header carries, the header is set by
         // middleware mounted ahead of every route, and taking it from one place
         // means there is no case where the two could be reported differently.
-        let err = ApiError::from_server(received.facts.clone(), message);
-        return Err(match hint {
-            Some(hint) => err.with_server_hint(hint),
-            None => err,
-        });
+        let mut err = ApiError::from_server(received.facts.clone(), message);
+        if let Some(hint) = hint {
+            err = err.with_server_hint(hint);
+        }
+        if let Some(code) = code {
+            err = err.with_server_code(code);
+        }
+        return Err(err);
     }
 
     serde_json::from_slice(&received.body).map_err(|err| {

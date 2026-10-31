@@ -189,9 +189,19 @@ file, prefer that.
 ## Grant it the narrowest role that works
 
 The blast radius of a compromised MCP client is exactly this token's scope. Give
-it an environment-scoped `writer`, not a global `admin`.
+it an environment-scoped `writer`, not a global `admin`. A global admin creates
+the token with that grant already in place:
 
-The first run will `404`, and that is the flow — Access lets the token through
+```bash
+prk access token create "laptop assistant" --role writer --scope api:staging --secret-file ~/.config/prick-mcp/secret
+```
+
+The secret lands in an owner-only file, and `prk` prints the client id for
+`PRICK_MCP_CLIENT_ID`. The first request is already authorized, and the display
+name is set.
+
+A token made in the Cloudflare dashboard instead, on a server without
+`CF_API_TOKEN`, gets a `404` on its first run — Access lets the token through
 the edge, and prick refuses it, because a new service token has no grant. The
 denial is the introduction:
 

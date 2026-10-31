@@ -12,7 +12,8 @@ import {
   upsertIdentity,
   verifyAccessRequest,
 } from "../auth/index.js";
-import type { CoreContext } from "../core/context.js";
+import { accessServiceTokensFromConfig } from "../cloudflare/access.js";
+import type { CoreContext, RuntimeConfigEnv } from "../core/context.js";
 import { createDatabase } from "../db/client.js";
 import type { ApiEnv } from "./env.js";
 
@@ -96,6 +97,15 @@ export const authenticate: MiddlewareHandler<ApiEnv> = async (c, next) => {
     config,
     keyring: c.get("keyring"),
   };
+
+  // The service-token API exists only when configured, and holds the secret in
+  // a closure. `env` is read structurally: the secret is not in `wrangler.jsonc`,
+  // so the generated `Env` does not name it.
+  const serviceTokenApi = accessServiceTokensFromConfig(
+    config.cloudflare,
+    (c.env as RuntimeConfigEnv).CF_API_TOKEN?.trim(),
+  );
+  if (serviceTokenApi !== null) ctx.serviceTokenApi = serviceTokenApi;
 
   await assertAdminsConfigured(ctx);
 

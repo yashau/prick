@@ -127,6 +127,14 @@ export const harness = {
   get certsUrl(): string {
     return readHandoff().certsUrl;
   },
+  /** The Worker that manages service tokens against the fake Cloudflare API. */
+  get cloudflareBaseUrl(): string {
+    return readHandoff().cloudflare.baseUrl;
+  },
+  /** The fake Cloudflare API itself, for its `/__e2e/` control routes. */
+  get cloudflareApiUrl(): string {
+    return readHandoff().cloudflare.apiUrl;
+  },
   /** The Playwright storage state file holding a role's `CF_Authorization`. */
   storageState(role: Role): string {
     return readHandoff().storageState[role];

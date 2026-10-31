@@ -1,5 +1,6 @@
 <script lang="ts">
   import KeyRoundIcon from '@lucide/svelte/icons/key-round';
+  import KeySquareIcon from '@lucide/svelte/icons/key-square';
   import TriangleAlertIcon from '@lucide/svelte/icons/triangle-alert';
   import UserIcon from '@lucide/svelte/icons/user';
   import { toast } from 'svelte-sonner';
@@ -8,7 +9,7 @@
   import { refreshAll } from '$app/navigation';
   import type { UnknownIdentity } from '#lib/client/api.js';
   import { absoluteTime, relativeTime } from '#lib/client/format.js';
-  import type { FormErrors } from '#lib/client/forms.js';
+  import { refusalMessage, type FormErrors } from '#lib/client/forms.js';
   import GrantDialog from '#lib/components/access/grant-dialog.svelte';
   import GrantsTable from '#lib/components/access/grants-table.svelte';
   import UnknownIdentities from '#lib/components/access/unknown-identities.svelte';
@@ -60,6 +61,22 @@
     />
   {/snippet}
 </PageHeader>
+
+<!--
+  A global administrator on a Worker that cannot manage service tokens yet sees
+  the server's configuration hint here, because the sidebar offers the service
+  tokens screen only once it works. `hint` is filled in for global
+  administrators alone, so everyone else sees nothing.
+-->
+{#if data.serviceTokens.hint}
+  <Alert.Root data-testid="service-tokens-unconfigured">
+    <KeySquareIcon aria-hidden="true" />
+    <Alert.Title>Service tokens can be managed from prick</Alert.Title>
+    <Alert.Description>
+      <p>{data.serviceTokens.hint}</p>
+    </Alert.Description>
+  </Alert.Root>
+{/if}
 
 {#if formError.form}
   <Alert.Root variant="destructive">
@@ -152,6 +169,8 @@
                         await refreshAll();
                         return;
                       }
+                      const refused = refusalMessage(result);
+                      if (refused !== null) toast.error('Identity not updated', { description: refused });
                       await applyAction(result);
                     };
                   }}
@@ -159,8 +178,9 @@
                   <input type="hidden" name="identity_id" value={identity.id} />
                   <input type="hidden" name="disabled" value={identity.disabled ? 'false' : 'true'} />
                   <div class="flex items-center gap-2">
+                    <!-- Controlled: it shows the server's state, so a refused toggle snaps back. -->
                     <Switch
-                      checked={!identity.disabled}
+                      bind:checked={() => !identity.disabled, () => {}}
                       aria-label="{identity.disabled ? 'Enable' : 'Disable'} {identity.subject}"
                       onCheckedChange={() => identityForms[identity.id]?.requestSubmit()}
                     />

@@ -91,7 +91,7 @@
 </script>
 
 <Sidebar.Provider>
-  <AppSidebar projects={data.projects} viewer={data.viewer} />
+  <AppSidebar projects={data.projects} viewer={data.viewer} serviceTokens={data.serviceTokens} />
 
   <Sidebar.Inset>
     <header

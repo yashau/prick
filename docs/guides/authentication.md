@@ -11,10 +11,10 @@ present an Access credential.
 
 There are two kinds of credential:
 
-| Credential           | Who uses it                 | How you get it                                                             |
-| -------------------- | --------------------------- | -------------------------------------------------------------------------- |
-| Access SSO session   | People                      | `prk login <url>`, browser round trip                                      |
-| Access service token | CI, cron, anything headless | Created in the Cloudflare dashboard, supplied as two environment variables |
+| Credential           | Who uses it                 | How you get it                                                   |
+| -------------------- | --------------------------- | ---------------------------------------------------------------- |
+| Access SSO session   | People                      | `prk login <url>`, browser round trip                            |
+| Access service token | CI, cron, anything headless | `prk access token create`, supplied as two environment variables |
 
 Identity comes entirely from a verified Access JWT: whichever of the two the
 caller presents, the Worker reads the subject off the signed token rather than
@@ -146,32 +146,41 @@ that did not happen is warned about rather than passed over silently. See
 
 ## Authenticate a machine
 
-CI uses an Access **service token**, not `prk login`.
+CI uses an Access **service token**, not `prk login`. A global admin creates one
+with `prk access token create`: the Worker asks Cloudflare for the token, records
+the identity it will authenticate as, and grants it, in one step. Nobody opens
+the Zero Trust dashboard to manage a token, and `prk` never holds a Cloudflare
+credential; the Worker does.
 
-### 1. Create the token
+### Once per deployment: set up service tokens
 
-In the Cloudflare dashboard, go to **Zero Trust → Access controls → Service
-credentials → Service Tokens** and create a service token. The client secret
-starts with `cfast_` and is shown once; the client id ends in `.access`.
+Two things, done once, before the first token.
 
-### 2. Let it through Access
+**Give the Worker a Cloudflare API token.** Set the `CF_API_TOKEN` secret and the
+`CF_ACCOUNT_ID` var. The token carries exactly one permission, **Access: Service
+Tokens → Edit**, on the one account that owns the Access application.
+[Configuration](/reference/configuration#service-token-management) has the
+steps and what holding that token means.
 
-A service token is authorised only by an Access policy whose action is
-**Service Auth**. The Allow policy that admits your people rejects it at the
-edge, before prick ever sees the request, so the token needs a policy of its
-own:
+**Let service tokens through Access.** A service token is authorised only by an
+Access policy whose action is **Service Auth**. The Allow policy that admits your
+people rejects it at the edge, before prick ever sees the request, so service
+tokens need a policy of their own:
 
 1. Under **Zero Trust → Access controls → Policies**, add a reusable policy with
-   the action **Service Auth** and an **include** rule using the **Service
-   Token** selector, set to this token. The **Any Access Service Token**
-   selector admits every service token in the account instead, which leaves
-   prick's grants as the only boundary between them.
+   the action **Service Auth** and an **include** rule using the **Any Access
+   Service Token** selector.
 2. Attach it to your prick application, alongside the people's Allow policy.
 
 Access evaluates Service Auth policies before Allow policies, so the two sit
 side by side without interfering. Keep the people's policy on **Allow**: a
 Service Auth policy admits no one through a login page, and `prk login` stops
 working the moment the people's policy carries that action.
+
+With that policy, every service token in the account reaches the Worker, and
+prick's grants decide what each one may do. A token holds nothing until it is
+granted, and a token prick creates is granted only on the deployment that
+created it.
 
 :::note[Strict service token authentication]
 With this Zero Trust organization setting on, a request carrying service token
@@ -181,7 +190,37 @@ organizations created on or after 2026-10-05; older organizations can turn it
 on. prk sends both headers on every request and reports either form of refusal.
 :::
 
-### 3. Give it to the job
+### 1. Create the token
+
+```bash
+prk access token create "staging deploy" --role reader --scope api:production
+```
+
+`prk` prints the client id, which ends in `.access`, and the client secret,
+which starts with `cfast_`. **The secret is shown once.** prick stores no copy
+of it and nothing derived from it, so a lost secret is replaced with
+[`prk access token rotate`](/reference/cli/access#prk-access-token-rotate).
+
+The identity exists, named `staging deploy`, and holds `reader` on
+`api:production` before the token makes its first request. That first request is
+already authorized.
+
+For CI, send the secret straight to where the job reads it, so it never appears
+on a terminal:
+
+```bash
+prk access token create "staging deploy" --role reader --scope api:production --secret-file - | gh secret set PRK_ACCESS_CLIENT_SECRET
+```
+
+`--secret-file -` writes the secret alone to stdout. The client id is still
+printed, for the job's other half. `--secret-file <PATH>` writes the secret to an
+owner-only file instead.
+
+Without `--role`, the token is created holding no grant. A project admin can
+then grant it within their project with `prk access grant <CLIENT_ID>`; creating
+the token itself takes global admin.
+
+### 2. Give it to the job
 
 ```bash
 export PRK_ACCESS_CLIENT_ID="<client id>.access"
@@ -206,46 +245,71 @@ credential. Mixing them is how a job authenticates as an identity nobody
 intended, so it is refused.
 :::
 
-### 4. Run the job, and expect a `404`
+### 3. Run the job
 
-Access lets it in; prick refuses it, because authentication is not authorization
-and the token has no grant yet. A project the token cannot see is reported as
-absent (`NOT_FOUND`, exit 5) rather than forbidden. That denial is **recorded**, which is how the
-token introduces itself:
+It works on the first run. Confirm what the token can reach:
 
 ```bash
-prk access identities --denied
-```
-
-```
-e367826f93b8d71185e03fe518aff3b4.access	service	1 attempt(s)
-```
-
-### 5. Grant it
-
-```bash
-prk access grant e367826f93b8d71185e03fe518aff3b4.access --role reader --scope api:production
-```
-
-A service token's identity is its `common_name`, and nobody maps that string to
-"the staging deploy job" from memory — which is why step 4 exists, and why you
-should name it straight away:
-
-```bash
-prk access rename e367826f93b8d71185e03fe518aff3b4.access "staging deploy job"
+prk access explain e367826f93b8d71185e03fe518aff3b4.access
 ```
 
 The full walkthrough, including the GitHub Actions workflow, is
 [Give CI read-only access](/examples/ci-read-only).
 
+### A token made in the Cloudflare dashboard
+
+A Worker without `CF_API_TOKEN` answers every `prk access token` command with
+[`SERVICE_TOKENS_UNCONFIGURED`](/reference/cli/errors#service_unavailable-with-service_tokens_unconfigured-exit-8),
+and `prk` says so before sending anything. Tokens then come from the dashboard:
+
+1. Under **Zero Trust → Access controls → Service credentials → Service
+   Tokens**, create a service token. The client secret starts with `cfast_` and
+   is shown once; the client id ends in `.access`.
+2. Let it through Access: the **Any Access Service Token** policy above admits
+   it already, and a Service Auth policy whose include rule uses the **Service
+   Token** selector, set to this token, admits it alone.
+3. Give it to the job, as in step 2 above.
+4. Run the job once. Access lets it in and prick refuses it, because the token
+   has no grant yet: a project it cannot see is reported as absent
+   (`NOT_FOUND`, exit 5). That denial is **recorded**, which is how the token
+   introduces itself:
+
+   ```bash
+   prk access identities --denied
+   ```
+
+   ```
+   e367826f93b8d71185e03fe518aff3b4.access	service	1 attempt(s)
+   ```
+
+5. Grant it, and name it straight away, because nobody maps a `common_name` to
+   "the staging deploy job" from memory:
+
+   ```bash
+   prk access grant e367826f93b8d71185e03fe518aff3b4.access --role reader --scope api:production
+   ```
+
+   ```bash
+   prk access rename e367826f93b8d71185e03fe518aff3b4.access "staging deploy job"
+   ```
+
+Once the Worker has `CF_API_TOKEN`, `prk access token adopt <CLIENT_ID>` brings
+a dashboard-made token under management, so it rotates, refreshes and revokes
+like one prick created. Its own policy keeps working. Revoking an adopted token
+deletes it in Cloudflare, which ends its access to every other application that
+admits it too.
+
 ### Rotating the secret
 
-Cloudflare's **Rotate** on a service token issues a new client secret and keeps
-the client id. The client id is the identity prick grants to, so every grant
-survives a rotation. Through the API, `previous_client_secret_expires_at` keeps
-the old secret valid until the time you give, which lets you update the job
-before the old secret stops working; without it, the old secret stops working at
-once. A leaked secret takes the immediate cut — see
+```bash
+prk access token rotate "staging deploy" --grace 24h
+```
+
+Rotating issues a new client secret and keeps the client id. The client id is
+the identity prick grants to, so every grant survives a rotation. `--grace`
+keeps the old secret valid for up to 30 days, which lets you update the job
+before the old secret stops working. Without it, the old secret stops working
+at once, which is what a leaked secret needs — see
 [Respond to a leaked secret](/examples/rotate-a-leaked-key#a-leaked-credential).
 
 ### Keeping the secret out of `ps`
@@ -400,16 +464,17 @@ Run this first — it checks the whole chain at once:
 prk doctor
 ```
 
-| Symptom                                                             | Cause                                                     | Fix                                                                                                          |
-| ------------------------------------------------------------------- | --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| `UNAUTHENTICATED`, exit 3                                           | No credential, or an expired one                          | `prk login <url>`, or set the service-token variables                                                        |
-| `INSTANCE_MISMATCH`, exit 3                                         | The server is not the deployment the profile is pinned to | Find out why before anything else; see [Multiple servers](/guides/multiple-servers#instance_mismatch-exit-3) |
-| `PROFILE_REQUIRED`, exit 2                                          | A write with several profiles named no server             | Pass `--profile`                                                                                             |
-| `FORBIDDEN`, exit 4                                                 | Authenticated, but no grant covers this scope             | Ask an admin for a grant; `prk whoami` shows the subject to grant                                            |
-| A service token gets Access's login page, or a non-JSON `401`/`403` | No Service Auth policy admits the token                   | Step 2 of [Authenticate a machine](#authenticate-a-machine)                                                  |
-| `NOT_A_PRICK_SERVER`, exit 7                                        | The URL answered but is not this Worker                   | Point `--api-url` at the Worker's hostname, not at a proxy                                                   |
-| `SERVICE_UNAVAILABLE` with `NO_ADMINS_CONFIGURED`                   | Nobody can administer this install                        | Set `BOOTSTRAP_ADMINS` and redeploy                                                                          |
-| Login warns that `/health` returned 200 unauthenticated             | Access is not attached to the hostname                    | Fix the Access application before storing anything                                                           |
+| Symptom                                                             | Cause                                                       | Fix                                                                                                          |
+| ------------------------------------------------------------------- | ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| `UNAUTHENTICATED`, exit 3                                           | No credential, or an expired one                            | `prk login <url>`, or set the service-token variables                                                        |
+| `INSTANCE_MISMATCH`, exit 3                                         | The server is not the deployment the profile is pinned to   | Find out why before anything else; see [Multiple servers](/guides/multiple-servers#instance_mismatch-exit-3) |
+| `PROFILE_REQUIRED`, exit 2                                          | A write with several profiles named no server               | Pass `--profile`                                                                                             |
+| `FORBIDDEN`, exit 4                                                 | Authenticated, but no grant covers this scope               | Ask an admin for a grant; `prk whoami` shows the subject to grant                                            |
+| A service token gets Access's login page, or a non-JSON `401`/`403` | No Service Auth policy admits the token                     | [Set up service tokens](#once-per-deployment-set-up-service-tokens)                                          |
+| `prk access token` stops with `SERVICE_TOKENS_UNCONFIGURED`         | The Worker has no usable `CF_API_TOKEN` and `CF_ACCOUNT_ID` | The hint names what is missing; see [Configuration](/reference/configuration#service-token-management)       |
+| `NOT_A_PRICK_SERVER`, exit 7                                        | The URL answered but is not this Worker                     | Point `--api-url` at the Worker's hostname, not at a proxy                                                   |
+| `SERVICE_UNAVAILABLE` with `NO_ADMINS_CONFIGURED`                   | Nobody can administer this install                          | Set `BOOTSTRAP_ADMINS` and redeploy                                                                          |
+| Login warns that `/health` returned 200 unauthenticated             | Access is not attached to the hostname                      | Fix the Access application before storing anything                                                           |
 
 Every code, and what to do about it, is in
 [Exit codes and errors](/reference/cli/errors).

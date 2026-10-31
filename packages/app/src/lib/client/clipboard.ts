@@ -81,6 +81,22 @@ export async function copySecretValue(
 }
 
 /**
+ * Put a ONE-TIME secret on the clipboard: a service token's client secret, in
+ * the moment after it was issued.
+ *
+ * The one place a copy reads from memory rather than refetching, because there
+ * is nothing to refetch: Cloudflare returns a client secret exactly once and
+ * prick keeps no copy of it, so the value held by the reveal panel is the only
+ * one that exists. Issuing it was the audited act. The clipboard is still
+ * overwritten after `CLIPBOARD_CLEAR_MS`, on the same focus rule as a secret
+ * value.
+ */
+export async function copyOneTimeSecret(value: string): Promise<void> {
+  await clipboard().writeText(value);
+  scheduleClear();
+}
+
+/**
  * Copy something that is NOT a secret: a request id, a key name, a slug.
  *
  * No timed clear -- there is nothing here worth stomping a user's clipboard

@@ -11,6 +11,7 @@
 //!   resolution, transparent token refresh and route construction happen once.
 
 pub mod access;
+pub mod access_token;
 pub mod auth;
 pub mod completions;
 pub mod doctor;
@@ -141,6 +142,25 @@ impl Context {
     /// [`CliError::Auth`] when nothing is configured or the session has expired
     /// beyond renewal.
     pub fn authenticate(&mut self, out: Output) -> Result<(), CliError> {
+        self.authenticate_before_announcing(out)?;
+        self.announce_destination(out);
+        Ok(())
+    }
+
+    /// [`Context::authenticate`], every check included, without the "writing
+    /// to" line.
+    ///
+    /// For a write command that asks the server one more question before it
+    /// writes anything -- `prk access token` checks `/capabilities` -- so a
+    /// refusal is not preceded by a line saying where a write is going. The
+    /// instance is verified here exactly as in [`Context::authenticate`]; only
+    /// the announcement waits, and the caller makes it with
+    /// [`Context::announce_destination`] before its first write.
+    ///
+    /// # Errors
+    ///
+    /// As [`Context::authenticate`].
+    pub fn authenticate_before_announcing(&mut self, out: Output) -> Result<(), CliError> {
         for note in &self.target.notes {
             out.note(note);
         }
@@ -191,11 +211,17 @@ impl Context {
             ),
         );
 
+        Ok(())
+    }
+
+    /// For a write command, names the server, profile and instance the write
+    /// is going to, on stderr and in every `--json` document. Nothing for a
+    /// read.
+    pub fn announce_destination(&self, out: Output) {
         if self.writes {
             out.note(&self.target.destination_line());
             crate::output::set_destination(self.target.destination_json());
         }
-        Ok(())
     }
 
     /// The server's answer to `/whoami`, asking only if it has not been asked.

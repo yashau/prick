@@ -18,6 +18,13 @@ prk access enable <SUBJECT>
 prk access rename <SUBJECT> <NAME>
 prk access rename <SUBJECT> --clear
 prk access explain <SUBJECT>
+prk access token create <NAME> [--role <ROLE> --scope <SCOPE>] [--expires-in <DAYS>] [--duration <HOURS>h|forever] [--secret-file <PATH>|-]
+prk access token list [--all]
+prk access token rotate <TOKEN> [--grace <DURATION>] [--secret-file <PATH>|-] [--yes]
+prk access token refresh <TOKEN>
+prk access token revoke <TOKEN> [--yes]
+prk access token adopt <CLIENT_ID> [--name <NAME>]
+prk access token reconcile [--apply] [--yes]
 ```
 
 A `<SUBJECT>` is an email address for a person, or a service token's
@@ -29,7 +36,8 @@ e367826f93b8d71185e03fe518aff3b4.access
 ```
 
 :::note[Which server a write reaches]
-`grant`, `revoke`, `disable`, `enable` and `rename` change data. Before sending the change, each prints the server it is
+`grant`, `revoke`, `disable`, `enable`, `rename` and every `token` subcommand
+but `list` change data. Before sending the change, each prints the server it is
 going to on stderr, `writing to prick.acme.example (profile acme, instance 3f9c01ab)`,
 unless `-q` or `--json` is given; under `--json` its result carries the same
 facts as a `destination` object with `server`, `profile` and `instance`. With
@@ -105,6 +113,9 @@ error: no identity has authenticated as `deploy@example.com`, so there is nothin
 
 Run the job once, let it get a `403`, then grant. `prk access identities
 --denied` lists exactly the identities in that state.
+
+A token made with [`prk access token create`](#prk-access-token-create) has an
+identity from the moment it exists, so it can be granted straight away.
 :::
 
 ## `prk access identities`
@@ -323,6 +334,207 @@ Cleared the display name on `e367826f93b8d71185e03fe518aff3b4.access`; it was `s
 `--clear` is a separate flag rather than an empty `NAME`, so a shell variable
 that unexpectedly expands to nothing cannot erase a label.
 
+## `prk access token`
+
+Cloudflare Access service tokens, created and managed by the server. The Worker
+holds the Cloudflare API token and asks Cloudflare on your behalf; `prk` never
+holds a Cloudflare credential.
+
+:::note[Global admin, on a configured server]
+Every `token` subcommand requires **global** admin. Project admins grant an
+existing token within their project with [`prk access grant`](#prk-access-grant),
+using its client id as the subject.
+
+The server needs the `CF_API_TOKEN` secret and the `CF_ACCOUNT_ID` var; see
+[Configuration](/reference/configuration#service-token-management). Against a
+server without them, `prk` reads `/api/v1/capabilities` first and stops before
+sending anything, saying what the server is missing (exit 8). A Worker from a
+release without service-token management answers `404` there, and `prk` stops
+with exit 5 and asks for a newer Worker. A caller who is not a global admin
+stops with exit 4.
+:::
+
+A `<TOKEN>` is any of the three things that name a managed token:
+
+```
+e367826f93b8d71185e03fe518aff3b4.access   the client id
+"staging deploy"                          the display name
+0192f1c4-7a2e-7b3d-9c41-5e8f0a6d2b17      the token's id
+```
+
+### `prk access token create`
+
+```bash
+prk access token create "staging deploy" --role reader --scope api:production
+```
+
+The Worker asks Cloudflare for a new service token, then records its identity
+and the grant in one transaction. The identity's subject is the client id and
+its display name is `<NAME>`, so the token reads as `staging deploy` wherever
+prick lists identities. Its first request is already authorized.
+
+`prk` prints the client id and the client secret. **The secret is shown once**:
+prick stores no copy of it and nothing derived from it. A lost secret is
+replaced with [`rotate`](#prk-access-token-rotate).
+
+| Flag                   | Values                                        | Default                       |
+| ---------------------- | --------------------------------------------- | ----------------------------- |
+| `--role <ROLE>`        | `reader`, `writer`, `admin`                   | No grant                      |
+| `--scope <SCOPE>`      | `project:environment`, either half may be `*` | `*:*`, with `--role` only     |
+| `--expires-in <DAYS>`  | A number of days, for the grant               | The grant never expires       |
+| `--duration <HOURS>`   | Whole hours such as `8760h`, or `forever`     | `8760h`, one year             |
+| `--secret-file <PATH>` | A file path, or `-` for stdout                | The secret goes to the screen |
+
+`--duration` is the token's own lifetime in Cloudflare, at most `87600h`.
+`--expires-in` is the lifetime of the grant in prick. They are independent: an
+expired grant leaves a working token that holds nothing, and an expired token
+cannot authenticate whatever it is granted.
+
+`--scope` and `--expires-in` need `--role`. A `--role` with no `--scope` is a
+global grant, the same default as `prk access grant`, so name the scope unless
+global is what you mean. Without `--role`, the token is created holding no
+grant, ready for `prk access grant`.
+
+#### Sending the secret somewhere other than a terminal
+
+`--secret-file <PATH>` writes the secret to an owner-only file and prints only
+the client id. `--secret-file -` writes the secret alone to stdout, for a pipe:
+
+```bash
+prk access token create "staging deploy" --role reader --scope api:production --secret-file - | gh secret set PRK_ACCESS_CLIENT_SECRET
+```
+
+The client id goes to stderr, outside the pipe, so it can be stored as
+`PRK_ACCESS_CLIENT_ID`. It is not secret. `--secret-file -` cannot be combined
+with `--json`.
+
+If recording the token fails after Cloudflare issued it, the Worker deletes the
+Cloudflare token again before reporting the error, so nothing usable is left
+behind. In Cloudflare the token is named `prick:<instance id>:<id>`; that name is
+how a deployment recognises its own tokens in an account it shares with another.
+
+### `prk access token list`
+
+```bash
+prk access token list
+```
+
+The tokens this server manages, each with its display name, client id, status
+and Cloudflare's view of it: expiry, last use, and whether Cloudflare has
+reported it leaked. `--all` includes revoked tokens.
+
+A status of `missing` is a token prick still considers live that Cloudflare no
+longer has, because someone deleted it in the dashboard.
+[`reconcile`](#prk-access-token-reconcile) retires it. When Cloudflare cannot be
+asked, the list still prints from prick's records, without Cloudflare's columns,
+and reports no token as missing.
+
+### `prk access token rotate`
+
+```bash
+prk access token rotate "staging deploy"
+```
+
+A new client secret for the same client id. The identity and every grant it
+holds are unchanged, so the only thing to update is the secret the job reads.
+
+By default the old secret stops working **immediately**, which is the right
+answer to a leak, and the command asks for confirmation first; `--yes` answers
+it. For a scheduled rotation, keep the old secret valid while the job moves
+over:
+
+```bash
+prk access token rotate "staging deploy" --grace 24h --secret-file - | gh secret set PRK_ACCESS_CLIENT_SECRET
+```
+
+| Flag                   | Values                                         | Default                 |
+| ---------------------- | ---------------------------------------------- | ----------------------- |
+| `--grace <DURATION>`   | `30m`, `24h`, `7d` and so on, at most 30 days  | The old secret ends now |
+| `--secret-file <PATH>` | A file path, or `-` for stdout, as on `create` | The screen              |
+| `--yes`                |                                                | Ask                     |
+
+The new secret is shown once, like the first.
+
+### `prk access token refresh`
+
+```bash
+prk access token refresh "staging deploy"
+```
+
+Extends the token's expiry in Cloudflare by its duration. No new secret, and
+nothing about the identity changes.
+
+### `prk access token revoke`
+
+```bash
+prk access token revoke "staging deploy"
+```
+
+Asks for confirmation (`--yes` answers it), then disables the token's identity —
+[the kill switch](#prk-access-disable), which outranks every grant — and marks
+the record revoked, in one transaction. Then it deletes the token in Cloudflare.
+Access is gone the moment the transaction commits.
+
+The grants stay, as the record of what the token held;
+[`prk access explain`](#prk-access-explain) still lists them. If the Cloudflare
+delete fails, the command fails with `UPSTREAM_FAILED` while prick already
+refuses the token, and [`reconcile --apply`](#prk-access-token-reconcile)
+finishes the job.
+
+A token that is the last usable global administrator, with `BOOTSTRAP_ADMINS`
+empty, is refused with `LAST_ADMIN`.
+
+### `prk access token adopt`
+
+```bash
+prk access token adopt e367826f93b8d71185e03fe518aff3b4.access --name "legacy deploy"
+```
+
+Brings a token made in the Cloudflare dashboard under this server's management,
+so it can be rotated, refreshed and revoked here. Its identity is created if the
+token has never authenticated, and reused, grants and all, if it has. `--name`
+sets the display name. No secret is involved.
+
+Adopting changes nothing in Cloudflare: the token keeps its name and any policy
+that names it. Once adopted, though, the token's life is managed here, and
+**revoking it deletes it in Cloudflare** — which also ends its access to every
+other Access application that admits it. `revoke` warns before doing that to an
+adopted token. Adopting a token already managed here is a `CONFLICT`.
+
+### `prk access token reconcile`
+
+```bash
+prk access token reconcile
+```
+
+Compares this server's records with Cloudflare's, and reports what disagrees:
+
+| Kind                | Means                                                              | With `--apply`                    |
+| ------------------- | ------------------------------------------------------------------ | --------------------------------- |
+| `orphan`            | A `prick:<this instance>:` token in Cloudflare with no record here | Deleted from Cloudflare           |
+| `missing`           | A live record whose token was deleted in the dashboard             | Retired: the identity is disabled |
+| `revoke_incomplete` | A revoked record whose token still exists in Cloudflare            | Deleted from Cloudflare           |
+| `foreign`           | A token named for another prick deployment sharing the account     | Never touched                     |
+
+Without `--apply` nothing changes. `--apply` repairs each entry, with its own
+audit row, after asking for confirmation; `--yes` answers it. Tokens whose
+Cloudflare name does not start with `prick:` were made by hand and are not
+considered; adopt one to bring it in.
+
+Reconcile is safe to run while tokens are being created or revoked:
+
+- An entry less than five minutes old is reported as **skipped**, with the
+  reason, and never repaired. A create or revoke may still be in flight, and
+  judging it would delete a token another request is recording.
+- `--apply` re-checks each entry immediately before repairing it, and skips any
+  that has stopped being eligible since the listing — a row that committed, a
+  token Cloudflare now answers for, a revoke that landed — saying so.
+- `--apply` refuses, changing nothing, when more than ten live tokens read as
+  `missing`, or when two or more do and that is every live token. That pattern
+  is far more often `CF_ACCOUNT_ID` naming the wrong account than tokens
+  deleted in the dashboard. The answer is a `CONFLICT` naming the account id;
+  retire tokens that really are gone one at a time with `revoke`.
+
 ## Groups
 
 Groups are part of the model and are managed through the web UI or the API.
@@ -331,11 +543,13 @@ a group is what confers a role.
 
 ## Common errors
 
-| Error       | Exit | What happened                                                           |
-| ----------- | ---- | ----------------------------------------------------------------------- |
-| `FORBIDDEN` | 4    | You are not an admin at the scope you are trying to change              |
-| `NOT_FOUND` | 5    | No such identity, grant, project or environment — or not visible to you |
-| `CONFLICT`  | 6    | A grant already exists at that scope                                    |
+| Error                 | Exit | What happened                                                                                                                                                                                                                                       |
+| --------------------- | ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `FORBIDDEN`           | 4    | You are not an admin at the scope you are trying to change                                                                                                                                                                                          |
+| `NOT_FOUND`           | 5    | No such identity, grant, project or environment — or not visible to you                                                                                                                                                                             |
+| `CONFLICT`            | 6    | A grant already exists at that scope, a token is already adopted, or revoking it would remove the last global admin (`LAST_ADMIN`)                                                                                                                  |
+| `SERVICE_UNAVAILABLE` | 8    | `prk access token` on a server without `CF_API_TOKEN` and `CF_ACCOUNT_ID`, or whose token Cloudflare refuses: the server code is [`SERVICE_TOKENS_UNCONFIGURED`](/reference/cli/errors#service_unavailable-with-service_tokens_unconfigured-exit-8) |
+| `SERVER_ERROR`        | 8    | The Cloudflare API failed while the server managed a token: the server code is [`UPSTREAM_FAILED`](/reference/cli/errors#server_error-with-upstream_failed-exit-8)                                                                                  |
 
 A malformed scope fails locally, before any request:
 

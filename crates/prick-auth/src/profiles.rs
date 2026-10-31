@@ -237,6 +237,20 @@ impl ProfileStore {
                     }
                     std::thread::sleep(Duration::from_millis(25));
                 }
+                // Windows keeps a deleted file "delete pending" until the last
+                // handle to it closes, and creating it again in that window
+                // fails with ERROR_ACCESS_DENIED rather than ERROR_FILE_EXISTS.
+                // The previous holder is releasing the lock, so that is
+                // contention, and it is waited out like any other. A denial
+                // that outlasts the wait is a real permission problem and is
+                // reported as one.
+                Err(err)
+                    if cfg!(windows)
+                        && err.kind() == std::io::ErrorKind::PermissionDenied
+                        && started.elapsed().unwrap_or_default() <= LOCK_WAIT =>
+                {
+                    std::thread::sleep(Duration::from_millis(25));
+                }
                 Err(source) => {
                     return Err(ProfileStoreError::Io {
                         operation: "lock",

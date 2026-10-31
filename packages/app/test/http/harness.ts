@@ -127,6 +127,8 @@ export interface HarnessOptions {
    * measuring `NO_ADMINS_CONFIGURED` rather than whatever it meant to measure.
    */
   seedOwner?: boolean;
+  /** Extra Worker bindings, e.g. the `CF_*` values that switch on service tokens. */
+  bindings?: Record<string, unknown>;
 }
 
 export async function apiHarness(options: HarnessOptions = {}): Promise<ApiHarness> {
@@ -145,6 +147,7 @@ export async function apiHarness(options: HarnessOptions = {}): Promise<ApiHarne
     // CONFIGURED` would otherwise fire on a database whose grants were just
     // truncated, and every test would be asserting the 503 by accident.
     BOOTSTRAP_ADMINS: options.bootstrapAdmins ?? "",
+    ...options.bindings,
   } as unknown as Env;
 
   const bindings = (overrides: Record<string, unknown> = {}): Env =>

@@ -1,6 +1,7 @@
 import type { IdentityKind, Role, ScopeType } from "@prick/shared";
 import { BODY_MAX_BYTES, ENV_MAX_SECRETS, SECRET_VALUE_MAX_BYTES } from "@prick/shared";
 
+import type { AccessServiceTokens } from "../cloudflare/access.js";
 import type { Keyring } from "../crypto/index.js";
 import type { Database } from "../db/index.js";
 import { PrickError } from "./errors.js";
@@ -105,6 +106,13 @@ export interface CoreContext {
    * call -- can be exercised from a context that never built one.
    */
   keyring?: Keyring;
+  /**
+   * The Cloudflare Access service-token API, holding the `CF_API_TOKEN` secret
+   * in a closure. Built by the HTTP transport when the feature is configured;
+   * absent everywhere else, and `core/service-tokens.ts` answers 503 rather than
+   * reaching for it.
+   */
+  serviceTokenApi?: AccessServiceTokens;
 }
 
 /**
@@ -163,7 +171,30 @@ export interface RuntimeConfig {
   secretMaxBytes: number;
   envMaxSecrets: number;
   bodyMaxBytes: number;
+  /** Whether this Worker can manage Cloudflare Access service tokens. */
+  cloudflare: CloudflareConfig;
 }
+
+/**
+ * The service-token feature's configuration, as a state rather than a pair of
+ * optional strings.
+ *
+ * OPTIONAL BY DESIGN, so a problem here never fails the Worker. A missing or
+ * half-set `CF_*` value disables one feature and says why; it must not take
+ * secret reads down with it, which is what a refusal from `loadRuntimeConfig`
+ * would do. Every route of the feature answers 503 with `problem` as its hint,
+ * and `/capabilities` reports it to global admins.
+ *
+ * The API token itself is NOT here. It is a secret, and this object travels on
+ * every `CoreContext`; `cloudflare/access.ts` reads it straight from the binding
+ * into a closure. Only whether it is present is recorded.
+ */
+export type CloudflareConfig =
+  | { state: "enabled"; accountId: string; baseUrl: string }
+  | { state: "unconfigured"; problem: string };
+
+/** Cloudflare's v4 API. Overridable only so the test harness can serve a fake one. */
+export const CLOUDFLARE_API_BASE_URL = "https://api.cloudflare.com/client/v4";
 
 /** Total order on roles. `reader < writer < admin`. */
 export const ROLE_RANK: Record<Role, number> = {
@@ -192,6 +223,10 @@ export interface RuntimeConfigEnv {
   SECRET_MAX_BYTES?: string | undefined;
   ENV_MAX_SECRETS?: string | undefined;
   BODY_MAX_BYTES?: string | undefined;
+  /** Secret. Read here only for whether it is set; see `CloudflareConfig`. */
+  CF_API_TOKEN?: string | undefined;
+  CF_ACCOUNT_ID?: string | undefined;
+  CF_API_BASE_URL?: string | undefined;
 }
 
 /**
@@ -275,5 +310,46 @@ export function loadRuntimeConfig(env: RuntimeConfigEnv): RuntimeConfig {
     secretMaxBytes: numericVar(env.SECRET_MAX_BYTES, "SECRET_MAX_BYTES", SECRET_VALUE_MAX_BYTES),
     envMaxSecrets: numericVar(env.ENV_MAX_SECRETS, "ENV_MAX_SECRETS", ENV_MAX_SECRETS),
     bodyMaxBytes: numericVar(env.BODY_MAX_BYTES, "BODY_MAX_BYTES", BODY_MAX_BYTES),
+    cloudflare: cloudflareConfig(env),
   };
+}
+
+/** A Cloudflare account id: 32 lowercase hex characters. */
+const ACCOUNT_ID = /^[0-9a-f]{32}$/;
+
+function cloudflareConfig(env: RuntimeConfigEnv): CloudflareConfig {
+  const hasToken = (env.CF_API_TOKEN ?? "").trim() !== "";
+  const accountId = (env.CF_ACCOUNT_ID ?? "").trim();
+
+  if (!hasToken && accountId === "") {
+    return {
+      state: "unconfigured",
+      problem:
+        "Set the CF_API_TOKEN secret and the CF_ACCOUNT_ID var on the Worker to manage service tokens from prick.",
+    };
+  }
+  if (!hasToken) {
+    return {
+      state: "unconfigured",
+      problem:
+        "CF_ACCOUNT_ID is set but the CF_API_TOKEN secret is not. Run `wrangler secret put CF_API_TOKEN`.",
+    };
+  }
+  if (accountId === "") {
+    return {
+      state: "unconfigured",
+      problem:
+        "The CF_API_TOKEN secret is set but CF_ACCOUNT_ID is not. Set it to the account that owns the Access application.",
+    };
+  }
+  if (!ACCOUNT_ID.test(accountId)) {
+    return {
+      state: "unconfigured",
+      problem:
+        "CF_ACCOUNT_ID must be the 32-character hexadecimal account id from the Cloudflare dashboard.",
+    };
+  }
+
+  const base = (env.CF_API_BASE_URL ?? "").trim();
+  return { state: "enabled", accountId, baseUrl: base === "" ? CLOUDFLARE_API_BASE_URL : base };
 }

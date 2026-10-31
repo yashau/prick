@@ -84,7 +84,7 @@ use serde_json::Value;
 use prick_api::ops;
 use prick_api::{
     BatchRequest, Client, Config, Credential, DisplayNameChange, GrantScope, IdentityUpdate,
-    ImportFormat, ImportRequest, RevealReason, WriteMode,
+    ImportFormat, ImportRequest, NewServiceToken, RevealReason, ServiceTokenGrant, WriteMode,
 };
 use wiremock::matchers::any;
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -103,6 +103,9 @@ const OTHER_KEY: &str = "ZZOLDKEY";
 /// An identity or grant id. A syntactically valid UUIDv7.
 const UUID: &str = "00000000-0000-7000-8000-000000000000";
 
+/// A service token's client id. Body-only.
+const CLIENT_ID: &str = "e367826f93b8d71185e03fe518aff3b4.access";
+
 /// The sentinels that can appear as a whole path segment.
 const PATH_SENTINELS: [&str; 3] = [PROJECT, ENVIRONMENT, KEY];
 
@@ -120,11 +123,15 @@ const PATH_SENTINELS: [&str; 3] = [PROJECT, ENVIRONMENT, KEY];
 /// call would assert falsely, since the set comparison would then fail first
 /// and name the op. Raise it in the same change that adds the call, never
 /// ahead of one.
-const OPS_AT_LAST_REVIEW: usize = 27;
+const OPS_AT_LAST_REVIEW: usize = 35;
 
 /// The module under test, read at compile time so the list of ops comes from
-/// the code rather than from anybody's memory of it.
-const OPS_SOURCE: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/ops.rs"));
+/// the code rather than from anybody's memory of it: `ops.rs` itself, and each
+/// submodule whose ops it re-exports.
+const OPS_SOURCES: [&str; 2] = [
+    include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/ops.rs")),
+    include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/ops/service_tokens.rs")),
+];
 
 /// The methods a path item can carry. Anything else in there (`parameters`,
 /// `summary`) is not an operation.
@@ -293,6 +300,26 @@ async fn call_every_op(client: &Client) -> Vec<&'static str> {
     exercise!(called, keyring_status(client));
     exercise!(called, rekey_page(client, prick_api::REKEY_MAX_PAGE));
 
+    // Every optional field set, so the body check reads each property name off
+    // the spec.
+    let token = NewServiceToken {
+        name: "Contract test",
+        duration: Some("8760h"),
+        grant: Some(ServiceTokenGrant {
+            role: "reader",
+            scope: GrantScope::Environment { project: PROJECT, environment: ENVIRONMENT },
+            expires_at: Some(1_760_000_000_000),
+        }),
+    };
+    exercise!(called, capabilities(client));
+    exercise!(called, list_service_tokens(client));
+    exercise!(called, create_service_token(client, &token));
+    exercise!(called, rotate_service_token(client, UUID, Some(3600)));
+    exercise!(called, refresh_service_token(client, UUID));
+    exercise!(called, revoke_service_token(client, UUID));
+    exercise!(called, adopt_service_token(client, CLIENT_ID, Some("Contract test")));
+    exercise!(called, reconcile_service_tokens(client, true));
+
     called
 }
 
@@ -376,8 +403,9 @@ fn is_uuid(segment: &str) -> bool {
 
 /// Every `pub async fn` declared at the top level of `ops`.
 fn declared_ops() -> BTreeSet<&'static str> {
-    OPS_SOURCE
-        .lines()
+    OPS_SOURCES
+        .iter()
+        .flat_map(|source| source.lines())
         .filter_map(|line| line.strip_prefix("pub async fn "))
         .map(|rest| &rest[..rest.find(['(', '<']).unwrap_or(rest.len())])
         .collect()
@@ -442,12 +470,21 @@ async fn every_request_body_uses_the_field_names_the_spec_declares() {
     let routes = spec_routes(&spec);
     let observed = observe().await;
     let with_bodies = observed.iter().filter(|call| call.body.is_some()).count();
-    let mutations =
-        observed.iter().filter(|call| matches!(call.method.as_str(), "POST" | "PATCH")).count();
+    // A POST whose operation declares no body -- `service-tokens/{id}/refresh`
+    // -- is an action on a path, and sends none.
+    let mutations = observed
+        .iter()
+        .filter(|call| matches!(call.method.as_str(), "POST" | "PATCH"))
+        .filter(|call| {
+            routes
+                .get(&(call.method.clone(), call.path.clone()))
+                .is_none_or(|route| route.operation.get("requestBody").is_some())
+        })
+        .count();
     assert_eq!(
         with_bodies, mutations,
-        "every POST and PATCH carries a JSON body; if this drops to zero the checks below \
-         become vacuous rather than false"
+        "every POST and PATCH whose operation declares a body carries a JSON one; if this drops \
+         to zero the checks below become vacuous rather than false"
     );
 
     let mut checked = 0usize;

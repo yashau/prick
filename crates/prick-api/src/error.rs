@@ -45,6 +45,7 @@ pub struct ApiError {
     message: String,
     request_id: Option<String>,
     server_hint: Option<String>,
+    server_code: Option<String>,
     // Boxed so the common `ApiError` stays small; a failure carrying nine
     // optional strings by value would widen every `Result` in the crate.
     facts: Option<Box<ResponseFacts>>,
@@ -53,7 +54,14 @@ pub struct ApiError {
 impl ApiError {
     /// Builds an error of a given kind.
     pub fn new(kind: ErrorKind, message: impl Into<String>) -> Self {
-        Self { kind, message: message.into(), request_id: None, server_hint: None, facts: None }
+        Self {
+            kind,
+            message: message.into(),
+            request_id: None,
+            server_hint: None,
+            server_code: None,
+            facts: None,
+        }
     }
 
     /// Builds an error from a transport outcome.
@@ -71,6 +79,7 @@ impl ApiError {
             message: classified.message,
             request_id: facts.request_id.clone(),
             server_hint: None,
+            server_code: None,
             facts: Some(Box::new(facts)),
         }
     }
@@ -85,6 +94,7 @@ impl ApiError {
             message: message.into(),
             request_id: facts.request_id.clone(),
             server_hint: None,
+            server_code: None,
             facts: Some(Box::new(facts)),
         }
     }
@@ -106,6 +116,24 @@ impl ApiError {
     pub fn with_server_hint(mut self, hint: impl Into<String>) -> Self {
         self.server_hint = Some(hint.into());
         self
+    }
+
+    /// Attaches the `code` from the server's error envelope, such as
+    /// `SERVICE_TOKENS_UNCONFIGURED`.
+    ///
+    /// Kept apart from [`ApiError::kind`], which is this client's
+    /// classification and decides the exit code. The server's code is finer
+    /// -- several of its codes share one status -- and is what a script
+    /// branches on.
+    #[must_use]
+    pub fn with_server_code(mut self, code: impl Into<String>) -> Self {
+        self.server_code = Some(code.into());
+        self
+    }
+
+    /// The `code` the server's error envelope carried, if any.
+    pub fn server_code(&self) -> Option<&str> {
+        self.server_code.as_deref()
     }
 
     /// The classified kind.

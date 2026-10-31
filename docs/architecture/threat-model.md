@@ -49,6 +49,15 @@ a plain configuration variable rather than a token: anchoring the first
 administrator to the authority that already has total access adds no exposure,
 and a printed one-time credential would.
 
+The same argument covers the optional `CF_API_TOKEN` secret, which lets the
+Worker manage Access service tokens. Whoever can read it can already read
+`MASTER_KEY`, so it adds no root of trust for prick's data. Its one permission,
+**Access: Service Tokens → Edit**, bounds what it can do on its own: create,
+rotate and delete service tokens in one account. A token it creates holds no
+grant in prick, and does reach any other Access application in that account
+whose policy admits any service token. See
+[Configuration](/reference/configuration#what-holding-the-token-means).
+
 **Practical consequence:** the set of people who can deploy to this Cloudflare
 account _is_ the set of people who can read every secret. Treat Cloudflare
 account access as equivalent to a global admin grant, and audit it in the same

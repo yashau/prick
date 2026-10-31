@@ -6,6 +6,7 @@
   import { applyAction, enhance } from '$app/forms';
   import { refreshAll } from '$app/navigation';
   import { absoluteTime, relativeTime } from '#lib/client/format.js';
+  import { refusalMessage } from '#lib/client/forms.js';
   import IdentityCell from '#lib/components/rbac/identity-cell.svelte';
   import type { GroupRefView, IdentityView } from '#lib/components/rbac/types.js';
   import { Badge } from '#lib/components/ui/badge/index.js';
@@ -147,6 +148,8 @@
                       await refreshAll();
                       return;
                     }
+                    const refused = refusalMessage(result);
+                    if (refused !== null) toast.error('Identity not updated', { description: refused });
                     await applyAction(result);
                   };
                 }}
@@ -158,8 +161,9 @@
                   value={identity.disabled ? 'false' : 'true'}
                 />
                 <div class="flex items-center gap-2">
+                  <!-- Controlled: it shows the server's state, so a refused toggle snaps back. -->
                   <Switch
-                    checked={!identity.disabled}
+                    bind:checked={() => !identity.disabled, () => {}}
                     aria-label="{identity.disabled ? 'Enable' : 'Disable'} {identity.subject}"
                     onCheckedChange={() => forms[identity.id]?.requestSubmit()}
                   />

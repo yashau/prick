@@ -1,5 +1,5 @@
 import type { CreateGrantBody, IdentityKind, Role, UpdateIdentityBody } from "@prick/shared";
-import { count, eq, gt, isNull, max, min, or } from "drizzle-orm";
+import { and, count, eq, gt, isNotNull, isNull, max, min, or } from "drizzle-orm";
 import { unionAll } from "drizzle-orm/sqlite-core";
 
 import { resolveAuthorization } from "../auth/authorize.js";
@@ -13,6 +13,7 @@ import {
   groupMembers,
   identities,
   projects,
+  serviceTokens,
 } from "../db/schema.js";
 import { auditStatement } from "./audit.js";
 import type { CoreContext, Scope } from "./context.js";
@@ -105,6 +106,23 @@ export async function updateIdentity(
   const rows = await ctx.db.select().from(identities).where(eq(identities.id, id)).limit(1);
   const identity = rows[0];
   if (identity === undefined) throw notFound("identity");
+
+  // A revoked service token's identity stays disabled. Its Cloudflare token has
+  // been deleted, so enabling it restores nothing usable -- and if the delete
+  // failed and the token still exists, enabling it would quietly undo the
+  // revocation.
+  if (input.disabled === false) {
+    const revoked = await ctx.db
+      .select({ id: serviceTokens.id })
+      .from(serviceTokens)
+      .where(and(eq(serviceTokens.identityId, id), isNotNull(serviceTokens.revokedAt)))
+      .limit(1);
+    if (revoked[0] !== undefined) {
+      throw new PrickError("CONFLICT", "This identity belongs to a revoked service token.", {
+        hint: "A revoked token stays revoked. Create a new one with `prk access token create`.",
+      });
+    }
+  }
 
   const fields: string[] = [];
   const patch: { displayName?: string | null; disabled?: boolean; updatedAt: number } = {

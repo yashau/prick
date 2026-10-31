@@ -7,7 +7,7 @@
 
   import { applyAction, enhance } from '$app/forms';
   import { refreshAll } from '$app/navigation';
-  import type { FormErrors } from '#lib/client/forms.js';
+  import { refusalMessage, type FormErrors } from '#lib/client/forms.js';
   import GrantsTable from '#lib/components/access/grants-table.svelte';
   import CopyButton from '#lib/components/copy-button.svelte';
   import PageHeader from '#lib/components/page-header.svelte';
@@ -118,6 +118,8 @@
           await refreshAll();
           return;
         }
+        const refused = refusalMessage(result);
+        if (refused !== null) toast.error('Identity not updated', { description: refused });
         await applyAction(result);
       };
     }}

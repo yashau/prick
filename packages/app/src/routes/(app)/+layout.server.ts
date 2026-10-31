@@ -1,4 +1,4 @@
-import { listProjects } from "#lib/server/core/index.js";
+import { getCapabilities, listProjects } from "#lib/server/core/index.js";
 
 import { refuse, viewer } from "./transport";
 import type { LayoutServerLoad } from "./$types";
@@ -28,12 +28,21 @@ import type { LayoutServerLoad } from "./$types";
  * `listProjects` scopes to the visible set IN THE QUERY, so this list is also
  * what the project switcher and the command palette may show. It is not
  * filtered afterwards and must not be.
+ *
+ * `serviceTokens` is the one feature capability the shell renders: it decides
+ * whether the sidebar offers the service tokens screen, and carries the
+ * configuration hint a global administrator needs when the Worker cannot manage
+ * tokens yet. `getCapabilities` holds no secret -- it reads the runtime config
+ * and the authorization snapshot this request already resolved -- and it fills
+ * in `hint` for global administrators only, so the payload says nothing about
+ * the deployment to anyone else.
  */
 export const load: LayoutServerLoad = async ({ locals }) => {
   try {
     return {
       projects: await listProjects(locals.ctx),
       viewer: await viewer(locals.ctx),
+      serviceTokens: (await getCapabilities(locals.ctx)).features.serviceTokens,
     };
   } catch (cause) {
     refuse(locals.ctx, cause);

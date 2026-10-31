@@ -56,9 +56,11 @@
 //! exists and is readable.
 //!
 //! Windows has no mode. A new file inherits its parent's ACL, which under a
-//! user profile already grants `SYSTEM` and `Administrators`. So the DACL is
-//! replaced outright with a single entry for the current user and marked
-//! protected -- see `prick_exec::winsec` for why that lives where it does.
+//! user profile already grants `SYSTEM` and `Administrators`. So the file is
+//! created with a DACL of a single entry for the current user, marked
+//! protected, passed to `CreateFileW` itself -- again at creation, never
+//! applied afterwards. See `prick_exec::winsec` for why that lives where it
+//! does.
 
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
@@ -563,48 +565,16 @@ impl TokenStore {
         Ok(())
     }
 
-    /// Temporary file, `fsync`, rename.
+    /// Temporary file, `fsync`, rename -- through the same writer as every
+    /// other owner-only file, so the token file is born restricted too.
     fn write_atomically(&self, bytes: &[u8]) -> Result<(), AuthError> {
         let target = self.path();
-        let map = |operation: &'static str| {
-            let path = target.display().to_string();
-            move |source| AuthError::Store { operation, path: path.clone(), source }
-        };
-
         // In the same directory, so the rename stays within one filesystem and
         // is therefore atomic. A temporary directory elsewhere would make it a
         // copy, which has a window in which the file is half written.
-        let file_dir = self.file_dir();
-        let file_name = self
-            .file
-            .file_name()
-            .map_or_else(|| TOKEN_FILE_NAME.to_owned(), |name| name.to_string_lossy().into_owned());
-        let temporary = file_dir.join(format!(".{file_name}.{}.tmp", std::process::id()));
-
-        // Best effort: a leftover from a previous crash would fail `create_new`.
-        let _ = std::fs::remove_file(&temporary);
-
-        let mut file = create_private_file(&temporary).map_err(map("create"))?;
-        file.write_all(bytes).map_err(map("write"))?;
-        // Before the rename, not after: a rename that lands before the data is
-        // durable can leave an empty file, which reads as a corrupt session
-        // rather than an absent one.
-        file.sync_all().map_err(map("write"))?;
-        drop(file);
-
-        restrict_file(&temporary).map_err(map("secure"))?;
-
-        if let Err(source) = std::fs::rename(&temporary, &target) {
-            let _ = std::fs::remove_file(&temporary);
-            return Err(AuthError::Store {
-                operation: "replace",
-                path: target.display().to_string(),
-                source,
-            });
-        }
-
-        sync_dir(&file_dir).map_err(map("write"))?;
-        Ok(())
+        replace_with_private_file(&self.file_dir(), &target, bytes).map_err(|source| {
+            AuthError::Store { operation: "write", path: target.display().to_string(), source }
+        })
     }
 }
 
@@ -627,20 +597,63 @@ pub(crate) fn ensure_private_dir(dir: &Path) -> std::io::Result<()> {
 pub(crate) fn write_private_atomically(target: &Path, bytes: &[u8]) -> std::io::Result<()> {
     let dir = target.parent().unwrap_or_else(|| Path::new("."));
     ensure_private_dir(dir)?;
+    replace_with_private_file(dir, target, bytes)
+}
+
+/// Writes a file only its owner can read, atomically, into a directory the
+/// caller chose: temporary file beside the target, `fsync`, rename.
+///
+/// The directory itself is left exactly as it is. This is for a path an
+/// operator named -- `prk access token create --secret-file` -- and narrowing
+/// the permissions of their working directory would be a surprise with no
+/// benefit, since the file carries its own owner-only permissions from
+/// creation.
+///
+/// # Errors
+///
+/// The I/O error from creating, writing, restricting or renaming the file,
+/// including `NotFound` when the directory does not exist.
+pub fn write_owner_only_file(target: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    let dir = match target.parent() {
+        Some(parent) if !parent.as_os_str().is_empty() => parent,
+        _ => Path::new("."),
+    };
+    replace_with_private_file(dir, target, bytes)
+}
+
+/// The shared tail of every writer: temporary file in `dir`, born owner-only,
+/// `fsync`, rename over `target`.
+///
+/// The temporary name carries 128 random bits, so another account allowed into
+/// `dir` cannot predict it, and creation refuses an existing file, so a name
+/// planted there in advance is never opened. The token store, the profile
+/// configuration and `--secret-file` all come through here.
+fn replace_with_private_file(dir: &Path, target: &Path, bytes: &[u8]) -> std::io::Result<()> {
     let name =
         target.file_name().map_or_else(String::new, |name| name.to_string_lossy().into_owned());
-    let temporary = dir.join(format!(".{name}.{}.tmp", std::process::id()));
-    let _ = std::fs::remove_file(&temporary);
+    let temporary = dir.join(format!(".{name}.{}.tmp", random_suffix()?));
     let mut file = create_private_file(&temporary)?;
-    file.write_all(bytes)?;
-    file.sync_all()?;
+    let written = file.write_all(bytes).and_then(|()| file.sync_all());
     drop(file);
-    restrict_file(&temporary)?;
-    if let Err(err) = std::fs::rename(&temporary, target) {
+    // Removed on every failure after creation, so a half-written secret is
+    // never left behind under a name nobody will look for.
+    if let Err(err) = written.and_then(|()| std::fs::rename(&temporary, target)) {
         let _ = std::fs::remove_file(&temporary);
         return Err(err);
     }
     sync_dir(dir)
+}
+
+/// 32 random lowercase hex digits, for a temporary file's name.
+fn random_suffix() -> std::io::Result<String> {
+    let mut bytes = [0u8; 16];
+    getrandom::fill(&mut bytes)
+        .map_err(|err| std::io::Error::other(format!("no randomness available: {err}")))?;
+    Ok(bytes.iter().fold(String::with_capacity(32), |mut hex, byte| {
+        use std::fmt::Write as _;
+        let _ = write!(hex, "{byte:02x}");
+        hex
+    }))
 }
 
 /// Whether a path grants access to nobody but its owner, for `prk doctor`.
@@ -715,7 +728,14 @@ fn create_private_file(path: &Path) -> std::io::Result<std::fs::File> {
     std::fs::OpenOptions::new().write(true).create_new(true).mode(TOKEN_FILE_MODE).open(path)
 }
 
-#[cfg(not(unix))]
+/// The owner-only DACL goes to `CreateFileW` itself, so the file never carries
+/// the entries it would otherwise inherit from a directory an operator chose.
+#[cfg(windows)]
+fn create_private_file(path: &Path) -> std::io::Result<std::fs::File> {
+    prick_exec::winsec::create_owner_only_file(path)
+}
+
+#[cfg(not(any(unix, windows)))]
 fn create_private_file(path: &Path) -> std::io::Result<std::fs::File> {
     std::fs::OpenOptions::new().write(true).create_new(true).open(path)
 }
@@ -750,25 +770,6 @@ fn restrict_dir(path: &Path) -> std::io::Result<()> {
 #[cfg(not(any(unix, windows)))]
 #[allow(clippy::unnecessary_wraps, reason = "matches the platform implementations")]
 fn restrict_dir(_path: &Path) -> std::io::Result<()> {
-    Ok(())
-}
-
-/// Narrows an existing file to the owner.
-#[cfg(unix)]
-fn restrict_file(path: &Path) -> std::io::Result<()> {
-    use std::os::unix::fs::PermissionsExt as _;
-
-    std::fs::set_permissions(path, std::fs::Permissions::from_mode(TOKEN_FILE_MODE))
-}
-
-#[cfg(windows)]
-fn restrict_file(path: &Path) -> std::io::Result<()> {
-    prick_exec::winsec::restrict_to_current_user(path, prick_exec::winsec::Inheritance::ObjectOnly)
-}
-
-#[cfg(not(any(unix, windows)))]
-#[allow(clippy::unnecessary_wraps, reason = "matches the platform implementations")]
-fn restrict_file(_path: &Path) -> std::io::Result<()> {
     Ok(())
 }
 

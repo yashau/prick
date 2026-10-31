@@ -45,3 +45,21 @@ export function fieldErrors(
 
   return errors;
 }
+
+/**
+ * The message a refused form action carries, or `null` for any other result.
+ *
+ * An action result's `data` is typed loosely, so this reads `errors.form`
+ * defensively. A switch that submits a form uses it to toast the server's
+ * reason, because the page-level alert can sit off screen while the switch the
+ * user just flipped is the thing they are looking at.
+ */
+export function refusalMessage(result: { type: string; data?: unknown }): string | null {
+  if (result.type !== "failure" || typeof result.data !== "object" || result.data === null) {
+    return null;
+  }
+  const errors = (result.data as { errors?: unknown }).errors;
+  if (typeof errors !== "object" || errors === null) return null;
+  const message = (errors as FormErrors).form;
+  return typeof message === "string" && message !== "" ? message : null;
+}

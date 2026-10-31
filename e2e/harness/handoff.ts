@@ -28,6 +28,17 @@ export interface Handoff {
   storageState: Record<Role, string>;
   /** The certs URL the Worker was configured with. Asserted against in a spec. */
   certsUrl: string;
+  /**
+   * The second Worker, which manages service tokens against a fake Cloudflare
+   * API. Same Access team and keys, so every role's token and cookie work on
+   * it too; its own D1.
+   */
+  cloudflare: {
+    /** `http://127.0.0.1:<port>` of that Worker. */
+    baseUrl: string;
+    /** The fake Cloudflare API, for its `/__e2e/` control routes. */
+    apiUrl: string;
+  };
 }
 
 export function writeHandoff(handoff: Handoff): void {

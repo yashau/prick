@@ -57,6 +57,12 @@ export type AuditAction =
   | "group.grant.create"
   | "group.grant.revoke"
   | "admin.rekey"
+  | "service_token.create"
+  | "service_token.rotate"
+  | "service_token.refresh"
+  | "service_token.revoke"
+  | "service_token.adopt"
+  | "service_token.reconcile"
   /** A read or write refused before it reached the resource. */
   | "access.denied";
 
@@ -173,6 +179,25 @@ export type AuditDetail =
       kind: "group.member";
       group: string;
       subject: string;
+    }
+  | {
+      /**
+       * A Cloudflare Access service token. Names the client id and the label;
+       * there is no field for the client secret, so no edit to a call site can
+       * put one in the log.
+       */
+      kind: "service_token";
+      clientId: string;
+      name: string;
+      duration?: string;
+      /** Rotation only: how long the previous secret stays valid. */
+      graceSeconds?: number;
+      /** Reconcile only: which disagreement was repaired. */
+      drift?: "orphan" | "missing" | "revoke_incomplete";
+      /** A failed create: whether the Cloudflare token was deleted again. */
+      compensated?: boolean;
+      /** Rotation of a disabled or leaked token: whether Cloudflare re-enabled it. */
+      reenabled?: boolean;
     }
   | {
       kind: "denial";

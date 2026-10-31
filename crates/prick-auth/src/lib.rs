@@ -67,4 +67,4 @@ pub use discovery::Probe;
 pub use error::AuthError;
 pub use oauth::{LoginOptions, LoginOutcome, login};
 pub use session::{Resolved, resolve};
-pub use store::{StorageBackend, StoredSession, TokenStore, Tokens};
+pub use store::{StorageBackend, StoredSession, TokenStore, Tokens, write_owner_only_file};

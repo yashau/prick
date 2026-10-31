@@ -12,6 +12,14 @@ import {
 import { z } from "zod";
 
 import type { AuditEntryView, AuditPage } from "../core/audit.js";
+import type { Capabilities } from "../core/capabilities.js";
+import type {
+  IssuedServiceTokenResult,
+  RotatedServiceTokenResult,
+  ServiceTokenList,
+  ServiceTokenRecord,
+} from "../core/service-tokens.js";
+import type { ReconcileResult } from "../core/service-token-reconcile.js";
 import type { EnvironmentSummary } from "../core/environments.js";
 import type { GrantRecord, IdentityRecord, UnknownIdentity } from "../core/identities.js";
 import type { EffectivePermissions } from "../core/permissions.js";
@@ -535,6 +543,125 @@ export const WhoamiResponse = z
   })
   .strict();
 
+// ---------------------------------------------------------------------------
+// Capabilities
+// ---------------------------------------------------------------------------
+
+const FeatureCapabilityResponse = z
+  .object({
+    state: z.enum(["enabled", "unavailable"]),
+    /** Whether THIS caller may use the feature. */
+    allowed: z.boolean(),
+    /** Global administrators only: why the feature is unavailable. */
+    reason: z.enum(["unconfigured"]).nullable(),
+    /** Global administrators only: what to set to enable it. */
+    hint: z.string().nullable(),
+  })
+  .strict();
+
+export const CapabilitiesResponse = z
+  .object({
+    api: z.literal(1),
+    version: z.string(),
+    instance: z
+      .string()
+      .regex(/^[0-9a-f]{32}$/)
+      .nullable(),
+    limits: z
+      .object({
+        secretMaxBytes: z.number().int().positive(),
+        envMaxSecrets: z.number().int().positive(),
+        bodyMaxBytes: z.number().int().positive(),
+      })
+      .strict(),
+    features: z.object({ serviceTokens: FeatureCapabilityResponse }).strict(),
+  })
+  .strict();
+
+// ---------------------------------------------------------------------------
+// Service tokens
+// ---------------------------------------------------------------------------
+
+const ServiceTokenCloudflareResponse = z
+  .object({
+    expiresAt: EpochMillis.nullable(),
+    lastSeenAt: EpochMillis.nullable(),
+    enabled: z.boolean(),
+    duration: z.string().nullable(),
+    leakReportedAt: EpochMillis.nullable(),
+  })
+  .strict();
+
+export const ServiceTokenRecordResponse = z
+  .object({
+    id: Id,
+    identityId: Id,
+    clientId: z.string(),
+    name: z.string().nullable(),
+    cloudflareId: z.string(),
+    cloudflareName: z.string(),
+    adopted: z.boolean(),
+    disabled: z.boolean(),
+    status: z.enum(["active", "revoked", "missing"]),
+    createdAt: EpochMillis,
+    createdBy: z.string(),
+    rotatedAt: EpochMillis.nullable(),
+    revokedAt: EpochMillis.nullable(),
+    revokedBy: z.string().nullable(),
+    cloudflare: ServiceTokenCloudflareResponse.nullable(),
+  })
+  .strict();
+
+export const ServiceTokenListResponse = z
+  .object({
+    tokens: z.array(ServiceTokenRecordResponse),
+    cloudflare: z.enum(["ok", "unavailable"]),
+  })
+  .strict();
+
+export const IssuedServiceTokenResponse = z
+  .object({
+    token: ServiceTokenRecordResponse,
+    grant: GrantRecordResponse.nullable(),
+    clientId: z.string(),
+    /** Shown once. prick stores no copy and no derivative of it. */
+    clientSecret: z.string(),
+  })
+  .strict();
+
+export const RotatedServiceTokenResponse = z
+  .object({
+    token: ServiceTokenRecordResponse,
+    clientId: z.string(),
+    /** Shown once. prick stores no copy and no derivative of it. */
+    clientSecret: z.string(),
+    /** When the previous secret stops working; `null` means it already has. */
+    previousSecretExpiresAt: EpochMillis.nullable(),
+    /** Set when the rotation succeeded but left something for the operator to do. */
+    warning: z.string().nullable(),
+  })
+  .strict();
+
+export const ReconcileResultResponse = z
+  .object({
+    applied: z.boolean(),
+    entries: z.array(
+      z
+        .object({
+          kind: z.enum(["orphan", "missing", "revoke_incomplete", "foreign"]),
+          cloudflareId: z.string(),
+          clientId: z.string(),
+          name: z.string().nullable(),
+          applied: z.boolean(),
+          skipped: z.boolean(),
+          reason: z.string().nullable(),
+          error: z.string().nullable(),
+        })
+        .strict(),
+    ),
+  })
+  .strict();
+
 export const ErrorResponse = z
   .object({
     code: z.string(),
@@ -579,6 +706,12 @@ export type ResponseSchemasDescribeCore = [
   Assert<Same<AuditEntryView, z.infer<typeof AuditEntryResponse>>>,
   Assert<Same<AuditPage, z.infer<typeof AuditPageResponse>>>,
   Assert<Same<KeyringStatus, z.infer<typeof KeyringStatusResponse>>>,
+  Assert<Same<Capabilities, z.infer<typeof CapabilitiesResponse>>>,
+  Assert<Same<ServiceTokenRecord, z.infer<typeof ServiceTokenRecordResponse>>>,
+  Assert<Same<ServiceTokenList, z.infer<typeof ServiceTokenListResponse>>>,
+  Assert<Same<IssuedServiceTokenResult, z.infer<typeof IssuedServiceTokenResponse>>>,
+  Assert<Same<RotatedServiceTokenResult, z.infer<typeof RotatedServiceTokenResponse>>>,
+  Assert<Same<ReconcileResult, z.infer<typeof ReconcileResultResponse>>>,
 ];
 
 /** The coerced query schema still produces exactly what `queryAudit` accepts. */

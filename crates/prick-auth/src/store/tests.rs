@@ -116,11 +116,13 @@ fn a_leftover_temporary_file_does_not_block_a_save() {
     let (_dir, store) = store();
     store.save(&session()).expect("first save");
 
+    // The name a build that used the process id would have chosen. Every
+    // temporary name is random now, so a leftover never collides.
     let stale = store.dir().join(format!(".{TOKEN_FILE_NAME}.{}.tmp", std::process::id()));
     std::fs::write(&stale, b"leftover from a crash").expect("write");
 
     store.save(&session()).expect("a stale temporary file must not wedge the store");
-    assert!(!stale.exists());
+    assert!(store.load().expect("load").is_some());
 }
 
 #[test]
@@ -463,4 +465,91 @@ fn a_loose_file_is_reported_as_a_finding() {
     std::fs::set_permissions(store.path(), std::fs::Permissions::from_mode(0o644)).expect("chmod");
 
     assert!(!store.is_owner_only().expect("readable"), "0644 was not reported as a finding");
+}
+
+#[test]
+fn an_operator_named_file_is_owner_only_and_replaces_what_was_there() {
+    let dir = tempfile::tempdir().expect("a temporary directory");
+    let target = dir.path().join("client-secret");
+    std::fs::write(&target, b"the previous secret").expect("an existing file");
+
+    write_owner_only_file(&target, b"the new secret").expect("the write succeeds");
+
+    assert_eq!(std::fs::read(&target).expect("readable"), b"the new secret");
+    assert!(is_path_owner_only(&target).expect("metadata"), "the secret file is owner-only");
+    let leftovers: Vec<_> = std::fs::read_dir(dir.path())
+        .expect("listable")
+        .filter_map(Result::ok)
+        .filter(|entry| entry.file_name().to_string_lossy().ends_with(".tmp"))
+        .collect();
+    assert!(leftovers.is_empty(), "no temporary file is left behind: {leftovers:?}");
+}
+
+#[test]
+fn an_operator_named_file_leaves_its_directory_alone() {
+    let dir = tempfile::tempdir().expect("a temporary directory");
+    let before = is_path_owner_only(dir.path()).expect("metadata");
+
+    write_owner_only_file(&dir.path().join("secret"), b"x").expect("the write succeeds");
+
+    assert_eq!(
+        is_path_owner_only(dir.path()).expect("metadata"),
+        before,
+        "the directory's permissions are the operator's, not this function's"
+    );
+}
+
+#[test]
+fn an_operator_named_file_in_a_missing_directory_fails_without_creating_it() {
+    let dir = tempfile::tempdir().expect("a temporary directory");
+    let missing = dir.path().join("absent");
+    let err = write_owner_only_file(&missing.join("secret"), b"x").expect_err("no directory");
+    assert_eq!(err.kind(), std::io::ErrorKind::NotFound);
+    assert!(!missing.exists());
+}
+
+/// `--secret-file` into a directory whose new files inherit an `Everyone` read
+/// entry: the secret file carries the owner's entry alone, protected, and no
+/// temporary file is left behind under any name.
+#[cfg(windows)]
+#[test]
+fn an_operator_named_file_ignores_a_directory_that_grants_everyone_read() {
+    use prick_exec::winsec::{dacl_sddl, dacl_summary};
+
+    let dir = tempfile::tempdir().expect("a temporary directory");
+    let granted = std::process::Command::new("icacls")
+        .arg(dir.path())
+        .args(["/grant", "*S-1-1-0:(OI)(CI)(R)"])
+        .output()
+        .expect("icacls runs");
+    assert!(granted.status.success(), "icacls failed: {granted:?}");
+
+    let control = dir.path().join("control");
+    std::fs::write(&control, b"x").expect("write");
+    let inherited = dacl_sddl(&control).expect("the control's DACL");
+    assert!(inherited.contains("ID;") && inherited.contains(";WD)"), "{inherited}");
+    std::fs::remove_file(&control).expect("remove the control");
+
+    let target = dir.path().join("client-secret");
+    write_owner_only_file(&target, b"the secret").expect("the write succeeds");
+
+    // Structural, not SDDL: SDDL renders some SIDs as aliases (`LA`, `BA`, ...)
+    // depending on the account the test runs as.
+    let summary = dacl_summary(&target).expect("the secret's DACL");
+    assert!(summary.is_owner_only(), "{summary:?} ({})", dacl_sddl(&target).unwrap_or_default());
+    let names: Vec<String> = std::fs::read_dir(dir.path())
+        .expect("listable")
+        .filter_map(Result::ok)
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(names, ["client-secret"], "only the secret file remains");
+}
+
+#[test]
+fn temporary_names_are_unpredictable() {
+    let first = random_suffix().expect("randomness");
+    let second = random_suffix().expect("randomness");
+    assert_eq!(first.len(), 32);
+    assert!(first.bytes().all(|byte| byte.is_ascii_hexdigit()), "{first}");
+    assert_ne!(first, second);
 }

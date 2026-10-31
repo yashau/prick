@@ -237,10 +237,11 @@ everyone who clones. `prk profile pin --local` writes it.
 
 Installed with `wrangler secret put`, never written in `wrangler.jsonc`.
 
-| Secret           | Required               | Format                                                          |
-| ---------------- | ---------------------- | --------------------------------------------------------------- |
-| `MASTER_KEY`     | Yes                    | Base64 of **exactly 32 bytes**                                  |
-| `MASTER_KEY_OLD` | Only during a rotation | One or more retired keys, comma-separated, each the same format |
+| Secret           | Required               | Format                                                                                    |
+| ---------------- | ---------------------- | ----------------------------------------------------------------------------------------- |
+| `MASTER_KEY`     | Yes                    | Base64 of **exactly 32 bytes**                                                            |
+| `MASTER_KEY_OLD` | Only during a rotation | One or more retired keys, comma-separated, each the same format                           |
+| `CF_API_TOKEN`   | No                     | A Cloudflare account API token; see [Service token management](#service-token-management) |
 
 ```bash
 openssl rand -base64 32
@@ -289,16 +290,18 @@ Plain configuration in `packages/app/wrangler.jsonc`. All are strings; the
 Worker parses them once at the edge, so no route ever compares a number to the
 string `"500"`.
 
-| Var                  | Required    | Default                    | Meaning                                                                                          |
-| -------------------- | ----------- | -------------------------- | ------------------------------------------------------------------------------------------------ |
-| `ACCESS_TEAM`        | Yes         | —                          | The `<team>` in `https://<team>.cloudflareaccess.com`. Used to build the issuer and the JWKS URL |
-| `ACCESS_AUD`         | Yes         | —                          | The Access application's Audience (AUD) tag                                                      |
-| `BOOTSTRAP_ADMINS`   | Effectively | empty                      | Comma-separated admin emails, evaluated live                                                     |
-| `REQUIRE_CTX_ACCESS` | No          | `false`                    | Defence-in-depth assertion on Access-on-Workers                                                  |
-| `SECRET_MAX_BYTES`   | No          | `65536`                    | Maximum size of one decrypted value, in UTF-8 bytes                                              |
-| `ENV_MAX_SECRETS`    | No          | `500`                      | Hard cap on secrets per environment                                                              |
-| `BODY_MAX_BYTES`     | No          | `1048576`                  | Maximum accepted request body                                                                    |
-| `ACCESS_CERTS_URL`   | No          | derived from `ACCESS_TEAM` | Overrides the JWKS URL. Exists so the test harness can serve its own keys                        |
+| Var                  | Required    | Default                    | Meaning                                                                                                                            |
+| -------------------- | ----------- | -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `ACCESS_TEAM`        | Yes         | —                          | The `<team>` in `https://<team>.cloudflareaccess.com`. Used to build the issuer and the JWKS URL                                   |
+| `ACCESS_AUD`         | Yes         | —                          | The Access application's Audience (AUD) tag                                                                                        |
+| `BOOTSTRAP_ADMINS`   | Effectively | empty                      | Comma-separated admin emails, evaluated live                                                                                       |
+| `REQUIRE_CTX_ACCESS` | No          | `false`                    | Defence-in-depth assertion on Access-on-Workers                                                                                    |
+| `SECRET_MAX_BYTES`   | No          | `65536`                    | Maximum size of one decrypted value, in UTF-8 bytes                                                                                |
+| `ENV_MAX_SECRETS`    | No          | `500`                      | Hard cap on secrets per environment                                                                                                |
+| `BODY_MAX_BYTES`     | No          | `1048576`                  | Maximum accepted request body                                                                                                      |
+| `ACCESS_CERTS_URL`   | No          | derived from `ACCESS_TEAM` | Overrides the JWKS URL. Exists so the test harness can serve its own keys                                                          |
+| `CF_ACCOUNT_ID`      | No          | —                          | The 32-character hex id of the account that owns the Access application. See [Service token management](#service-token-management) |
+| `CF_API_BASE_URL`    | No          | the Cloudflare API         | Overrides the Cloudflare API base URL. Exists so the tests can serve a stand-in API                                                |
 
 A numeric var that is present but unparseable is a **refusal**, not a silent
 fallback. `ENV_MAX_SECRETS: "5OO"` (letter O) quietly falling back to 500 would
@@ -334,6 +337,86 @@ would break every CI client at once with no local signal.
 The build wraps the Worker entry so that both the API and the admin UI see the
 runtime's own per-request context, including `ctx.access`. Under `vite dev` no
 such context exists, so the flag set to `"true"` refuses every request there.
+
+## Service token management
+
+With the `CF_API_TOKEN` secret and the `CF_ACCOUNT_ID` var set, the Worker
+creates, rotates, refreshes and deletes Cloudflare Access service tokens itself,
+and `prk access token` drives it. The Cloudflare credential lives in the Worker;
+`prk` never holds one. See
+[Access control](/guides/access-control#service-tokens) for what the feature
+does.
+
+### The API token
+
+Create it in the Cloudflare dashboard under **Manage account → Account API
+tokens → Create token**, with a custom template:
+
+| Setting           | Value                                                                         |
+| ----------------- | ----------------------------------------------------------------------------- |
+| Permissions       | **Account → Access: Service Tokens → Edit**, and nothing else                 |
+| Account resources | The one account that owns the prick Access application                        |
+| Client IP filter  | None. A Worker's egress addresses are not fixed, so a filter breaks the token |
+
+The API reference names the permission **Access: Service Tokens Write**. It needs
+no zone permission and no permission over Access applications or policies: the
+Worker never edits a policy.
+
+Install it as a secret, and put the account id beside the other vars:
+
+```bash
+pnpm --dir packages/app exec wrangler secret put CF_API_TOKEN
+```
+
+```jsonc title="packages/app/wrangler.jsonc"
+"CF_ACCOUNT_ID": "0123456789abcdef0123456789abcdef"
+```
+
+The account id is the 32-character hex string on the account's overview page in
+the dashboard. It is not a secret.
+
+### The Access policy
+
+The one dashboard visit. On the prick Access application, attach a separate
+**reusable** policy, made under **Zero Trust → Access controls → Policies**,
+with the action **Service Auth** and an include rule using **Any Access Service
+Token**, next to the people's Allow policy. Access evaluates Service Auth
+policies first, so the two do not interfere.
+
+That policy admits every service token in the account to the Worker, and prick's
+grants decide from there: a token holds nothing until it is granted, and one
+prick created is granted only on the deployment that created it. It works with
+strict service token authentication, which is on by default for Zero Trust
+organizations created on or after 2026-10-05. Tokens made by hand with a policy
+naming each one keep working beside it.
+
+### When it is absent, half set, or refused
+
+The feature is optional, and a problem with it never affects anything else in
+the Worker.
+
+| State                                    | What happens                                                                                                |
+| ---------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| Neither set, or only one of the two      | Every `/service-tokens` route answers `503 SERVICE_TOKENS_UNCONFIGURED`, with a hint naming what is missing |
+| `CF_ACCOUNT_ID` is not 32 hex characters | The same, with a hint saying so                                                                             |
+| Cloudflare refuses the token             | `503 SERVICE_TOKENS_UNCONFIGURED`, with a hint naming the permission the token needs                        |
+| The Cloudflare API is failing            | `502 UPSTREAM_FAILED`. Usually transient; the hint says whether anything was left half done                 |
+
+The `503` comes after the global admin check, so a caller who is not a global
+admin gets the same `403` either way. `GET /api/v1/capabilities` reports the
+state without the round trip, and fills in the reason for global admins only;
+`prk doctor` shows it.
+
+### What holding the token means
+
+Whoever can deploy the Worker can already read `MASTER_KEY`, and with it every
+value prick stores. Keeping `CF_API_TOKEN` in the same place adds no new root of
+trust for prick's data. The single permission bounds what the token itself can
+do to creating, rotating and deleting service tokens in that one account: it
+cannot change which tokens an Access policy admits, and it reaches no zone. A
+token it creates reaches prick holding no grant. It does reach any other Access
+application in the account whose policy admits any service token, so give those
+applications the same consideration.
 
 ## `wrangler.jsonc`
 

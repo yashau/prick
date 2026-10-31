@@ -118,3 +118,15 @@ export const ASSERTION_COOKIE = "CF_Authorization";
  * It carries no authority. Forging it changes which colours are painted.
  */
 export const THEME_COOKIE = "prick_theme";
+
+/**
+ * The Cloudflare account the service-token Worker is configured with. 32
+ * lowercase hex characters, the shape the Worker requires of `CF_ACCOUNT_ID`.
+ */
+export const CF_ACCOUNT_ID = "0e2e5e7c1c0ffee0a11ce5e2e5e7c1c0";
+
+/**
+ * The `CF_API_TOKEN` that Worker holds. The fake Cloudflare API accepts this
+ * bearer token and refuses every other.
+ */
+export const CF_API_TOKEN = "prick-e2e-fake-cloudflare-api-token";

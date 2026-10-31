@@ -10,7 +10,7 @@
 //! | [`cmdline`] | Escaping arguments for a Windows batch shim |
 //! | [`error`] | Why a launch did not happen, and what a shell would have exited with |
 //! | `winjob` | Windows job objects and console control handling |
-//! | `winsec` | Restricting a file to the current user, for `prick-auth` |
+//! | `winsec` | Creating or restricting a file owner-only, for `prick-auth` |
 //!
 //! # Why this crate can be small
 //!

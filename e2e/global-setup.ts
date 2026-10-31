@@ -45,6 +45,7 @@ import { writeFile } from "node:fs/promises";
 import { generateAccessKey, mintServiceToken, mintUserToken } from "./harness/access";
 import { ApiClient, environmentPath, type Whoami } from "./harness/api";
 import { assertUsable, createSelfSignedCertificate } from "./harness/certificate";
+import { startFakeCloudflareApi } from "./harness/cloudflare-api";
 import {
   MASTER_KEY,
   ROLES,
@@ -54,6 +55,8 @@ import {
   SUBJECTS,
   TOKEN_EMAILS,
   ASSERTION_COOKIE,
+  CF_ACCOUNT_ID,
+  CF_API_TOKEN,
   type Role,
 } from "./harness/constants";
 import { writeHandoff, type Handoff } from "./harness/handoff";
@@ -63,6 +66,7 @@ import {
   applyMigrations,
   applySeed,
   buildWorker,
+  CLOUDFLARE_WORKER,
   findFreePort,
   killTree,
   resetWorkDirectory,
@@ -104,28 +108,78 @@ export default async function globalSetup(_config: FullConfig): Promise<() => Pr
   const jwks = await startJwksOrigin(certificate, accessKey.jwksDocument);
   note(`mock Access JWKS at ${jwks.certsUrl}`);
 
+  // --- The fake Cloudflare API, for the service-token Worker --------------
+  const cloudflareApi = await startFakeCloudflareApi({
+    apiToken: CF_API_TOKEN,
+    accountId: CF_ACCOUNT_ID,
+  });
+  note(`fake Cloudflare API at ${cloudflareApi.baseUrl}`);
+
   // --- Worker configuration, derived from the deployed one -----------------
   await writeFile(PATHS.workerConfig, await buildWorkerConfig({ certsUrl: jwks.certsUrl }), "utf8");
   await writeFile(PATHS.devVars, buildDevVars(MASTER_KEY), "utf8");
 
-  // --- An empty D1, migrated and seeded, BEFORE anything opens it ----------
-  note("applying migrations …");
-  await applyMigrations();
-  note("applying e2e/seed.sql …");
-  await applySeed();
+  /*
+   * The second Worker: identical, plus a Cloudflare account and API token
+   * pointed at the fake. The primary Worker stays without them, so the
+   * unconfigured state is what every other spec sees and the service tokens
+   * spec can assert on both.
+   */
+  await writeFile(
+    PATHS.cloudflareWorkerConfig,
+    await buildWorkerConfig({
+      certsUrl: jwks.certsUrl,
+      extraVars: { CF_ACCOUNT_ID, CF_API_BASE_URL: cloudflareApi.baseUrl },
+    }),
+    "utf8",
+  );
+  await writeFile(PATHS.cloudflareDevVars, buildDevVars(MASTER_KEY, { CF_API_TOKEN }), "utf8");
 
-  // --- The Worker ----------------------------------------------------------
+  // --- An empty D1 per Worker, migrated and seeded, BEFORE anything opens it
+  note("applying migrations …");
+  await Promise.all([applyMigrations(), applyMigrations(CLOUDFLARE_WORKER)]);
+  note("applying e2e/seed.sql …");
+  await Promise.all([applySeed(), applySeed(CLOUDFLARE_WORKER)]);
+
+  // --- The Workers ---------------------------------------------------------
   const port = await findFreePort();
-  note(`starting wrangler dev on port ${String(port)} …`);
-  const { server, child } = await startDevServer({
-    port,
-    certificatePath: PATHS.certificate,
-  });
+  const cloudflarePort = await findFreePort();
+  note(
+    `starting wrangler dev on ports ${String(port)} and ${String(cloudflarePort)} (service tokens) …`,
+  );
+  const booted = await Promise.allSettled([
+    startDevServer({ port, certificatePath: PATHS.certificate }),
+    startDevServer({
+      port: cloudflarePort,
+      certificatePath: PATHS.certificate,
+      target: CLOUDFLARE_WORKER,
+    }),
+  ]);
+  const [primarySettled, cloudflareSettled] = booted;
+
+  // One Worker that booted while the other failed is stopped before the error
+  // surfaces, so a failed setup leaves no `workerd` holding the work directory.
+  if (primarySettled.status === "rejected" || cloudflareSettled.status === "rejected") {
+    for (const outcome of booted) {
+      if (outcome.status === "fulfilled") {
+        await killTree(outcome.value.server.pid);
+        outcome.value.child.kill();
+      }
+    }
+    await Promise.all([jwks.close(), cloudflareApi.close()]);
+    throw primarySettled.status === "rejected"
+      ? primarySettled.reason
+      : (cloudflareSettled as PromiseRejectedResult).reason;
+  }
+
+  const { server, child } = primarySettled.value;
+  const cloudflare = cloudflareSettled.value;
 
   const teardown = async (): Promise<void> => {
-    await killTree(server.pid);
+    await Promise.all([killTree(server.pid), killTree(cloudflare.server.pid)]);
     child.kill();
-    await jwks.close();
+    cloudflare.child.kill();
+    await Promise.all([jwks.close(), cloudflareApi.close()]);
   };
 
   try {
@@ -190,6 +244,9 @@ export default async function globalSetup(_config: FullConfig): Promise<() => Pr
       }
     }
 
+    // The service-token Worker verifies the same tokens against the same JWKS.
+    await verifyRole(new ApiClient(cloudflare.server.baseUrl, tokens.admin), "admin");
+
     if (jwks.hits() === 0) {
       throw new Error(
         "Four tokens verified without the mock Access origin being fetched once. " +
@@ -215,6 +272,7 @@ export default async function globalSetup(_config: FullConfig): Promise<() => Pr
       tokens,
       storageState,
       certsUrl: jwks.certsUrl,
+      cloudflare: { baseUrl: cloudflare.server.baseUrl, apiUrl: cloudflareApi.baseUrl },
     };
     writeHandoff(handoff);
 

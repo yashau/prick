@@ -2,11 +2,12 @@ import { Hono } from "hono";
 
 import { APP_VERSION } from "../../../version.js";
 import { resolveEffectiveRole } from "../../auth/authorize.js";
+import { getCapabilities } from "../../core/capabilities.js";
 import { readInstanceId } from "../../core/instance.js";
 import { core } from "../context.js";
 import type { ApiEnv } from "../env.js";
 import { describe, jsonResponse } from "../openapi.js";
-import { HealthResponse, WhoamiResponse } from "../schemas.js";
+import { CapabilitiesResponse, HealthResponse, WhoamiResponse } from "../schemas.js";
 
 /**
  * The two endpoints that describe the server rather than the data.
@@ -105,6 +106,33 @@ export function whoamiRoutes(): Hono<ApiEnv> {
         instance: await readInstanceId(ctx.db),
       });
     },
+  );
+
+  return app;
+}
+
+/**
+ * What this server can do, and what the caller may do with it.
+ *
+ * Authenticated, like everything except `/health`: it names the instance and,
+ * to a global admin, how the deployment is configured.
+ */
+export function capabilitiesRoutes(): Hono<ApiEnv> {
+  const app = new Hono<ApiEnv>();
+
+  app.get(
+    "/capabilities",
+    describe({
+      summary: "What this server can do",
+      description:
+        "For clients to decide, before sending anything, whether a feature is there and whether the caller may use it. Not a security boundary: every route still enforces its own authorization.\n\n`features.<name>.allowed` is whether **this caller** may use the feature. `reason` and `hint` are filled in for global administrators only — they describe how the deployment is configured, which nobody else needs to know — and are `null` for everyone else, whose unusable features read `unavailable` whatever the configuration.\n\n`limits` are the caps this deployment enforces, so a client can refuse an oversized write locally and name the offending key. `instance` is the same value as the `Prick-Instance` header.\n\nNew features add keys to `features`; clients ignore keys they do not know. `api` changes only with a breaking change to this API.",
+      tags: ["meta"],
+      operationId: "getCapabilities",
+      responses: {
+        200: jsonResponse("This server's capabilities, for this caller.", CapabilitiesResponse),
+      },
+    }),
+    async (c) => c.json(await getCapabilities(core(c))),
   );
 
   return app;

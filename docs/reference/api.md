@@ -103,8 +103,10 @@ Three things happen on every authenticated request, in this order:
    admin grant exists. Failing closed beats an installation that answers
    requests, denies every privileged action, and gives no indication why.
 3. The identity row is created or its `last_seen_at` touched. This is what makes
-   a denied service token grantable at all — Access issues the tokens, so the
-   first request from one is the only introduction there will ever be.
+   a denied service token grantable at all: a token made in the Cloudflare
+   dashboard is unknown to prick until its first request. A token created
+   through [`POST /service-tokens`](#service-tokens) has its identity from the
+   start.
 
 :::note[Unknown endpoints under `/api/v1` answer 401, not 404]
 Authentication is mounted ahead of routing for everything under `/api/v1`, so an anonymous caller is refused
@@ -277,6 +279,7 @@ that matters.
 | ------ | --------------- | ------------------------------------------------------------------------- |
 | `GET`  | `/health`       | Unauthenticated. `{ "service": "prick", "status": "ok", "version": "…" }` |
 | `GET`  | `/whoami`       | The resolved identity, the caller's **global** role, and `instance`       |
+| `GET`  | `/capabilities` | What this server supports, and what this caller may use                   |
 | `GET`  | `/openapi.json` | Unauthenticated. Describes shape; carries no data                         |
 | `GET`  | `/docs`         | Unauthenticated. Scalar viewer                                            |
 
@@ -308,6 +311,45 @@ succeeded, which is what makes `ok` mean something: an installation whose
 `instance` is the deployment's instance id, the same value as the
 [`Prick-Instance`](#prick-instance) header, or `null` when the database holds
 no instance row. `/health` never carries it.
+
+`/capabilities` answers any authenticated caller:
+
+```json
+{
+  "api": 1,
+  "version": "0.0.0-dev",
+  "instance": "3f9c0a6e1b7d4e2a8c5f0b9d7e6a1c43",
+  "limits": { "secretMaxBytes": 65536, "envMaxSecrets": 500, "bodyMaxBytes": 1048576 },
+  "features": {
+    "serviceTokens": {
+      "state": "unavailable",
+      "allowed": false,
+      "reason": "unconfigured",
+      "hint": "Set the CF_API_TOKEN secret and the CF_ACCOUNT_ID var on the Worker to manage service tokens from prick."
+    }
+  }
+}
+```
+
+It exists so a client can decide before sending anything whether a feature is
+there and whether the caller may use it. Service-token management depends on
+how a deployment is configured rather than on which release it runs, so no
+version number can answer that.
+
+- `features.<name>.state` is `enabled` or `unavailable`; `allowed` is whether
+  **this caller** may use it.
+- `reason` and `hint` are filled in for global admins only. Whether the Worker
+  holds a Cloudflare API token is operational detail, so everyone else reads
+  `unavailable` with both `null` for a feature they cannot use, whatever the
+  configuration.
+- `limits` are the caps this deployment enforces, so a client can refuse an
+  oversized write locally and name the offending key.
+- `api` changes only with a breaking change to this API. New features add keys
+  to `features`, and clients ignore keys they do not know.
+
+It is not a security boundary. Every route still enforces its own
+authorization, and a client that ignores `/capabilities` gets the same `403` or
+`503` it would have got anyway.
 
 ### Projects
 
@@ -448,6 +490,63 @@ redeploying — which is not a decision a confirmation dialog can make for you.
 "staging deploy" by looking at it, so the denial _is_ the introduction. The rows
 carry no id; match `subject` against `GET /identities` to obtain the `identity_id`
 a grant needs.
+
+### Service tokens
+
+Cloudflare Access service tokens, created and managed by the Worker with its
+`CF_API_TOKEN` secret. See
+[Configuration](/reference/configuration#service-token-management) and
+[Access control](/guides/access-control#service-tokens).
+
+| Method   | Path                           | Requires         | Returns a secret |
+| -------- | ------------------------------ | ---------------- | ---------------- |
+| `GET`    | `/service-tokens`              | **global** admin | no               |
+| `POST`   | `/service-tokens`              | **global** admin | **yes**, once    |
+| `POST`   | `/service-tokens/adopt`        | **global** admin | no               |
+| `POST`   | `/service-tokens/reconcile`    | **global** admin | no               |
+| `POST`   | `/service-tokens/{id}/rotate`  | **global** admin | **yes**, once    |
+| `POST`   | `/service-tokens/{id}/refresh` | **global** admin | no               |
+| `DELETE` | `/service-tokens/{id}`         | **global** admin | no               |
+
+Every route checks global admin first, then whether the feature is configured:
+without `CF_API_TOKEN` and `CF_ACCOUNT_ID`, or with a token Cloudflare refuses,
+it answers `503 SERVICE_TOKENS_UNCONFIGURED` with a hint naming what is missing.
+The order means a caller who is not a global admin learns nothing about the
+configuration. A failing Cloudflare API is `502 UPSTREAM_FAILED`.
+
+`POST /service-tokens` asks Cloudflare for the token, then records its identity
+— subject = the client id, display name = `name` — and the optional `grant`, in
+one transaction with their audit rows. The token's first request is therefore
+already authorized. The client secret is in the `201` response and nowhere else:
+prick stores no copy and no derivative of it. If the transaction fails after
+Cloudflare issued the token, the token is deleted again before the error is
+returned. In Cloudflare it is named `prick:<instance id>:<id>`.
+
+`POST /service-tokens/{id}/rotate` issues a new secret for the same client id,
+so the identity and its grants are unchanged. `grace_seconds` keeps the previous
+secret valid that long, at most 30 days; `0`, the default, ends it at once.
+
+The two responses that carry a client secret are `no-store`, applied by path
+ahead of the handlers, the same mechanism the secret export uses.
+
+`DELETE /service-tokens/{id}` disables the identity and marks the record
+revoked in one transaction, then deletes the token from Cloudflare. If that
+delete fails, the response is `502` and the token, already refused by prick, is
+finished by `POST /service-tokens/reconcile`. The grants are kept as a record.
+The `409 LAST_ADMIN` guard applies.
+
+`POST /service-tokens/reconcile` reports `orphan`, `missing`,
+`revoke_incomplete` and `foreign` entries, and with `apply: true` repairs all
+but `foreign`, which belongs to another deployment and is never touched.
+
+`GET /service-tokens` lists every managed token, revoked ones included, each
+with Cloudflare's live view of it. When Cloudflare cannot be asked, the list
+says `cloudflare: "unavailable"`, each record's `cloudflare` is `null`, and no
+record is reported `missing`.
+
+Every mutation writes an audit row: `service_token.create`, `.rotate`,
+`.refresh`, `.revoke`, `.adopt` or `.reconcile`, plus `grant.create` for a grant
+made at create time.
 
 ### Groups
 
@@ -625,27 +724,29 @@ nothing has established what it contains.
 
 ### Codes and statuses
 
-| Code                            | Status | Meaning                                                               |
-| ------------------------------- | ------ | --------------------------------------------------------------------- |
-| `BAD_REQUEST`                   | 400    | Malformed request, or a precondition this API cannot express          |
-| `UNAUTHENTICATED`               | 401    | No valid Access assertion                                             |
-| `FORBIDDEN`                     | 403    | Authenticated, but no grant covers this scope                         |
-| `NOT_FOUND`                     | 404    | Absent **or** invisible — deliberately indistinguishable              |
-| `CONFLICT`                      | 409    | Uniqueness violation                                                  |
-| `VERSION_CONFLICT`              | 409    | Lost a race on the version uniqueness constraint, twice               |
-| `LAST_ADMIN`                    | 409    | Refusing to revoke the last global administrator                      |
-| `PRECONDITION_FAILED`           | 412    | `If-Match`/`expected_rev` did not match. The environment is unchanged |
-| `PAYLOAD_TOO_LARGE`             | 413    | Over a configured byte or count limit                                 |
-| `UNSUPPORTED_MEDIA_TYPE`        | 415    | A body declared a media type other than `application/json`            |
-| `VALIDATION_FAILED`             | 422    | Schema rejection, including an unknown field                          |
-| `RATE_LIMITED`                  | 429    | Slow down                                                             |
-| `INTERNAL`                      | 500    | Unclassified failure                                                  |
-| `DECRYPT_FAILED`                | 500    | Authenticated decryption failed. Never swallowed                      |
-| `UNKNOWN_KID`                   | 500    | The envelope names a master key the ring does not hold                |
-| `SERVER_MISCONFIGURED`          | 500    | Fail-closed configuration error, e.g. an invalid `MASTER_KEY`         |
-| `NOT_IMPLEMENTED`               | 501    | The route exists but the behaviour does not                           |
-| `NO_ADMINS_CONFIGURED`          | 503    | Neither `BOOTSTRAP_ADMINS` nor a usable global admin grant exists     |
-| `IDENTITY_PROVIDER_UNAVAILABLE` | 503    | Cloudflare Access is unreachable or degraded right now                |
+| Code                            | Status | Meaning                                                                         |
+| ------------------------------- | ------ | ------------------------------------------------------------------------------- |
+| `BAD_REQUEST`                   | 400    | Malformed request, or a precondition this API cannot express                    |
+| `UNAUTHENTICATED`               | 401    | No valid Access assertion                                                       |
+| `FORBIDDEN`                     | 403    | Authenticated, but no grant covers this scope                                   |
+| `NOT_FOUND`                     | 404    | Absent **or** invisible — deliberately indistinguishable                        |
+| `CONFLICT`                      | 409    | Uniqueness violation                                                            |
+| `VERSION_CONFLICT`              | 409    | Lost a race on the version uniqueness constraint, twice                         |
+| `LAST_ADMIN`                    | 409    | Refusing to revoke the last global administrator                                |
+| `PRECONDITION_FAILED`           | 412    | `If-Match`/`expected_rev` did not match. The environment is unchanged           |
+| `PAYLOAD_TOO_LARGE`             | 413    | Over a configured byte or count limit                                           |
+| `UNSUPPORTED_MEDIA_TYPE`        | 415    | A body declared a media type other than `application/json`                      |
+| `VALIDATION_FAILED`             | 422    | Schema rejection, including an unknown field                                    |
+| `RATE_LIMITED`                  | 429    | Slow down                                                                       |
+| `INTERNAL`                      | 500    | Unclassified failure                                                            |
+| `DECRYPT_FAILED`                | 500    | Authenticated decryption failed. Never swallowed                                |
+| `UNKNOWN_KID`                   | 500    | The envelope names a master key the ring does not hold                          |
+| `SERVER_MISCONFIGURED`          | 500    | Fail-closed configuration error, e.g. an invalid `MASTER_KEY`                   |
+| `NOT_IMPLEMENTED`               | 501    | The route exists but the behaviour does not                                     |
+| `NO_ADMINS_CONFIGURED`          | 503    | Neither `BOOTSTRAP_ADMINS` nor a usable global admin grant exists               |
+| `IDENTITY_PROVIDER_UNAVAILABLE` | 503    | Cloudflare Access is unreachable or degraded right now                          |
+| `SERVICE_TOKENS_UNCONFIGURED`   | 503    | Service-token management is not configured, or Cloudflare refused its API token |
+| `UPSTREAM_FAILED`               | 502    | The Cloudflare API failed while managing a service token                        |
 
 Source: `packages/app/src/lib/server/core/errors.ts`.
 
@@ -710,24 +811,28 @@ atomicity, so an oversized write is refused rather than made non-atomic.
 
 ## Request bodies
 
-| Schema                  | Shape                                                                                                                                                |
-| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `CreateProjectBody`     | `{ slug, name, description? }`                                                                                                                       |
-| `UpdateProjectBody`     | `{ name?, description? }`                                                                                                                            |
-| `CreateEnvironmentBody` | `{ slug, name, description? }`                                                                                                                       |
-| `BatchBody`             | `{ mode?: "merge"                                                                                                                                    | "replace" (default "merge"), set?, descriptions?, delete?, expected_rev?, reason? }`          |
-| `ImportBody`            | `{ format: "env"                                                                                                                                     | "json", content, mode? (default "merge"), dry_run? (default false), expected_rev?, reason? }` |
-| `RollbackBody`          | `{ key, to_version, reason? }`                                                                                                                       |
-| `RenameBody`            | `{ from, to }`                                                                                                                                       |
-| `RekeyBody`             | `{ limit }`                                                                                                                                          |
-| `RevealQuery`           | `{ reason: "reveal" \| "copy" \| "export" \| "run" }`                                                                                                |
-| `CreateGrantBody`       | Discriminated on `scope_type`: `global`, `project` (+`project`), `environment` (+`project`, `environment`). Plus `identity_id`, `role`, `expires_at` |
-| `UpdateIdentityBody`    | `{ display_name?, disabled? }`                                                                                                                       |
-| `CreateGroupBody`       | `{ slug, name, description? }`                                                                                                                       |
-| `UpdateGroupBody`       | `{ name?, description? }` — no `slug`                                                                                                                |
-| `AddGroupMemberBody`    | `{ identity_id }`                                                                                                                                    |
-| `CreateGroupGrantBody`  | Discriminated on `scope_type`, as above, but with `role` and `expires_at` and **no** `identity_id`                                                   |
-| `AuditQuery`            | `{ project?, environment?, actor?, action?, outcome?, since?, until?, cursor?, limit }`                                                              |
+| Schema                       | Shape                                                                                                                                                |
+| ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `CreateProjectBody`          | `{ slug, name, description? }`                                                                                                                       |
+| `UpdateProjectBody`          | `{ name?, description? }`                                                                                                                            |
+| `CreateEnvironmentBody`      | `{ slug, name, description? }`                                                                                                                       |
+| `BatchBody`                  | `{ mode?: "merge"                                                                                                                                    | "replace" (default "merge"), set?, descriptions?, delete?, expected_rev?, reason? }`          |
+| `ImportBody`                 | `{ format: "env"                                                                                                                                     | "json", content, mode? (default "merge"), dry_run? (default false), expected_rev?, reason? }` |
+| `RollbackBody`               | `{ key, to_version, reason? }`                                                                                                                       |
+| `RenameBody`                 | `{ from, to }`                                                                                                                                       |
+| `RekeyBody`                  | `{ limit }`                                                                                                                                          |
+| `RevealQuery`                | `{ reason: "reveal" \| "copy" \| "export" \| "run" }`                                                                                                |
+| `CreateGrantBody`            | Discriminated on `scope_type`: `global`, `project` (+`project`), `environment` (+`project`, `environment`). Plus `identity_id`, `role`, `expires_at` |
+| `UpdateIdentityBody`         | `{ display_name?, disabled? }`                                                                                                                       |
+| `CreateGroupBody`            | `{ slug, name, description? }`                                                                                                                       |
+| `UpdateGroupBody`            | `{ name?, description? }` — no `slug`                                                                                                                |
+| `AddGroupMemberBody`         | `{ identity_id }`                                                                                                                                    |
+| `CreateGroupGrantBody`       | Discriminated on `scope_type`, as above, but with `role` and `expires_at` and **no** `identity_id`                                                   |
+| `CreateServiceTokenBody`     | `{ name, duration? (default "8760h", or "forever"), grant? }`. `grant` is discriminated on `scope_type`, as above, with no `identity_id`             |
+| `RotateServiceTokenBody`     | `{ grace_seconds? (default 0, at most 2592000) }`                                                                                                    |
+| `AdoptServiceTokenBody`      | `{ client_id, name? }`                                                                                                                               |
+| `ReconcileServiceTokensBody` | `{ apply? (default false) }`                                                                                                                         |
+| `AuditQuery`                 | `{ project?, environment?, actor?, action?, outcome?, since?, until?, cursor?, limit }`                                                              |
 
 Most live in `@prick/shared`, so the browser bundle and the MCP package validate
 against the same objects the Worker does. `RenameBody` and `RekeyBody` are

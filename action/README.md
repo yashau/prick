@@ -27,17 +27,30 @@ human, so that is not the credential to use here. Cloudflare Access issues a sec
 for exactly this — a **service token**, a client id and client secret pair that is presented as the
 `CF-Access-Client-Id` and `CF-Access-Client-Secret` headers and never expires on its own.
 
-**Creating one**, in the Cloudflare dashboard:
+**Creating one** takes one command from a global admin, on a server set up for service tokens (the
+Worker holds `CF_API_TOKEN`; see the [Authentication guide](https://docs.getprick.dev/guides/authentication#once-per-deployment-set-up-service-tokens)):
+
+```bash
+prk access token create "github-actions-api-deploy" --role reader --scope api:production --secret-file - | gh secret set PRK_ACCESS_CLIENT_SECRET
+```
+
+The Worker asks Cloudflare for the token, records its identity and grants it `reader` on
+`api:production`, so the workflow's first run already works. The client secret goes straight into
+GitHub and prick keeps no copy of it. The client id is printed outside the pipe; store it as the
+`PRK_ACCESS_CLIENT_ID` secret and pass both to the action's `client-id` and `client-secret` inputs.
+
+**On a server without `CF_API_TOKEN`**, create it in the Cloudflare dashboard:
 
 1. **Zero Trust → Access controls → Service credentials → Service Tokens → Create Service Token.** Name it after the
    thing that will use it (`github-actions-api-deploy`), not after the person creating it.
 2. Copy the **Client ID** (it ends in `.access`) and the **Client Secret** (it starts with
    `cfast_`). The secret is shown
    **once**. Store both as repository or environment secrets in GitHub.
-3. Let the token through Access. Under **Access controls → Policies**, add a reusable policy with
-   the action **Service Auth** and an **include** rule using the **Service Token** selector, set to
-   the token you just created, then attach it to your prick application next to the people's Allow
-   policy. The Allow policy rejects a service token at the edge, before prick ever sees the request,
+3. Let the token through Access. A Service Auth policy for **Any Access Service Token** on the prick
+   application admits it already. Without one, add a reusable policy under **Access controls →
+   Policies** with the action **Service Auth** and an **include** rule using the **Service Token**
+   selector, set to the token you just created, then attach it to your prick application next to
+   the people's Allow policy. The Allow policy rejects a service token at the edge, before prick ever sees the request,
    and must stay on Allow so that `prk login` keeps working.
 4. Grant the token a role **inside prick**. Access decides _who_ is calling; prick decides _what
    they may read_, and a brand-new token may read nothing. The easy way round is to run the workflow
@@ -45,7 +58,8 @@ for exactly this — a **service token**, a client id and client secret pair tha
    the denied client id is sitting there with a Grant button next to it. `reader` on the project (or
    on the single environment) is enough.
 
-Step 4 is the usual first-run failure, and the action's error message says so. It arrives as exit 5
+Step 4 is the usual first-run failure of a dashboard-made token, and the action's error message says
+so. It arrives as exit 5
 ("no such project or environment — or the service token has no grant on it"), because prick does not
 reveal a project to a token with no grant on it.
 

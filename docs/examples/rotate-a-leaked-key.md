@@ -168,18 +168,48 @@ Those rows tell you which jobs are still configured with the leaked credential,
 so you know what to reconfigure in step 5.
 :::
 
-### 3. Revoke the credential at Cloudflare
+### 3. End the credential at Cloudflare
 
 Disabling stops prick from honouring the identity. The token can still
 authenticate to Cloudflare Access and reach anything else that trusts it, so
-delete it under **Zero Trust → Access controls → Service credentials → Service
-Tokens**.
+end it there too. For a token prick manages — one made with
+`prk access token create`, or adopted — that is one command, and which one
+depends on whether the job keeps the token.
 
-Delete rather than rotate. Cloudflare's **Rotate** keeps the client id and can
-keep the old secret valid for an overlap window
-(`previous_client_secret_expires_at`), which suits a scheduled rotation. A
-leaked secret needs the immediate cut, and a deleted token leaves nothing for a
-copy of it to authenticate as.
+**Retire it.** Revoke deletes the token in Cloudflare, so a copy of the secret
+has nothing left to authenticate as:
+
+```bash
+prk access token revoke e367826f93b8d71185e03fe518aff3b4.access --yes
+```
+
+Revoking disables the identity and marks the record revoked in one transaction,
+then deletes the token in Cloudflare. If you skipped step 1, this does it. The
+grants stay, as the record of what the token could reach. If the Cloudflare
+delete fails, prick already refuses the token, and
+`prk access token reconcile --apply` finishes the job.
+
+**Keep it, with a new secret.** Rotate issues a new secret for the same client
+id, and with no `--grace` the leaked one stops working **immediately**:
+
+```bash
+prk access token rotate e367826f93b8d71185e03fe518aff3b4.access --yes --secret-file - | gh secret set PRK_ACCESS_CLIENT_SECRET
+```
+
+The grants come through unchanged, so re-enable the identity once the job holds
+the new secret, then rotate everything it could read (step 4) all the same: the
+old secret worked until now. Never pass `--grace` here. An overlap window suits a
+scheduled rotation and keeps a leaked secret working for its length.
+
+When Cloudflare itself reported the secret as leaked, it has already disabled the
+token and discards the old secret at rotation, so the server refuses `--grace`
+with a `CONFLICT` that says why. Rotating is also what lets Cloudflare re-enable
+the token, and the server does that as part of the same command. If Cloudflare
+does not re-enable it, the rotation still succeeds and `prk` prints a warning
+saying the token cannot authenticate yet; rotate again.
+
+A token made in the dashboard and never adopted is deleted under **Zero Trust →
+Access controls → Service credentials → Service Tokens** instead.
 
 For a person, revoke their Access sessions and, if the laptop is gone, assume
 the local token file went with it.
@@ -200,19 +230,21 @@ STRIPE_SECRET_KEY	v3	you@example.com	none
 
 ### 5. Issue a replacement credential
 
-Create a new service token, and give it a narrower scope than the old one had —
-the incident is the evidence for how narrow it should have been. See
-[Give CI read-only access](/examples/ci-read-only).
-
-Name it while you are there:
+If you revoked the old token, create its replacement, and give it a narrower
+scope than the old one had — the incident is the evidence for how narrow it
+should have been:
 
 ```bash
-prk access rename <NEW SUBJECT> "api deploy job (replaces token disabled 2026-08-16)"
+prk access token create "api deploy job (replaces token revoked 2026-08-16)" --role reader --scope api:production --secret-file - | gh secret set PRK_ACCESS_CLIENT_SECRET
 ```
+
+The name is the identity's display name, so the access list says what the token
+is for and what it replaced. See
+[Give CI read-only access](/examples/ci-read-only).
 
 ### 6. Leave the old identity disabled
 
-Do not delete it. A disabled identity is a record: it keeps the audit rows
+A revoked token's identity stays disabled. Do not delete it. A disabled identity is a record: it keeps the audit rows
 readable, and it means a rediscovered copy of the credential fails against a
 subject somebody can look up rather than against nothing at all.
 
@@ -229,6 +261,9 @@ prk access enable e367826f93b8d71185e03fe518aff3b4.access
 Enabled `e367826f93b8d71185e03fe518aff3b4.access`.
 Its grants are in force again; `prk access explain e367826f93b8d71185e03fe518aff3b4.access` shows exactly what that restored.
 ```
+
+A revoked service token is the exception: Cloudflare deleted it, so there is
+nothing to re-enable. Create a new one.
 
 A secret rotated by mistake is recoverable too — the previous value is still in
 history:

@@ -55,6 +55,7 @@ use prick_api::{GrantScope, ops};
 use prick_core::scope::Scope;
 
 use crate::cli::GlobalArgs;
+use crate::commands::access_token::{self, TokenCommand};
 use crate::commands::{Context, explain, identity, projects::confirm, require_slug};
 use crate::error::CliError;
 use crate::output::Output;
@@ -170,6 +171,14 @@ pub enum AccessCommand {
         #[arg(value_name = "SUBJECT")]
         subject: String,
     },
+
+    /// Create, rotate and revoke Cloudflare Access service tokens.
+    ///
+    /// The server holds the Cloudflare credential and does the work, so this
+    /// needs a global admin grant and nothing else. `prk doctor` shows whether
+    /// the server has the feature configured.
+    #[command(subcommand)]
+    Token(TokenCommand),
 }
 
 impl AccessCommand {
@@ -184,6 +193,7 @@ impl AccessCommand {
             Self::Enable { .. } => "access enable",
             Self::Rename { .. } => "access rename",
             Self::Explain { .. } => "access explain",
+            Self::Token(sub) => sub.path(),
         }
     }
 }
@@ -218,6 +228,12 @@ impl RoleArg {
 /// credential is available, and [`CliError::Api`] for anything the server
 /// reported.
 pub fn run(command: &AccessCommand, global: &GlobalArgs, out: Output) -> Result<(), CliError> {
+    // Service tokens check the server's capabilities before anything else, and
+    // build their own context to do it.
+    if let AccessCommand::Token(sub) = command {
+        return access_token::run(sub, global, out);
+    }
+
     let mut context = Context::new(global)?;
     context.authenticate(out)?;
     let client = context.client();
@@ -311,6 +327,9 @@ pub fn run(command: &AccessCommand, global: &GlobalArgs, out: Output) -> Result<
         AccessCommand::Explain { subject } => {
             explain::run(&context, subject, global, out)?;
         }
+
+        // Dispatched before the context was built, above.
+        AccessCommand::Token(_) => {}
     }
 
     Ok(())
@@ -324,7 +343,7 @@ pub fn run(command: &AccessCommand, global: &GlobalArgs, out: Output) -> Result<
 /// # Errors
 ///
 /// [`CliError::Other`] naming the offending half.
-fn require_scope_slugs(scope: &Scope) -> Result<(), CliError> {
+pub(crate) fn require_scope_slugs(scope: &Scope) -> Result<(), CliError> {
     if !scope.is_project_wildcard() {
         require_slug("project", scope.project())?;
     }
@@ -345,7 +364,7 @@ fn require_scope_slugs(scope: &Scope) -> Result<(), CliError> {
 ///
 /// [`CliError::Other`] if the system clock is before the Unix epoch, or if the
 /// deadline does not fit in the field.
-fn expires_at_from_now(days: u32) -> Result<i64, CliError> {
+pub(crate) fn expires_at_from_now(days: u32) -> Result<i64, CliError> {
     /// Milliseconds in a day.
     const DAY_MS: i64 = 24 * 60 * 60 * 1000;
 
@@ -486,7 +505,7 @@ fn report_grants(grants: &[Grant], global: &GlobalArgs, out: Output) {
 }
 
 /// One grant, as a JSON document.
-fn grant_json(grant: &Grant) -> serde_json::Value {
+pub(crate) fn grant_json(grant: &Grant) -> serde_json::Value {
     serde_json::json!({
         "id": grant.id,
         "identity_id": grant.identity_id,

@@ -55,6 +55,14 @@ use crate::models::{
     WriteResult,
 };
 
+mod service_tokens;
+
+pub use service_tokens::{
+    NewServiceToken, ServiceTokenGrant, adopt_service_token, capabilities, create_service_token,
+    list_service_tokens, reconcile_service_tokens, refresh_service_token, revoke_service_token,
+    rotate_service_token,
+};
+
 /// The largest page `POST /admin/rekey` will move, whatever `limit` asks for.
 ///
 /// Mirrors `REKEY_MAX_PAGE` in `packages/app/src/lib/server/core/keyring.ts`,
@@ -922,8 +930,8 @@ pub async fn rekey_page(client: &Client, limit: u32) -> Result<RekeyProgress, Ap
 }
 
 // In `ops/tests.rs`, not in a block here. `lint:loc` caps a source file at 1000
-// lines, and every `pub async fn` has to stay in *this* file because
-// `tests/contract.rs` discovers routes by reading it with `include_str!`. So
-// the declarations stay and the tests move; see that file's own header.
+// lines, and `tests/contract.rs` discovers routes by reading this file, and each
+// submodule it lists, with `include_str!`. A new submodule of ops must be added
+// to that list; see that file's own header.
 #[cfg(test)]
 mod tests;

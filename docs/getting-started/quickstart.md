@@ -284,6 +284,39 @@ ok   installation   running as a native binary
 Eight `ok` lines means you are done. Any `FAIL` is explained in
 [Exit codes and errors](/reference/cli/errors).
 
+## Optional: manage service tokens from prick
+
+CI authenticates with an Access service token. With two more settings and one
+more policy, a global admin creates and manages those tokens with
+`prk access token`, and never opens the Zero Trust dashboard for one again.
+
+1. Create a Cloudflare **account** API token, under **Manage account → Account
+   API tokens**, for the account that owns the Access application, with exactly
+   one permission: **Account → Access: Service Tokens → Edit**. Leave out a
+   client IP filter; a Worker's egress addresses are not fixed.
+2. Install it, and put the account's 32-character hex id beside the other vars
+   from step 6:
+
+   ```bash
+   pnpm --dir packages/app exec wrangler secret put CF_API_TOKEN
+   ```
+
+   ```jsonc title="packages/app/wrangler.jsonc"
+   "CF_ACCOUNT_ID": "0123456789abcdef0123456789abcdef"
+   ```
+
+3. Under **Zero Trust → Access controls → Policies**, add a reusable policy with
+   the action **Service Auth** and an include rule using **Any Access Service
+   Token**, and attach it to the application from step 5, next to the people's
+   Allow policy.
+4. Deploy again, as in step 8.
+
+`prk doctor`, run as a global admin, reports whether service tokens are
+available and, if not, what the Worker is missing.
+[Authentication](/guides/authentication#authenticate-a-machine) takes it from
+there. [Configuration](/reference/configuration#service-token-management)
+explains what the Worker holding that token means.
+
 ## Store your first secret
 
 ```bash

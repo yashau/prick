@@ -275,6 +275,7 @@ impl Command {
     /// is classified.
     pub fn writes_server(&self) -> bool {
         use commands::access::AccessCommand as A;
+        use commands::access_token::TokenCommand as T;
         use commands::env::EnvCommand as E;
         use commands::keyring::KeyringCommand as K;
         use commands::projects::ProjectsCommand as P;
@@ -308,6 +309,15 @@ impl Command {
                 | A::Disable { .. }
                 | A::Enable { .. }
                 | A::Rename { .. } => true,
+                A::Token(sub) => match sub {
+                    T::List { .. } => false,
+                    T::Create { .. }
+                    | T::Rotate { .. }
+                    | T::Refresh { .. }
+                    | T::Revoke { .. }
+                    | T::Adopt { .. }
+                    | T::Reconcile { .. } => true,
+                },
             },
             Self::Keyring(sub) => match sub {
                 K::Status => false,
@@ -640,6 +650,14 @@ mod tests {
             (vec!["prk", "projects", "create", "api"], true),
             (vec!["prk", "access", "grant", "ci@example.com", "--role", "writer"], true),
             (vec!["prk", "keyring", "rekey"], true),
+            (vec!["prk", "access", "token", "create", "ci"], true),
+            (vec!["prk", "access", "token", "rotate", "ci"], true),
+            (vec!["prk", "access", "token", "refresh", "ci"], true),
+            (vec!["prk", "access", "token", "revoke", "ci"], true),
+            (vec!["prk", "access", "token", "adopt", "abc.access"], true),
+            (vec!["prk", "access", "token", "reconcile"], true),
+            (vec!["prk", "access", "token", "list"], false),
+            (vec!["prk", "access", "token", "list", "--all"], false),
             (vec!["prk", "secrets", "list"], false),
             (vec!["prk", "secrets", "download"], false),
             (vec!["prk", "run", "--", "env"], false),
