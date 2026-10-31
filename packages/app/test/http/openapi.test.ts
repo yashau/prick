@@ -279,7 +279,7 @@ describe("GET /api/v1/docs", () => {
 
   it("does not put that policy on any other route", async () => {
     // It is wrong everywhere else: the API answers JSON to non-browser clients,
-    // and the admin UI has its own policy from `svelte.config.js`.
+    // and the admin UI has its own policy from `vite.config.ts`.
     const api = await apiHarness();
 
     for (const path of ["/api/v1/health", "/api/v1/openapi.json"]) {

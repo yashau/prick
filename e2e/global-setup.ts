@@ -21,8 +21,8 @@
  *   1. generate a genuine RS256 keypair;
  *   2. serve its public half as a real JWKS from a real HTTPS origin;
  *   3. point `ACCESS_CERTS_URL` at that origin;
- *   4. make `workerd` trust the origin's certificate, and nothing else, by
- *      setting `SSL_CERT_FILE` on the `wrangler dev` child;
+ *   4. make `workerd` trust the origin's certificate by setting
+ *      `SSL_CERT_FILE` and `NODE_EXTRA_CA_CERTS` on the `wrangler dev` child;
  *   5. mint genuine Access-shaped JWTs with the private half.
  *
  * `verifyAccessJwt` then runs completely unmodified: it fetches the JWKS over
@@ -33,7 +33,8 @@
  *
  * Step 4 is the only platform-dependent piece. BoringSSL honours `SSL_CERT_FILE`
  * as an override for the default verify paths, and `workerd` builds its outbound
- * TLS trust from those; the assertion at the end of this file fails loudly if
+ * TLS trust from those; on Windows miniflare instead passes `workerd` an
+ * explicit list that includes the `NODE_EXTRA_CA_CERTS` file. The assertion at the end of this file fails loudly if
  * that ever stops being true, naming the JWKS hit count, rather than presenting
  * as forty unexplained 401s.
  */

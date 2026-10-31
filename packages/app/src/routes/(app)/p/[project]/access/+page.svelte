@@ -2,12 +2,12 @@
   import GlobeIcon from '@lucide/svelte/icons/globe';
   import TriangleAlertIcon from '@lucide/svelte/icons/triangle-alert';
 
-  import type { FormErrors } from '$lib/client/forms';
-  import GrantDialog from '$lib/components/access/grant-dialog.svelte';
-  import GrantsTable from '$lib/components/access/grants-table.svelte';
-  import PageHeader from '$lib/components/page-header.svelte';
-  import * as Alert from '$lib/components/ui/alert/index.js';
-  import { Badge } from '$lib/components/ui/badge/index.js';
+  import type { FormErrors } from '#lib/client/forms.js';
+  import GrantDialog from '#lib/components/access/grant-dialog.svelte';
+  import GrantsTable from '#lib/components/access/grants-table.svelte';
+  import PageHeader from '#lib/components/page-header.svelte';
+  import * as Alert from '#lib/components/ui/alert/index.js';
+  import { Badge } from '#lib/components/ui/badge/index.js';
   import type { ActionData, PageData } from './$types';
 
   let { data, form }: { data: PageData; form: ActionData } = $props();

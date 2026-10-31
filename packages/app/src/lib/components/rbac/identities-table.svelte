@@ -4,13 +4,13 @@
   import { toast } from 'svelte-sonner';
 
   import { applyAction, enhance } from '$app/forms';
-  import { invalidateAll } from '$app/navigation';
-  import { absoluteTime, relativeTime } from '$lib/client/format';
-  import IdentityCell from '$lib/components/rbac/identity-cell.svelte';
-  import type { GroupRefView, IdentityView } from '$lib/components/rbac/types';
-  import { Badge } from '$lib/components/ui/badge/index.js';
-  import { Switch } from '$lib/components/ui/switch/index.js';
-  import * as Table from '$lib/components/ui/table/index.js';
+  import { refreshAll } from '$app/navigation';
+  import { absoluteTime, relativeTime } from '#lib/client/format.js';
+  import IdentityCell from '#lib/components/rbac/identity-cell.svelte';
+  import type { GroupRefView, IdentityView } from '#lib/components/rbac/types.js';
+  import { Badge } from '#lib/components/ui/badge/index.js';
+  import { Switch } from '#lib/components/ui/switch/index.js';
+  import * as Table from '#lib/components/ui/table/index.js';
 
   /**
    * Every identity that has ever authenticated, and what reaches it.
@@ -144,7 +144,7 @@
                   return async ({ result }) => {
                     if (result.type === 'success') {
                       toast.success('Identity updated.');
-                      await invalidateAll();
+                      await refreshAll();
                       return;
                     }
                     await applyAction(result);

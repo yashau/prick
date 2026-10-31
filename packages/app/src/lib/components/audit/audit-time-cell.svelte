@@ -1,6 +1,6 @@
 <script lang="ts">
-  import type { AuditEntryView } from '$lib/client/api';
-  import { absoluteTime, relativeTime } from '$lib/client/format';
+  import type { AuditEntryView } from '#lib/client/api.js';
+  import { absoluteTime, relativeTime } from '#lib/client/format.js';
 
   let { entry }: { entry: AuditEntryView } = $props();
 </script>

@@ -3,16 +3,16 @@
   import ArrowUpIcon from '@lucide/svelte/icons/arrow-up';
   import ChevronsUpDownIcon from '@lucide/svelte/icons/chevrons-up-down';
 
-  import { Button } from '$lib/components/ui/button/index.js';
+  import { Button } from '#lib/components/ui/button/index.js';
 
   /**
    * A sortable column header for the registry's data-table shell.
    *
    * TanStack owns the sort STATE; this only renders it and toggles it.
    *
-   * The prop is typed STRUCTURALLY rather than as `Column<TData, TValue>`. A
+   * The prop is typed STRUCTURALLY rather than as `Column<TFeatures, TData>`. A
    * generic component reached through `renderComponent` has its parameters
-   * resolved to `unknown` by `ComponentProps`, so a `Column<SecretListEntry>`
+   * resolved to `unknown` by `ComponentProps`, so a `Column<typeof features, SecretListEntry>`
    * no longer matches -- `TData` is invariant. Naming the two methods this
    * component actually calls makes any TanStack column assignable and states
    * the real dependency.

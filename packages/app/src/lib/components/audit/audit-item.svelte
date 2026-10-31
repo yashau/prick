@@ -2,12 +2,12 @@
   import KeyRoundIcon from '@lucide/svelte/icons/key-round';
   import UserIcon from '@lucide/svelte/icons/user';
 
-  import type { AuditEntryView } from '$lib/client/api';
-  import { actionLabel, summariseDetail } from '$lib/client/audit';
-  import { absoluteTime, relativeTime } from '$lib/client/format';
-  import CopyButton from '$lib/components/copy-button.svelte';
-  import OutcomeBadge from '$lib/components/audit/outcome-badge.svelte';
-  import * as Item from '$lib/components/ui/item/index.js';
+  import type { AuditEntryView } from '#lib/client/api.js';
+  import { actionLabel, summariseDetail } from '#lib/client/audit.js';
+  import { absoluteTime, relativeTime } from '#lib/client/format.js';
+  import CopyButton from '#lib/components/copy-button.svelte';
+  import OutcomeBadge from '#lib/components/audit/outcome-badge.svelte';
+  import * as Item from '#lib/components/ui/item/index.js';
 
   let { entry }: { entry: AuditEntryView } = $props();
 

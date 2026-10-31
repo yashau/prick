@@ -194,9 +194,10 @@ function mediaTypeOf(header: string): string {
  * sets it on none. So "present and not ours" is precisely "a page somewhere
  * else initiated this", and "absent" is precisely "not a browser" -- which is
  * the CLI, the MCP server and the composite action, none of which send the
- * header. This is the same bet `svelte.config.js` makes for the SvelteKit half
- * with `csrf.trustedOrigins: []`, and it is made here rather than inherited
- * because the two halves are different servers behind one hostname.
+ * header. This is the same bet `src/lib/server/csrf.ts` makes for the
+ * SvelteKit half, and it is made here rather than shared because the two halves
+ * refuse different shapes: the UI's guard also refuses a write with no media
+ * type, which is every bodiless `DELETE` this API serves.
  *
  * `URL.origin` is the right thing to compare against and not an approximation
  * of one: it keeps a non-default port and drops a default one, which is exactly
@@ -223,7 +224,7 @@ function mediaTypeOf(header: string): string {
  * `c.req.raw.body !== null`. That expression is not the same fact in the two
  * places this Worker runs:
  *
- *   in-process   `vitest-pool-workers`, and any `SELF.fetch` -- a bodiless
+ *   in-process   `vitest-plugin`, and any `SELF.fetch` -- a bodiless
  *                DELETE has `body === null`, so the check passed.
  *   over the wire workerd hands the Worker a non-null, empty body stream for
  *                the SAME bodiless DELETE, so the check answered 415.
@@ -363,7 +364,7 @@ export const SCALAR_CDN = "https://cdn.jsdelivr.net/npm/@scalar/api-reference@1.
  *
  * Bound to this route rather than applied globally, because it is wrong for
  * every other route: the API returns JSON to non-browser clients, and the admin
- * UI has its own policy from `svelte.config.js`.
+ * UI has its own policy from `vite.config.ts`.
  */
 export const docsCsp: MiddlewareHandler = async (c, next) => {
   await next();

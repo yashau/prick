@@ -3,11 +3,11 @@
   import ChevronsUpDownIcon from '@lucide/svelte/icons/chevrons-up-down';
   import PlusIcon from '@lucide/svelte/icons/plus';
 
-  import type { ProjectSummary } from '$lib/client/api';
-  import BrandMark from '$lib/components/brand-mark.svelte';
-  import * as DropdownMenu from '$lib/components/ui/dropdown-menu/index.js';
-  import * as Sidebar from '$lib/components/ui/sidebar/index.js';
-  import { pluralise } from '$lib/client/format';
+  import type { ProjectSummary } from '#lib/client/api.js';
+  import BrandMark from '#lib/components/brand-mark.svelte';
+  import * as DropdownMenu from '#lib/components/ui/dropdown-menu/index.js';
+  import * as Sidebar from '#lib/components/ui/sidebar/index.js';
+  import { pluralise } from '#lib/client/format.js';
 
   let {
     projects,

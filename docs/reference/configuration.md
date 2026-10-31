@@ -133,6 +133,10 @@ the flag stays `false` until the feature is documented and confirmed not to
 swallow service-token requests. If it did swallow them, making it load-bearing
 would break every CI client at once with no local signal.
 
+The build wraps the Worker entry so that both the API and the admin UI see the
+runtime's own per-request context, including `ctx.access`. Under `vite dev` no
+such context exists, so the flag set to `"true"` refuses every request there.
+
 ## `wrangler.jsonc`
 
 The parts that matter, beyond the vars above.

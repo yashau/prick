@@ -1,6 +1,8 @@
-import { error, type Handle, type HandleServerError } from "@sveltejs/kit";
+import { error } from "@sveltejs/kit";
+import type { Handle, HandleServerError } from "@sveltejs/kit/hooks";
+import { env } from "cloudflare:workers";
 
-import { readAppearance, THEME_COOKIE, type Appearance } from "$lib/client/theme";
+import { readAppearance, THEME_COOKIE, type Appearance } from "#lib/client/theme.js";
 import {
   accessOptionsFromConfig,
   actorFromClaims,
@@ -12,11 +14,13 @@ import {
   selfHealBootstrapGrant,
   upsertIdentity,
   verifyAccessRequest,
-} from "$lib/server/auth";
-import { loadRuntimeConfig, toPrickError, type CoreContext } from "$lib/server/core";
-import { getKeyring, type MasterKeyEnv } from "$lib/server/crypto";
-import { createDatabase, uuidv7 } from "$lib/server/db";
-import { createApi } from "$lib/server/http/app";
+} from "#lib/server/auth/index.js";
+import { loadRuntimeConfig, toPrickError, type CoreContext } from "#lib/server/core/index.js";
+import { crossSiteFormRefusal, isCrossSiteFormSubmission } from "#lib/server/csrf.js";
+import { getKeyring, type MasterKeyEnv } from "#lib/server/crypto/index.js";
+import { createDatabase, uuidv7 } from "#lib/server/db/index.js";
+import { currentExecutionContext } from "#lib/server/execution-context.js";
+import { createApi } from "#lib/server/http/app.js";
 
 /**
  * THE ARCHITECTURAL SEAM.
@@ -46,7 +50,7 @@ import { createApi } from "$lib/server/http/app";
  * It is `http/context.ts:authenticate`, for the other transport: the ONE place
  * a SvelteKit request is authenticated, and the only place `event.locals.ctx`
  * is ever set. No load reads a header, decodes a token or touches
- * `event.platform.env`. They read `locals.ctx` and pass it to `core`, which
+ * the Worker's bindings. They read `locals.ctx` and pass it to `core`, which
  * means a load physically has nothing to make an authorization decision WITH.
  *
  * The steps below are deliberately the SAME steps, in the SAME order, as the
@@ -113,18 +117,22 @@ function htmlOpenFor(appearance: Appearance | null): string {
 
 export const handle: Handle = async ({ event, resolve }) => {
   const { pathname } = event.url;
-  const platform = event.platform;
 
-  // In `vite dev` this is supplied by the adapter's platformProxy; in
-  // production by the runtime. If it is missing, the bindings are missing, and
-  // serving a request without a database or a master key would mean failing in
-  // some more creative way further down.
-  if (!platform) {
+  // In `vite dev` the adapter's platformProxy supplies `cloudflare:workers`; in
+  // production the runtime does. If the database binding is missing, serving a
+  // request would mean failing in some more creative way further down.
+  if (!env?.DB) {
     throw error(503, "Cloudflare bindings are unavailable.");
   }
 
   if (pathname === "/api" || pathname.startsWith("/api/")) {
-    return api.fetch(event.request, platform.env, platform.ctx);
+    return api.fetch(event.request, env, currentExecutionContext());
+  }
+
+  // Before anything is read or written. See `csrf.ts` for why this guard runs
+  // here rather than inside the framework.
+  if (isCrossSiteFormSubmission(event.request, event.url.origin)) {
+    return crossSiteFormRefusal(event.request);
   }
 
   /*
@@ -139,7 +147,7 @@ export const handle: Handle = async ({ event, resolve }) => {
    */
   const requestId = uuidv7();
 
-  event.locals.ctx = await createContext(event.request, platform, requestId);
+  event.locals.ctx = await createContext(event.request, requestId);
   event.locals.actor = event.locals.ctx.actor;
 
   const appearance = readAppearance(event.cookies.get(THEME_COOKIE));
@@ -189,8 +197,8 @@ export const handle: Handle = async ({ event, resolve }) => {
  *     cannot make this Worker write anything at all.
  *  3. `assertCtxAccess`, defence in depth, gated behind `REQUIRE_CTX_ACCESS`.
  *     Called unconditionally because it returns immediately when the flag is
- *     off, and because `event.platform.ctx` -- unlike Hono's `c.executionCtx`
- *     -- does not throw when the runtime supplied none.
+ *     off, and because `currentExecutionContext()` -- unlike Hono's
+ *     `c.executionCtx` -- always returns an object and never throws.
  *  4. Build the `CoreContext`. FRESH PER REQUEST, and the object identity
  *     matters: `resolveAuthorization` memoises the authorization snapshot in a
  *     `WeakMap` keyed by this exact reference, which is what makes a layout
@@ -210,26 +218,23 @@ export const handle: Handle = async ({ event, resolve }) => {
  *     context already holds, so the snapshot cache keyed on the context stays
  *     valid -- and so `locals.actor` and `locals.ctx.actor` stay one object.
  */
-async function createContext(
-  request: Request,
-  platform: App.Platform,
-  requestId: string,
-): Promise<CoreContext> {
+async function createContext(request: Request, requestId: string): Promise<CoreContext> {
   const now = Date.now();
 
   try {
     // `MASTER_KEY` is a Worker SECRET, so `wrangler types` does not put it on
     // `Env` -- it only knows about `vars` and bindings declared in
     // wrangler.jsonc. `MasterKeyEnv` is structural for exactly this reason.
-    const keyring = await getKeyring(platform.env as unknown as MasterKeyEnv);
-    const config = loadRuntimeConfig(platform.env);
+    const keyring = await getKeyring(env as unknown as MasterKeyEnv);
+    const config = loadRuntimeConfig(env);
 
     const claims = await verifyAccessRequest(request, accessOptionsFromConfig(config, now));
 
-    assertCtxAccess(platform.ctx, { requireCtxAccess: config.requireCtxAccess });
+    const executionContext = currentExecutionContext();
+    assertCtxAccess(executionContext, { requireCtxAccess: config.requireCtxAccess });
 
     const ctx: CoreContext = {
-      db: createDatabase(platform.env.DB),
+      db: createDatabase(env.DB),
       actor: actorFromClaims(claims),
       requestId,
       now,
@@ -256,7 +261,7 @@ async function createContext(
      *     response depends on it, so the response does not wait. A name
      *     resolved now appears on the next navigation.
      */
-    scheduleAccessDisplayNameSync(ctx, request, platform.ctx?.waitUntil?.bind(platform.ctx));
+    scheduleAccessDisplayNameSync(ctx, request, (task) => executionContext.waitUntil(task));
 
     return ctx;
   } catch (cause) {
@@ -271,9 +276,8 @@ async function createContext(
      */
     const failure = toPrickError(cause);
 
-    error(failure.status, {
+    error(failure.status, failure.message, {
       code: failure.wireCode,
-      message: failure.message,
       requestId,
       ...(failure.hint === undefined ? {} : { hint: failure.hint }),
     });
@@ -281,32 +285,44 @@ async function createContext(
 }
 
 /**
- * Give an UNEXPECTED throwable the same shape `+error.svelte` renders for an
- * expected one.
+ * Give every error page the same shape, request id included.
  *
- * SvelteKit calls this only for errors that are not `error()` throws, so
- * everything arriving here escaped a load without being classified. The request
- * id is the reason it is worth doing: it is on the audit rows this request
- * wrote, so "paste me the id in the red box" stays a complete support
+ * SvelteKit routes every error through here, sorted by `kind`:
+ *
+ *   app        -- an `error()` throw. `refuse` and the hook above already built
+ *                 the whole body, request id included, so it passes through
+ *                 untouched.
+ *   framework  -- an error SvelteKit raised itself, such as an unmatched route.
+ *   validation    Its status and message are already safe to render; the
+ *                 request id is added.
+ *   unknown    -- a throwable that escaped a load without being classified.
+ *
+ * The request id is the reason it is worth doing: it is on the audit rows this
+ * request wrote, so "paste me the id in the red box" stays a complete support
  * interaction even for a failure nobody anticipated.
  *
- * The message comes from `toPrickError`, which means an unclassified throwable
- * contributes the constant INTERNAL text and never its own -- this is the one
- * place a decrypt failure's or a database driver's message could otherwise
- * reach a rendered page.
+ * An unknown throwable's message comes from `toPrickError`, which means an
+ * unclassified throwable contributes the constant INTERNAL text and never its
+ * own -- this is the one place a decrypt failure's or a database driver's
+ * message could otherwise reach a rendered page. Its status stays 500.
  */
-export const handleError: HandleServerError = ({ error: cause, event }) => {
-  const failure = toPrickError(cause);
+export const handleError: HandleServerError = ({ kind, error: cause, event }) => {
+  if (kind === "app") return;
 
   // `Locals` declares both fields as non-optional because a LOAD is never
   // reached without them. This hook is: it also runs for failures raised before
   // `handle` finished populating them, so the read has to admit that.
   const ctx = (event.locals as Partial<App.Locals>).ctx;
+  const requestId = ctx === undefined ? {} : { requestId: ctx.requestId };
+
+  if (kind !== "unknown") return requestId;
+
+  const failure = toPrickError(cause);
 
   return {
     code: failure.wireCode,
     message: failure.message,
-    ...(ctx === undefined ? {} : { requestId: ctx.requestId }),
+    ...requestId,
     ...(failure.hint === undefined ? {} : { hint: failure.hint }),
   };
 };

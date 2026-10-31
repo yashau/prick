@@ -6,13 +6,13 @@
 
   import type { Role } from '@prick/shared';
 
-  import { expiryLabel } from '$lib/client/format';
-  import RoleBadge from '$lib/components/rbac/role-badge.svelte';
-  import ScopeLabel from '$lib/components/rbac/scope-label.svelte';
-  import type { EffectiveScopeView, PermissionSourceView } from '$lib/components/rbac/types';
-  import { Badge } from '$lib/components/ui/badge/index.js';
-  import * as Empty from '$lib/components/ui/empty/index.js';
-  import * as Table from '$lib/components/ui/table/index.js';
+  import { expiryLabel } from '#lib/client/format.js';
+  import RoleBadge from '#lib/components/rbac/role-badge.svelte';
+  import ScopeLabel from '#lib/components/rbac/scope-label.svelte';
+  import type { EffectiveScopeView, PermissionSourceView } from '#lib/components/rbac/types.js';
+  import { Badge } from '#lib/components/ui/badge/index.js';
+  import * as Empty from '#lib/components/ui/empty/index.js';
+  import * as Table from '#lib/components/ui/table/index.js';
 
   /**
    * Why this identity can do what it can do.

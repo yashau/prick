@@ -1,9 +1,9 @@
 <script lang="ts">
   import KeyRoundIcon from '@lucide/svelte/icons/key-round';
 
-  import type { SecretListEntry } from '$lib/client/api';
-  import { absoluteTime, relativeTime } from '$lib/client/format';
-  import * as Tooltip from '$lib/components/ui/tooltip/index.js';
+  import type { SecretListEntry } from '#lib/client/api.js';
+  import { absoluteTime, relativeTime } from '#lib/client/format.js';
+  import * as Tooltip from '#lib/components/ui/tooltip/index.js';
 
   let { row }: { row: SecretListEntry } = $props();
 

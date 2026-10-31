@@ -5,14 +5,14 @@
 
   import { ENV_MAX_SECRETS } from '@prick/shared';
 
-  import type { EnvironmentSummary } from '$lib/client/api';
-  import { absoluteTime, pluralise, relativeTime } from '$lib/client/format';
-  import { Badge } from '$lib/components/ui/badge/index.js';
-  import { Button } from '$lib/components/ui/button/index.js';
-  import * as Card from '$lib/components/ui/card/index.js';
-  import * as HoverCard from '$lib/components/ui/hover-card/index.js';
-  import { Progress } from '$lib/components/ui/progress/index.js';
-  import { Separator } from '$lib/components/ui/separator/index.js';
+  import type { EnvironmentSummary } from '#lib/client/api.js';
+  import { absoluteTime, pluralise, relativeTime } from '#lib/client/format.js';
+  import { Badge } from '#lib/components/ui/badge/index.js';
+  import { Button } from '#lib/components/ui/button/index.js';
+  import * as Card from '#lib/components/ui/card/index.js';
+  import * as HoverCard from '#lib/components/ui/hover-card/index.js';
+  import { Progress } from '#lib/components/ui/progress/index.js';
+  import { Separator } from '#lib/components/ui/separator/index.js';
 
   let {
     project,

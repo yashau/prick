@@ -2,7 +2,7 @@
   import KeyRoundIcon from '@lucide/svelte/icons/key-round';
   import UserIcon from '@lucide/svelte/icons/user';
 
-  import type { AuditEntryView } from '$lib/client/api';
+  import type { AuditEntryView } from '#lib/client/api.js';
 
   let { entry }: { entry: AuditEntryView } = $props();
 </script>

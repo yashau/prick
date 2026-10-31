@@ -5,45 +5,49 @@
   import { getLocalTimeZone } from '@internationalized/date';
   import type { DateRange } from 'bits-ui';
   import {
-    getCoreRowModel,
-    getSortedRowModel,
+    columnVisibilityFeature,
+    createSortedRowModel,
+    rowSortingFeature,
+    sortFn_alphanumeric,
+    sortFn_text,
+    tableFeatures,
     type ColumnDef,
     type SortingState,
     type Updater,
-    type VisibilityState
+    type ColumnVisibilityState
   } from '@tanstack/table-core';
 
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
-  import type { AuditEntryView } from '$lib/client/api';
-  import { ACTIONS, actionLabel, scopeLabel } from '$lib/client/audit';
-  import { absoluteTime } from '$lib/client/format';
-  import AuditActorCell from '$lib/components/audit/audit-actor-cell.svelte';
-  import AuditRowActions from '$lib/components/audit/audit-row-actions.svelte';
-  import AuditSummaryCell from '$lib/components/audit/audit-summary-cell.svelte';
-  import AuditTimeCell from '$lib/components/audit/audit-time-cell.svelte';
-  import OutcomeBadge from '$lib/components/audit/outcome-badge.svelte';
-  import CopyButton from '$lib/components/copy-button.svelte';
-  import SortHeader from '$lib/components/data-table/sort-header.svelte';
-  import PageHeader from '$lib/components/page-header.svelte';
-  import { Badge } from '$lib/components/ui/badge/index.js';
-  import { Button } from '$lib/components/ui/button/index.js';
-  import { createSvelteTable, FlexRender, renderComponent } from '$lib/components/ui/data-table/index.js';
-  import * as Empty from '$lib/components/ui/empty/index.js';
-  import * as InputGroup from '$lib/components/ui/input-group/index.js';
-  import { NativeSelect, NativeSelectOption } from '$lib/components/ui/native-select/index.js';
-  import * as Popover from '$lib/components/ui/popover/index.js';
-  import { RangeCalendar } from '$lib/components/ui/range-calendar/index.js';
-  import { ScrollArea } from '$lib/components/ui/scroll-area/index.js';
-  import { Separator } from '$lib/components/ui/separator/index.js';
-  import * as Sheet from '$lib/components/ui/sheet/index.js';
-  import * as Table from '$lib/components/ui/table/index.js';
+  import type { AuditEntryView } from '#lib/client/api.js';
+  import { ACTIONS, actionLabel, scopeLabel } from '#lib/client/audit.js';
+  import { absoluteTime } from '#lib/client/format.js';
+  import AuditActorCell from '#lib/components/audit/audit-actor-cell.svelte';
+  import AuditRowActions from '#lib/components/audit/audit-row-actions.svelte';
+  import AuditSummaryCell from '#lib/components/audit/audit-summary-cell.svelte';
+  import AuditTimeCell from '#lib/components/audit/audit-time-cell.svelte';
+  import OutcomeBadge from '#lib/components/audit/outcome-badge.svelte';
+  import CopyButton from '#lib/components/copy-button.svelte';
+  import SortHeader from '#lib/components/data-table/sort-header.svelte';
+  import PageHeader from '#lib/components/page-header.svelte';
+  import { Badge } from '#lib/components/ui/badge/index.js';
+  import { Button } from '#lib/components/ui/button/index.js';
+  import { createSvelteTable, FlexRender, renderComponent } from '#lib/components/ui/data-table/index.js';
+  import * as Empty from '#lib/components/ui/empty/index.js';
+  import * as InputGroup from '#lib/components/ui/input-group/index.js';
+  import { NativeSelect, NativeSelectOption } from '#lib/components/ui/native-select/index.js';
+  import * as Popover from '#lib/components/ui/popover/index.js';
+  import { RangeCalendar } from '#lib/components/ui/range-calendar/index.js';
+  import { ScrollArea } from '#lib/components/ui/scroll-area/index.js';
+  import { Separator } from '#lib/components/ui/separator/index.js';
+  import * as Sheet from '#lib/components/ui/sheet/index.js';
+  import * as Table from '#lib/components/ui/table/index.js';
   import type { PageData } from './$types';
 
   let { data }: { data: PageData } = $props();
 
   let sorting = $state<SortingState>([]);
-  let columnVisibility = $state<VisibilityState>({});
+  let columnVisibility = $state<ColumnVisibilityState>({});
   let detail = $state<AuditEntryView | null>(null);
   let detailOpen = $state(false);
   let actor = $state(page.url.searchParams.get('actor') ?? '');
@@ -61,15 +65,15 @@
    * narrowing would silently start the new result set partway in.
    */
   async function setParam(key: string, value: string | null) {
-    const next = new URL(page.url);
+    const next = new URL(page.url.href);
     if (value === null || value === '') next.searchParams.delete(key);
     else next.searchParams.set(key, value);
     next.searchParams.delete('cursor');
-    await goto(`${next.pathname}${next.search}`, { keepFocus: true, noScroll: true });
+    await goto(`${next.pathname}${next.search}`, { reset: false });
   }
 
   async function applyRange() {
-    const next = new URL(page.url);
+    const next = new URL(page.url.href);
     next.searchParams.delete('cursor');
 
     if (range?.start) {
@@ -88,7 +92,7 @@
       next.searchParams.delete('until');
     }
 
-    await goto(`${next.pathname}${next.search}`, { keepFocus: true, noScroll: true });
+    await goto(`${next.pathname}${next.search}`, { reset: false });
   }
 
   function openDetail(entry: AuditEntryView) {
@@ -96,7 +100,19 @@
     detailOpen = true;
   }
 
-  const columns: ColumnDef<AuditEntryView>[] = [
+  /**
+   * Every TanStack capability this table uses, registered by name. `'auto'`
+   * sorting resolves to the two string sorts listed here, and numbers sort
+   * by value.
+   */
+  const features = tableFeatures({
+    columnVisibilityFeature,
+    rowSortingFeature,
+    sortedRowModel: createSortedRowModel(),
+    sortFns: { alphanumeric: sortFn_alphanumeric, text: sortFn_text }
+  });
+
+  const columns: ColumnDef<typeof features, AuditEntryView>[] = [
     {
       accessorKey: 'ts',
       header: ({ column }) => renderComponent(SortHeader, { column, label: 'When' }),
@@ -130,6 +146,7 @@
   ];
 
   const table = createSvelteTable({
+    features,
     get data() {
       return data.page.entries;
     },
@@ -144,9 +161,7 @@
       }
     },
     onSortingChange: (updater) => (sorting = apply(updater, sorting)),
-    onColumnVisibilityChange: (updater) => (columnVisibility = apply(updater, columnVisibility)),
-    getCoreRowModel: getCoreRowModel(),
-    getSortedRowModel: getSortedRowModel()
+    onColumnVisibilityChange: (updater) => (columnVisibility = apply(updater, columnVisibility))
   });
 
   const hasFilters = $derived(
@@ -302,7 +317,7 @@
                     : undefined}
               >
                 {#if !header.isPlaceholder}
-                  <FlexRender content={header.column.columnDef.header} context={header.getContext()} />
+                  <FlexRender {header} />
                 {/if}
               </Table.Head>
             {/each}
@@ -314,7 +329,7 @@
           <Table.Row>
             {#each row.getVisibleCells() as cell (cell.id)}
               <Table.Cell>
-                <FlexRender content={cell.column.columnDef.cell} context={cell.getContext()} />
+                <FlexRender {cell} />
               </Table.Cell>
             {/each}
           </Table.Row>

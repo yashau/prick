@@ -2,16 +2,16 @@
   import ShieldPlusIcon from '@lucide/svelte/icons/shield-plus';
   import TriangleAlertIcon from '@lucide/svelte/icons/triangle-alert';
 
-  import type { FormErrors } from '$lib/client/forms';
-  import PageHeader from '$lib/components/page-header.svelte';
-  import DeleteGroupDialog from '$lib/components/rbac/delete-group-dialog.svelte';
-  import GrantDialog from '$lib/components/rbac/grant-dialog.svelte';
-  import GroupDetailsForm from '$lib/components/rbac/group-details-form.svelte';
-  import GroupGrantsTable from '$lib/components/rbac/group-grants-table.svelte';
-  import GroupMembers from '$lib/components/rbac/group-members.svelte';
-  import * as Alert from '$lib/components/ui/alert/index.js';
-  import { Badge } from '$lib/components/ui/badge/index.js';
-  import * as Tabs from '$lib/components/ui/tabs/index.js';
+  import type { FormErrors } from '#lib/client/forms.js';
+  import PageHeader from '#lib/components/page-header.svelte';
+  import DeleteGroupDialog from '#lib/components/rbac/delete-group-dialog.svelte';
+  import GrantDialog from '#lib/components/rbac/grant-dialog.svelte';
+  import GroupDetailsForm from '#lib/components/rbac/group-details-form.svelte';
+  import GroupGrantsTable from '#lib/components/rbac/group-grants-table.svelte';
+  import GroupMembers from '#lib/components/rbac/group-members.svelte';
+  import * as Alert from '#lib/components/ui/alert/index.js';
+  import { Badge } from '#lib/components/ui/badge/index.js';
+  import * as Tabs from '#lib/components/ui/tabs/index.js';
   import type { ActionData, PageData } from './$types';
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
@@ -23,7 +23,7 @@
 
   /**
    * Which tab is open. Bound rather than passed, so the selection survives the
-   * re-render that follows every `invalidateAll()` — adding a member and being
+   * re-render that follows every `refreshAll()` — adding a member and being
    * bounced back to the grants tab is a small thing that makes a screen feel
    * broken.
    */

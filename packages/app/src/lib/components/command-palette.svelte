@@ -10,8 +10,8 @@
 
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
-  import { api, type ProjectSummary } from '$lib/client/api';
-  import * as Command from '$lib/components/ui/command/index.js';
+  import { api, type ProjectSummary } from '#lib/client/api.js';
+  import * as Command from '#lib/components/ui/command/index.js';
 
   /**
    * The keyboard entry point to everything.
@@ -151,7 +151,7 @@
       <Command.Item
         value="hide revealed values"
         onSelect={async () => {
-          const { reveal } = await import('$lib/client/reveal.svelte.js');
+          const { reveal } = await import('#lib/client/reveal.svelte.js');
           reveal.wipe();
           open = false;
         }}

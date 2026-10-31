@@ -4,9 +4,9 @@
   import type { Snippet } from 'svelte';
 
   import { page } from '$app/state';
-  import { reveal } from '$lib/client/reveal.svelte.js';
-  import { Button } from '$lib/components/ui/button/index.js';
-  import { Separator } from '$lib/components/ui/separator/index.js';
+  import { reveal } from '#lib/client/reveal.svelte.js';
+  import { Button } from '#lib/components/ui/button/index.js';
+  import { Separator } from '#lib/components/ui/separator/index.js';
 
   let { children }: { children: Snippet } = $props();
 

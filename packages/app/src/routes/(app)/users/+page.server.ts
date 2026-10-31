@@ -1,8 +1,8 @@
 import { CreateGrantBody } from "@prick/shared";
 import { fail } from "@sveltejs/kit";
 
-import { fieldErrors } from "$lib/client/forms";
-import type { AdminScopes, GroupRefView, IdentityView } from "$lib/components/rbac/types";
+import { fieldErrors } from "#lib/client/forms.js";
+import type { AdminScopes, GroupRefView, IdentityView } from "#lib/components/rbac/types.js";
 import {
   createGrant,
   listGrants,
@@ -12,7 +12,7 @@ import {
   listProjects,
   revokeGrant,
   updateIdentity,
-} from "$lib/server/core";
+} from "#lib/server/core/index.js";
 
 import { refuse, refuseAction } from "../transport";
 import { adminScopes, grantScopeFields, grantTerms } from "./scopes";

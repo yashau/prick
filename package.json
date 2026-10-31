@@ -17,13 +17,13 @@
     "deploy:dry-run": "pnpm --filter @prick/app run deploy:dry-run"
   },
   "devDependencies": {
-    "@types/node": "^26.6.3",
-    "oxfmt": "0.71.0",
-    "oxlint": "1.86.0",
+    "@types/node": "^26.6.5",
+    "oxfmt": "0.75.0",
+    "oxlint": "1.90.0",
     "typescript": "catalog:"
   },
   "engines": {
     "node": ">=26"
   },
-  "packageManager": "pnpm@12.8.2"
+  "packageManager": "pnpm@12.16.1"
 }

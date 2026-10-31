@@ -1,9 +1,9 @@
 import { CreateGroupBody } from "@prick/shared";
 import { fail } from "@sveltejs/kit";
 
-import { fieldErrors } from "$lib/client/forms";
-import type { GroupView } from "$lib/components/rbac/types";
-import { createGroup, listGroups } from "$lib/server/core";
+import { fieldErrors } from "#lib/client/forms.js";
+import type { GroupView } from "#lib/components/rbac/types.js";
+import { createGroup, listGroups } from "#lib/server/core/index.js";
 
 import { refuse, refuseAction } from "../transport";
 import { isGlobalAdmin } from "../users/scopes";

@@ -1,7 +1,7 @@
 <script lang="ts">
-  import type { AuditEntryView } from '$lib/client/api';
-  import { actionLabel, scopeLabel, summariseDetail, type ScopeNames } from '$lib/client/audit';
-  import { Badge } from '$lib/components/ui/badge/index.js';
+  import type { AuditEntryView } from '#lib/client/api.js';
+  import { actionLabel, scopeLabel, summariseDetail, type ScopeNames } from '#lib/client/audit.js';
+  import { Badge } from '#lib/components/ui/badge/index.js';
 
   let {
     entry,

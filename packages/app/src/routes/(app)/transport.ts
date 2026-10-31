@@ -1,9 +1,9 @@
 import { error, fail, type ActionFailure } from "@sveltejs/kit";
 
-import type { Viewer } from "$lib/client/api";
-import type { FormErrors } from "$lib/client/forms";
-import { resolveEffectiveRole } from "$lib/server/auth";
-import { toPrickError, type CoreContext } from "$lib/server/core";
+import type { Viewer } from "#lib/client/api.js";
+import type { FormErrors } from "#lib/client/forms.js";
+import { resolveEffectiveRole } from "#lib/server/auth/index.js";
+import { toPrickError, type CoreContext } from "#lib/server/core/index.js";
 
 /**
  * The SvelteKit transport's three shared moves.
@@ -16,8 +16,8 @@ import { toPrickError, type CoreContext } from "$lib/server/core";
  * 403 and a 404 in this application is a deliberate security property rather
  * than a formatting choice.
  *
- * WHY IT LIVES HERE rather than in `$lib`. It imports `$lib/server/core`, so it
- * is a server module; `$lib/client` may not hold it, because that directory's
+ * WHY IT LIVES HERE rather than in `#lib`. It imports `#lib/server/core/index.js`, so it
+ * is a server module; `#lib/client` may not hold it, because that directory's
  * whole contract is that nothing in it can reach a value-carrying server module
  * (see the header of `api.ts`). SvelteKit ignores files in `src/routes` that do
  * not begin with `+`, so colocating it with the loads that use it is supported
@@ -28,8 +28,8 @@ import { toPrickError, type CoreContext } from "$lib/server/core";
 /**
  * Turn a `PrickError` into the error page, with the status it asked for.
  *
- * THE STATUS HAS TO COME FROM HERE and not from `handleError`, which cannot
- * change it: an uncaught `NOT_FOUND` would otherwise render a 500 page whose
+ * THE STATUS HAS TO COME FROM HERE. `handleError` renders every unclassified
+ * throwable as a 500, so an uncaught `NOT_FOUND` would render a 500 page whose
  * body says "No such project", which is the one combination that tells a user
  * their URL was fine and the server broke.
  *
@@ -41,9 +41,8 @@ import { toPrickError, type CoreContext } from "$lib/server/core";
 export function refuse(ctx: CoreContext, cause: unknown): never {
   const failure = toPrickError(cause);
 
-  error(failure.status, {
+  error(failure.status, failure.message, {
     code: failure.wireCode,
-    message: failure.message,
     // Echoed as `X-Request-Id` and stored on every audit row this request
     // wrote, including the denial that produced this page.
     requestId: ctx.requestId,

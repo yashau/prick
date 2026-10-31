@@ -11,16 +11,16 @@ mise run test
 
 That fans out to six suites. Playwright and miri are separate.
 
-| Suite          | Runner                                        | Task                    |
-| -------------- | --------------------------------------------- | ----------------------- |
-| Rust           | `cargo nextest`                               | `mise run test:rust`    |
-| Rust doc tests | `cargo test --doc`                            | `mise run test:doc`     |
-| Worker         | Vitest with `@cloudflare/vitest-pool-workers` | `mise run test:js`      |
-| Repo scripts   | `node --test`                                 | `mise run test:scripts` |
-| GitHub Action  | `node --test`                                 | `mise run test:action`  |
-| MCP server     | `node --test`                                 | `mise run test:mcp`     |
-| End-to-end     | Playwright                                    | `mise run e2e`          |
-| Purity proof   | `cargo miri nextest`                          | `mise run miri`         |
+| Suite          | Runner                                  | Task                    |
+| -------------- | --------------------------------------- | ----------------------- |
+| Rust           | `cargo nextest`                         | `mise run test:rust`    |
+| Rust doc tests | `cargo test --doc`                      | `mise run test:doc`     |
+| Worker         | Vitest with `@cloudflare/vitest-plugin` | `mise run test:js`      |
+| Repo scripts   | `node --test`                           | `mise run test:scripts` |
+| GitHub Action  | `node --test`                           | `mise run test:action`  |
+| MCP server     | `node --test`                           | `mise run test:mcp`     |
+| End-to-end     | Playwright                              | `mise run e2e`          |
+| Purity proof   | `cargo miri nextest`                    | `mise run miri`         |
 
 Doc tests get their own pass because nextest cannot run them. The action and the
 MCP server run under plain Node rather than workerd, so they use `node:test`
@@ -49,11 +49,11 @@ write-path tests are the ones that must stay fast and always green; making them
 wait on a UI build is how a suite stops being run.
 
 :::note[API shape moved]
-As of `@cloudflare/vitest-pool-workers` 0.21 the
-`@cloudflare/vitest-pool-workers/config` subpath and `defineWorkersConfig()` no
-longer exist. The pool is a Vite **plugin** now — `cloudflareTest(options)`,
-taking what used to be `test.poolOptions.workers`. Every tutorial online still
-shows the old shape. The package ships a codemod that performs the rewrite.
+The pool is a Vite **plugin** — `cloudflareTest(options)` from
+`@cloudflare/vitest-plugin` — taking what older releases read from
+`test.poolOptions.workers`. Many tutorials still show the
+`@cloudflare/vitest-pool-workers/config` + `defineWorkersConfig()` shape, which
+no longer exists.
 :::
 
 ### Access is exercised, not mocked

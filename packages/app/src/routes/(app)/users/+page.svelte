@@ -2,14 +2,14 @@
   import TriangleAlertIcon from '@lucide/svelte/icons/triangle-alert';
   import UsersIcon from '@lucide/svelte/icons/users';
 
-  import type { FormErrors } from '$lib/client/forms';
-  import GrantsTable from '$lib/components/access/grants-table.svelte';
-  import GrantDialog from '$lib/components/rbac/grant-dialog.svelte';
-  import IdentitiesTable from '$lib/components/rbac/identities-table.svelte';
-  import PageHeader from '$lib/components/page-header.svelte';
-  import * as Alert from '$lib/components/ui/alert/index.js';
-  import { Badge } from '$lib/components/ui/badge/index.js';
-  import * as Tabs from '$lib/components/ui/tabs/index.js';
+  import type { FormErrors } from '#lib/client/forms.js';
+  import GrantsTable from '#lib/components/access/grants-table.svelte';
+  import GrantDialog from '#lib/components/rbac/grant-dialog.svelte';
+  import IdentitiesTable from '#lib/components/rbac/identities-table.svelte';
+  import PageHeader from '#lib/components/page-header.svelte';
+  import * as Alert from '#lib/components/ui/alert/index.js';
+  import { Badge } from '#lib/components/ui/badge/index.js';
+  import * as Tabs from '#lib/components/ui/tabs/index.js';
   import type { ActionData, PageData } from './$types';
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
@@ -24,7 +24,7 @@
    *
    * `value="identities"` without `bind:` would hand the primitive a prop it
    * cannot write back through, and every re-render of this page — one follows
-   * each `invalidateAll()` — would reset the selection to the default. State
+   * each `refreshAll()` — would reset the selection to the default. State
    * that the user owns has to live somewhere the user's change survives.
    */
   let tab = $state('identities');

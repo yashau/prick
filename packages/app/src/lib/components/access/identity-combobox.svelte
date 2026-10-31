@@ -4,10 +4,10 @@
   import KeyRoundIcon from '@lucide/svelte/icons/key-round';
   import UserIcon from '@lucide/svelte/icons/user';
 
-  import type { IdentityRecord } from '$lib/client/api';
-  import { Button } from '$lib/components/ui/button/index.js';
-  import * as Command from '$lib/components/ui/command/index.js';
-  import * as Popover from '$lib/components/ui/popover/index.js';
+  import type { IdentityRecord } from '#lib/client/api.js';
+  import { Button } from '#lib/components/ui/button/index.js';
+  import * as Command from '#lib/components/ui/command/index.js';
+  import * as Popover from '#lib/components/ui/popover/index.js';
 
   /**
    * Pick an identity.

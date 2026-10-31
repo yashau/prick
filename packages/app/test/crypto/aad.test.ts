@@ -9,7 +9,7 @@
  * loudly if the call resolves at all and never puts the resolved value in the
  * failure message.
  *
- * Runs under `@cloudflare/vitest-pool-workers`, i.e. against the real Workers
+ * Runs under `@cloudflare/vitest-plugin`, i.e. against the real Workers
  * `crypto.subtle` in workerd rather than Node's. AES-GCM additional-data
  * handling is exactly the sort of thing that can differ between
  * implementations, so the suite is worth very little run anywhere else.

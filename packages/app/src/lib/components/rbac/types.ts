@@ -2,13 +2,13 @@
  * The shapes the RBAC screens render, mirrored from `src/lib/server/core/*`.
  *
  * WHY A MIRROR RATHER THAN AN IMPORT. A component may not reach into
- * `$lib/server` -- the import graph is the enforcement that a value-carrying
+ * `#lib/server` -- the import graph is the enforcement that a value-carrying
  * server module cannot be pulled into the browser bundle -- so the types a
  * component's props are written against have to live on the client side of that
- * line. `$lib/client/api.ts` does exactly this for every shape the fetch client
+ * line. `#lib/client/api.ts` does exactly this for every shape the fetch client
  * touches, and says so in its own header.
  *
- * These are NOT in `$lib/client/api.ts` for one reason worth stating: that file
+ * These are NOT in `#lib/client/api.ts` for one reason worth stating: that file
  * is the browser's typed view of `/api/v1`, and every shape in it is reachable
  * by a `fetch`. The `/users` and `/groups` screens are server-rendered and fetch
  * nothing -- their loads call `core` in-process -- so putting their shapes there

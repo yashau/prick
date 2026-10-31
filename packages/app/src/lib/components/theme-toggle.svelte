@@ -4,8 +4,8 @@
   import SunIcon from '@lucide/svelte/icons/sun';
   import { setMode, userPrefersMode } from 'mode-watcher';
 
-  import { Button } from '$lib/components/ui/button/index.js';
-  import * as DropdownMenu from '$lib/components/ui/dropdown-menu/index.js';
+  import { Button } from '#lib/components/ui/button/index.js';
+  import * as DropdownMenu from '#lib/components/ui/dropdown-menu/index.js';
 
   /**
    * Three states, not two: "system" is a real choice and dropping it means a

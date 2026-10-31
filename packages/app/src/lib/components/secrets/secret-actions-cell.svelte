@@ -1,10 +1,10 @@
 <script lang="ts">
   import MoreHorizontalIcon from '@lucide/svelte/icons/more-horizontal';
 
-  import type { SecretListEntry } from '$lib/client/api';
-  import type { SecretsController } from '$lib/client/secrets.svelte.js';
-  import { Button } from '$lib/components/ui/button/index.js';
-  import * as DropdownMenu from '$lib/components/ui/dropdown-menu/index.js';
+  import type { SecretListEntry } from '#lib/client/api.js';
+  import type { SecretsController } from '#lib/client/secrets.svelte.js';
+  import { Button } from '#lib/components/ui/button/index.js';
+  import * as DropdownMenu from '#lib/components/ui/dropdown-menu/index.js';
 
   let {
     row,

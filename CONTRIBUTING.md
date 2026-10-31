@@ -93,7 +93,7 @@ yours to hold.
   FFI, so most of the CLI is out of reach. Its job here is _enforcement, not discovery_: a green miri
   run is a machine-checked proof that `prick-core` is genuinely pure — it cannot pass if someone adds
   a file read, a clock call, or an FFI dependency. Keep it that way.
-- **Worker** — vitest with `@cloudflare/vitest-pool-workers`, against real D1 in miniflare, offline.
+- **Worker** — vitest with `@cloudflare/vitest-plugin`, against real D1 in miniflare, offline.
 - **E2E** — Playwright against a locally built Worker, with its own Access harness.
 - **Scripts, the action and the MCP server** — `node:test`. They run under plain Node, not workerd.
 

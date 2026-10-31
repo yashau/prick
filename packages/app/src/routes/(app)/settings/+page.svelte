@@ -6,17 +6,17 @@
   import { toast } from 'svelte-sonner';
 
   import { applyAction, enhance } from '$app/forms';
-  import { invalidateAll } from '$app/navigation';
-  import { absoluteTime, pluralise, relativeTime } from '$lib/client/format';
-  import PageHeader from '$lib/components/page-header.svelte';
-  import * as Alert from '$lib/components/ui/alert/index.js';
-  import { Badge } from '$lib/components/ui/badge/index.js';
-  import { Button } from '$lib/components/ui/button/index.js';
-  import * as Card from '$lib/components/ui/card/index.js';
-  import { Progress } from '$lib/components/ui/progress/index.js';
-  import { Separator } from '$lib/components/ui/separator/index.js';
-  import { Spinner } from '$lib/components/ui/spinner/index.js';
-  import * as Table from '$lib/components/ui/table/index.js';
+  import { refreshAll } from '$app/navigation';
+  import { absoluteTime, pluralise, relativeTime } from '#lib/client/format.js';
+  import PageHeader from '#lib/components/page-header.svelte';
+  import * as Alert from '#lib/components/ui/alert/index.js';
+  import { Badge } from '#lib/components/ui/badge/index.js';
+  import { Button } from '#lib/components/ui/button/index.js';
+  import * as Card from '#lib/components/ui/card/index.js';
+  import { Progress } from '#lib/components/ui/progress/index.js';
+  import { Separator } from '#lib/components/ui/separator/index.js';
+  import { Spinner } from '#lib/components/ui/spinner/index.js';
+  import * as Table from '#lib/components/ui/table/index.js';
   import type { PageData } from './$types';
 
   let { data }: { data: PageData } = $props();
@@ -282,7 +282,7 @@
             rekeying = false;
             if (result.type === 'success') {
               toast.success(rekeyMessage(result.data));
-              await invalidateAll();
+              await refreshAll();
               return;
             }
             await applyAction(result);

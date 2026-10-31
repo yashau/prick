@@ -6,21 +6,21 @@
   import TriangleAlertIcon from '@lucide/svelte/icons/triangle-alert';
   import { toast } from 'svelte-sonner';
 
-  import { api, type ImportResult } from '$lib/client/api';
-  import { ApiError } from '$lib/client/errors';
-  import { pluralise } from '$lib/client/format';
-  import type { SecretsController } from '$lib/client/secrets.svelte.js';
-  import * as Alert from '$lib/components/ui/alert/index.js';
-  import { Badge } from '$lib/components/ui/badge/index.js';
-  import { Button } from '$lib/components/ui/button/index.js';
-  import * as Dialog from '$lib/components/ui/dialog/index.js';
-  import * as Field from '$lib/components/ui/field/index.js';
-  import { Label } from '$lib/components/ui/label/index.js';
-  import { NativeSelect, NativeSelectOption } from '$lib/components/ui/native-select/index.js';
-  import { ScrollArea } from '$lib/components/ui/scroll-area/index.js';
-  import { Spinner } from '$lib/components/ui/spinner/index.js';
-  import { Switch } from '$lib/components/ui/switch/index.js';
-  import { Textarea } from '$lib/components/ui/textarea/index.js';
+  import { api, type ImportResult } from '#lib/client/api.js';
+  import { ApiError } from '#lib/client/errors.js';
+  import { pluralise } from '#lib/client/format.js';
+  import type { SecretsController } from '#lib/client/secrets.svelte.js';
+  import * as Alert from '#lib/components/ui/alert/index.js';
+  import { Badge } from '#lib/components/ui/badge/index.js';
+  import { Button } from '#lib/components/ui/button/index.js';
+  import * as Dialog from '#lib/components/ui/dialog/index.js';
+  import * as Field from '#lib/components/ui/field/index.js';
+  import { Label } from '#lib/components/ui/label/index.js';
+  import { NativeSelect, NativeSelectOption } from '#lib/components/ui/native-select/index.js';
+  import { ScrollArea } from '#lib/components/ui/scroll-area/index.js';
+  import { Spinner } from '#lib/components/ui/spinner/index.js';
+  import { Switch } from '#lib/components/ui/switch/index.js';
+  import { Textarea } from '#lib/components/ui/textarea/index.js';
 
   /**
    * `.env` / JSON import, dry run first.

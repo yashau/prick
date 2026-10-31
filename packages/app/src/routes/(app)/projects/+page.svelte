@@ -3,17 +3,17 @@
   import LayersIcon from '@lucide/svelte/icons/layers';
   import MoreHorizontalIcon from '@lucide/svelte/icons/more-horizontal';
 
-  import type { ProjectSummary } from '$lib/client/api';
-  import { absoluteTime, pluralise, relativeTime } from '$lib/client/format';
-  import PageHeader from '$lib/components/page-header.svelte';
-  import CreateProjectDialog from '$lib/components/projects/create-project-dialog.svelte';
-  import DeleteProjectDialog from '$lib/components/projects/delete-project-dialog.svelte';
-  import { Badge } from '$lib/components/ui/badge/index.js';
-  import { Button } from '$lib/components/ui/button/index.js';
-  import * as Card from '$lib/components/ui/card/index.js';
-  import * as DropdownMenu from '$lib/components/ui/dropdown-menu/index.js';
-  import * as Empty from '$lib/components/ui/empty/index.js';
-  import * as Table from '$lib/components/ui/table/index.js';
+  import type { ProjectSummary } from '#lib/client/api.js';
+  import { absoluteTime, pluralise, relativeTime } from '#lib/client/format.js';
+  import PageHeader from '#lib/components/page-header.svelte';
+  import CreateProjectDialog from '#lib/components/projects/create-project-dialog.svelte';
+  import DeleteProjectDialog from '#lib/components/projects/delete-project-dialog.svelte';
+  import { Badge } from '#lib/components/ui/badge/index.js';
+  import { Button } from '#lib/components/ui/button/index.js';
+  import * as Card from '#lib/components/ui/card/index.js';
+  import * as DropdownMenu from '#lib/components/ui/dropdown-menu/index.js';
+  import * as Empty from '#lib/components/ui/empty/index.js';
+  import * as Table from '#lib/components/ui/table/index.js';
   import type { ActionData, PageData } from './$types';
 
   let { data, form }: { data: PageData; form: ActionData } = $props();

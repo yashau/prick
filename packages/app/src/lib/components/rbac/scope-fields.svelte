@@ -1,8 +1,8 @@
 <script lang="ts">
-  import type { FormErrors } from '$lib/client/forms';
-  import type { AdminScopes } from '$lib/components/rbac/types';
-  import * as Field from '$lib/components/ui/field/index.js';
-  import { NativeSelect, NativeSelectOption } from '$lib/components/ui/native-select/index.js';
+  import type { FormErrors } from '#lib/client/forms.js';
+  import type { AdminScopes } from '#lib/components/rbac/types.js';
+  import * as Field from '#lib/components/ui/field/index.js';
+  import { NativeSelect, NativeSelectOption } from '#lib/components/ui/native-select/index.js';
 
   /**
    * Pick the scope a grant applies to — offering only scopes this actor can

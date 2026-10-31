@@ -5,19 +5,19 @@
   import { toast } from 'svelte-sonner';
 
   import { applyAction, enhance } from '$app/forms';
-  import { invalidateAll } from '$app/navigation';
-  import type { EnvironmentSummary } from '$lib/client/api';
-  import AuditItem from '$lib/components/audit/audit-item.svelte';
-  import CreateEnvironmentDialog from '$lib/components/environments/create-environment-dialog.svelte';
-  import EnvironmentCard from '$lib/components/environments/environment-card.svelte';
-  import PageHeader from '$lib/components/page-header.svelte';
-  import * as AlertDialog from '$lib/components/ui/alert-dialog/index.js';
-  import { Button, buttonVariants } from '$lib/components/ui/button/index.js';
-  import * as Empty from '$lib/components/ui/empty/index.js';
-  import * as Field from '$lib/components/ui/field/index.js';
-  import { Input } from '$lib/components/ui/input/index.js';
-  import * as Item from '$lib/components/ui/item/index.js';
-  import * as Tabs from '$lib/components/ui/tabs/index.js';
+  import { refreshAll } from '$app/navigation';
+  import type { EnvironmentSummary } from '#lib/client/api.js';
+  import AuditItem from '#lib/components/audit/audit-item.svelte';
+  import CreateEnvironmentDialog from '#lib/components/environments/create-environment-dialog.svelte';
+  import EnvironmentCard from '#lib/components/environments/environment-card.svelte';
+  import PageHeader from '#lib/components/page-header.svelte';
+  import * as AlertDialog from '#lib/components/ui/alert-dialog/index.js';
+  import { Button, buttonVariants } from '#lib/components/ui/button/index.js';
+  import * as Empty from '#lib/components/ui/empty/index.js';
+  import * as Field from '#lib/components/ui/field/index.js';
+  import { Input } from '#lib/components/ui/input/index.js';
+  import * as Item from '#lib/components/ui/item/index.js';
+  import * as Tabs from '#lib/components/ui/tabs/index.js';
   import type { ActionData, PageData } from './$types';
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
@@ -130,7 +130,7 @@
           if (result.type === 'success') {
             deleteOpen = false;
             toast.success(`Deleted ${deleting?.slug}.`);
-            await invalidateAll();
+            await refreshAll();
             return;
           }
           await applyAction(result);

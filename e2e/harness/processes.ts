@@ -197,12 +197,18 @@ export async function findFreePort(): Promise<number> {
 /**
  * Start `wrangler dev` and wait for it to answer `/api/v1/health`.
  *
- * `SSL_CERT_FILE` is the entire reason the Access harness works. `workerd`
- * builds its outbound TLS trust from the platform store, and BoringSSL honours
- * `SSL_CERT_FILE` as an override -- so pointing it at the harness certificate
- * makes exactly one certificate trusted for the lifetime of this process, which
- * is what lets `jwks.ts` fetch the mock JWKS over real HTTPS without the
- * verifier being relaxed to accept plaintext.
+ * The harness certificate is trusted through two variables, and the pair is
+ * the entire reason the Access harness works: it is what lets `jwks.ts` fetch
+ * the mock JWKS over real HTTPS without the verifier being relaxed to accept
+ * plaintext.
+ *
+ *   SSL_CERT_FILE        `workerd` builds its outbound TLS trust from the
+ *                        platform store, and BoringSSL honours this as an
+ *                        override.
+ *   NODE_EXTRA_CA_CERTS  On Windows, miniflare hands `workerd` an explicit
+ *                        certificate list -- Node's bundled roots plus the
+ *                        contents of this file -- and that list is what the
+ *                        outbound fetch trusts there.
  *
  * It is scoped to this child. Nothing outside the run's `wrangler dev` has its
  * trust store altered, and the certificate expires in two days regardless.
@@ -229,6 +235,7 @@ export async function startDevServer(options: {
       cwd: WORK_ROOT,
       env: {
         SSL_CERT_FILE: options.certificatePath,
+        NODE_EXTRA_CA_CERTS: options.certificatePath,
         // Wrangler prints a survey prompt and checks for updates otherwise,
         // neither of which belongs in a test run's first ten seconds.
         CI: "1",

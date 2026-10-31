@@ -7,9 +7,9 @@
     type DateValue
   } from '@internationalized/date';
 
-  import { Button } from '$lib/components/ui/button/index.js';
-  import { Calendar } from '$lib/components/ui/calendar/index.js';
-  import * as Popover from '$lib/components/ui/popover/index.js';
+  import { Button } from '#lib/components/ui/button/index.js';
+  import { Calendar } from '#lib/components/ui/calendar/index.js';
+  import * as Popover from '#lib/components/ui/popover/index.js';
 
   /**
    * A single-date picker.
