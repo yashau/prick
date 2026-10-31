@@ -164,8 +164,10 @@ reports its problem to a language model instead of to the person who can fix it.
 
 ### Getting a service token
 
-In the Cloudflare Zero Trust dashboard: **Access → Service Auth → Service Tokens → Create**. Attach
-the token to a policy on the Access application in front of your Worker.
+In the Cloudflare Zero Trust dashboard: **Access controls → Service credentials → Service Tokens →
+Create Service Token**. Then, under **Access controls → Policies**, add a reusable policy with the
+action **Service Auth** and an include rule using the **Service Token** selector set to that token,
+and attach it to the Access application in front of your Worker, next to the people's Allow policy.
 
 The token's `common_name` looks like `e367826f93b8d71185e03fe518aff3b4.access`, which nobody can map
 to "my laptop's assistant". The normal flow is: point this server at your install, watch it get a

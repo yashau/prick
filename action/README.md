@@ -29,14 +29,16 @@ for exactly this — a **service token**, a client id and client secret pair tha
 
 **Creating one**, in the Cloudflare dashboard:
 
-1. **Zero Trust → Access → Service auth → Service Tokens → Create Service Token.** Name it after the
+1. **Zero Trust → Access controls → Service credentials → Service Tokens → Create Service Token.** Name it after the
    thing that will use it (`github-actions-api-deploy`), not after the person creating it.
-2. Copy the **Client ID** (it ends in `.access`) and the **Client Secret**. The secret is shown
+2. Copy the **Client ID** (it ends in `.access`) and the **Client Secret** (it starts with
+   `cfast_`). The secret is shown
    **once**. Store both as repository or environment secrets in GitHub.
-3. Add the token to the Access policy in front of your prick server: edit the application's policy,
-   add an **include** rule of type **Service Auth → the token you just created**, and make sure the
-   policy's action is **Service Auth** rather than Allow. A policy that only lists human identities
-   will reject the token at the edge, before prick ever sees the request.
+3. Let the token through Access. Under **Access controls → Policies**, add a reusable policy with
+   the action **Service Auth** and an **include** rule using the **Service Token** selector, set to
+   the token you just created, then attach it to your prick application next to the people's Allow
+   policy. The Allow policy rejects a service token at the edge, before prick ever sees the request,
+   and must stay on Allow so that `prk login` keeps working.
 4. Grant the token a role **inside prick**. Access decides _who_ is calling; prick decides _what
    they may read_, and a brand-new token may read nothing. The easy way round is to run the workflow
    once, let it fail with a 404 (a project the token cannot see is reported as absent), then open **Access → Seen but not granted** in the prick admin UI —

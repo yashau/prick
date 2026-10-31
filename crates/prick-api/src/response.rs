@@ -538,6 +538,27 @@ mod tests {
     }
 
     #[test]
+    fn a_strict_mode_access_refusal_without_a_page_is_still_classified() {
+        // With strict service token authentication, Access answers a token it
+        // will not authorise with a bare 401 or 403 rather than a login page.
+        // Neither carries a JSON envelope, so neither may reach the parser.
+        for content_type in [None, Some("text/plain".to_owned())] {
+            let refused = ResponseFacts {
+                status: 403,
+                content_type: content_type.clone(),
+                ..ResponseFacts::default()
+            };
+            let classified = classify(&refused).expect("403 is a failure");
+            assert_eq!(classified.kind, ErrorKind::Forbidden);
+
+            let unauthenticated =
+                ResponseFacts { status: 401, content_type, ..ResponseFacts::default() };
+            let classified = classify(&unauthenticated).expect("401 is a failure");
+            assert_eq!(classified.kind, ErrorKind::Unauthenticated);
+        }
+    }
+
+    #[test]
     fn a_mitigated_request_names_the_mitigation() {
         let facts = ResponseFacts {
             status: 403,

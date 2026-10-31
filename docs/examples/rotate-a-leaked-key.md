@@ -172,7 +172,14 @@ so you know what to reconfigure in step 5.
 
 Disabling stops prick from honouring the identity. The token can still
 authenticate to Cloudflare Access and reach anything else that trusts it, so
-delete it under **Zero Trust → Access → Service auth → Service Tokens**.
+delete it under **Zero Trust → Access controls → Service credentials → Service
+Tokens**.
+
+Delete rather than rotate. Cloudflare's **Rotate** keeps the client id and can
+keep the old secret valid for an overlap window
+(`previous_client_secret_expires_at`), which suits a scheduled rotation. A
+leaked secret needs the immediate cut, and a deleted token leaves nothing for a
+copy of it to authenticate as.
 
 For a person, revoke their Access sessions and, if the laptop is gone, assume
 the local token file went with it.

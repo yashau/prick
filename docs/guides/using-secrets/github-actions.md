@@ -20,12 +20,15 @@ repository at `action/` with its own test suite (`mise run test:action`).
 The only thing your repository stores is the service token. Everything else lives
 in prick.
 
-1. Create a service token under **Zero Trust → Access → Service auth → Service
-   Tokens**. The client secret is shown once; the client id ends in `.access`.
-2. Add it to the Access policy for your prick hostname — an **include** rule of
-   type **Service Auth**, with the policy's action set to **Service Auth** rather
-   than Allow. A policy listing only human identities rejects the token at the
-   edge, before prick ever sees the request.
+1. Create a service token under **Zero Trust → Access controls → Service
+   credentials → Service Tokens**. The client secret starts with `cfast_` and is
+   shown once; the client id ends in `.access`.
+2. Under **Access controls → Policies**, add a reusable policy with the action
+   **Service Auth** and an **include** rule using the **Service Token**
+   selector, set to that token, and attach it to your prick application next to
+   the people's Allow policy. The Allow policy rejects a service token at the
+   edge, before prick ever sees the request, and must stay on Allow so that
+   `prk login` keeps working.
 3. Store the pair as GitHub Actions secrets, e.g. `PRICK_CLIENT_ID` and
    `PRICK_CLIENT_SECRET`.
 
