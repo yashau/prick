@@ -112,7 +112,8 @@ function htmlOpenFor(appearance: Appearance | null): string {
   // Built FROM the anchor rather than restating it, so the tag being matched
   // and the tag being written cannot drift apart into a rewrite that finds
   // nothing or one that drops an attribute `app.html` carries.
-  return HTML_OPEN.replace(">", ` ${attributes}>`);
+  // Everything before the closing `>`, then the attributes, then the `>`.
+  return `${HTML_OPEN.slice(0, -1)} ${attributes}>`;
 }
 
 export const handle: Handle = async ({ event, resolve }) => {

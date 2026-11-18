@@ -32,7 +32,7 @@
 use std::io;
 
 use windows_sys::Win32::Foundation::{CloseHandle, FALSE, HANDLE, TRUE};
-use windows_sys::Win32::System::Console::{CTRL_BREAK_EVENT, CTRL_C_EVENT, SetConsoleCtrlHandler};
+use windows_sys::Win32::System::Console::{self, SetConsoleCtrlHandler};
 use windows_sys::Win32::System::JobObjects::{
     AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
     JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectExtendedLimitInformation,
@@ -176,7 +176,9 @@ pub fn install_console_ctrl_handler() -> io::Result<()> {
 extern "system" fn handler(event: u32) -> windows_sys::core::BOOL {
     match event {
         // Handled: the child received the same event and gets to decide.
-        CTRL_C_EVENT | CTRL_BREAK_EVENT => TRUE,
+        // Path-qualified so the pattern can only ever name the constants; a bare
+        // identifier that failed to resolve would silently bind everything.
+        Console::CTRL_C_EVENT | Console::CTRL_BREAK_EVENT => TRUE,
         // Not ours. Default handling runs, the process exits, the last job
         // handle closes, and the job terminates whatever is left.
         _ => FALSE,
@@ -196,7 +198,8 @@ mod tests {
     #[test]
     fn the_handler_claims_interrupts_and_declines_shutdown() {
         use windows_sys::Win32::System::Console::{
-            CTRL_CLOSE_EVENT, CTRL_LOGOFF_EVENT, CTRL_SHUTDOWN_EVENT,
+            CTRL_BREAK_EVENT, CTRL_C_EVENT, CTRL_CLOSE_EVENT, CTRL_LOGOFF_EVENT,
+            CTRL_SHUTDOWN_EVENT,
         };
 
         assert_eq!(handler(CTRL_C_EVENT), TRUE, "Ctrl-C must not kill prk before the child");

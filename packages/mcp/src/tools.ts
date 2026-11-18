@@ -1,4 +1,4 @@
-import { readFile, realpath, stat } from "node:fs/promises";
+import { open, realpath } from "node:fs/promises";
 
 import type { EnvironmentSummary, PrickApiClient, ProjectSummary, SecretListEntry } from "./api.ts";
 import type { ServerConfig } from "./config.ts";
@@ -441,10 +441,32 @@ async function readLocalDotenv(root: string, file: WorkspacePath): Promise<strin
   // is refused before its target is inspected at all.
   if (!isWithinRoot(root, path)) throw outsideWorkspace(file.display);
 
-  let info: Awaited<ReturnType<typeof stat>>;
+  // One open, and every later question is asked of that handle: the file that
+  // is measured is the file that is read, even if the path is swapped for
+  // another between the two.
+  let handle: Awaited<ReturnType<typeof open>>;
 
   try {
-    info = await stat(path);
+    handle = await open(path, "r");
+  } catch {
+    throw unreadable(file);
+  }
+
+  try {
+    return await readOpenedDotenv(handle, file);
+  } finally {
+    await handle.close();
+  }
+}
+
+async function readOpenedDotenv(
+  handle: Awaited<ReturnType<typeof open>>,
+  file: WorkspacePath,
+): Promise<string> {
+  let info: Awaited<ReturnType<typeof handle.stat>>;
+
+  try {
+    info = await handle.stat();
   } catch {
     throw unreadable(file);
   }
@@ -464,7 +486,7 @@ async function readLocalDotenv(root: string, file: WorkspacePath): Promise<strin
     );
   }
 
-  return await readFile(path, "utf8");
+  return await handle.readFile("utf8");
 }
 
 /**
