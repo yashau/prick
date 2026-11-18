@@ -992,12 +992,7 @@ describe('filesystem: set and check across a partial repo', () => {
   test('an unknown command exits non-zero', () => {
     const errors = [];
     assert.equal(
-      main(['frobnicate'], {
-        // Never read: the command is refused before a root is consulted.
-        root: path.join(import.meta.dirname, 'no-such-repo'),
-        log: () => {},
-        logErr: (s) => errors.push(s),
-      }),
+      main(['frobnicate'], { root: 'no-such-repo', log: () => {}, logErr: (s) => errors.push(s) }),
       1,
     );
     assert.ok(errors.some((l) => l.includes('unknown command')));
