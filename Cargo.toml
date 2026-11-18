@@ -16,7 +16,6 @@ edition = "2024"
 rust-version = "1.97"
 license = "MIT"
 repository = "https://github.com/yashau/prick"
-homepage = "https://github.com/yashau/prick"
 authors = ["yashau"]
 
 [workspace.dependencies]
