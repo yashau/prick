@@ -119,7 +119,7 @@ export function countingBinding(inner: D1Database = env.DB): CountingBinding {
   let statements = 0;
 
   const binding = new Proxy(inner, {
-    get(target, property, receiver) {
+    get(target, property) {
       if (property === "batch") {
         return (queries: D1PreparedStatement[]) => {
           batches += 1;
@@ -132,7 +132,12 @@ export function countingBinding(inner: D1Database = env.DB): CountingBinding {
           return target.prepare(query);
         };
       }
-      return Reflect.get(target, property, receiver) as unknown;
+      // Bound to the real binding: its methods read private fields, and a
+      // private field cannot be read through a Proxy standing in as `this`.
+      const value: unknown = Reflect.get(target, property, target);
+      return typeof value === "function"
+        ? (value as (...args: unknown[]) => unknown).bind(target)
+        : value;
     },
   });
 
@@ -169,7 +174,7 @@ export function racingBinding(
   let attempt = 0;
 
   return new Proxy(inner, {
-    get(target, property, receiver) {
+    get(target, property) {
       if (property === "batch") {
         return async (queries: D1PreparedStatement[]) => {
           attempt += 1;
@@ -177,7 +182,12 @@ export function racingBinding(
           return target.batch(queries);
         };
       }
-      return Reflect.get(target, property, receiver) as unknown;
+      // Bound to the real binding: its methods read private fields, and a
+      // private field cannot be read through a Proxy standing in as `this`.
+      const value: unknown = Reflect.get(target, property, target);
+      return typeof value === "function"
+        ? (value as (...args: unknown[]) => unknown).bind(target)
+        : value;
     },
   });
 }
