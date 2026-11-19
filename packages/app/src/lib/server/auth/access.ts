@@ -386,10 +386,17 @@ export async function verifyAccessJwt(
     iat = value;
   }
 
-  // --- sub: a string, possibly EMPTY (that is the service-token shape) -----
-  if (typeof payload.sub !== "string") {
-    throw unauthenticated("The access token carries no subject.");
+  // --- sub: a string, possibly EMPTY or ABSENT (the service-token shapes) ---
+  // Access has issued service tokens both `sub: ""` and no `sub` at all, and
+  // both mean the same thing: no user. An absent `sub` is read as the empty
+  // string, which leaves `classifyClaims` as the one place that decides: it
+  // accepts an empty `sub` only alongside a `common_name`, and an `email`
+  // without a non-empty `sub` stays a 401. A `sub` of any other type is not a
+  // shape Access issues, and is refused.
+  if (payload.sub !== undefined && typeof payload.sub !== "string") {
+    throw unauthenticated("The access token carries a malformed subject claim.");
   }
+  const sub = payload.sub ?? "";
 
   if (payload.email !== undefined && typeof payload.email !== "string") {
     throw unauthenticated("The access token carries a malformed email claim.");
@@ -398,7 +405,7 @@ export async function verifyAccessJwt(
     throw unauthenticated("The access token carries a malformed common name claim.");
   }
 
-  const claims: AccessClaims = { iss, aud, sub: payload.sub, exp };
+  const claims: AccessClaims = { iss, aud, sub, exp };
 
   if (iat !== undefined) claims.iat = iat;
   if (nbf !== undefined) claims.nbf = nbf;

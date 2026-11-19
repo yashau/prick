@@ -174,6 +174,42 @@ describe("verifyAccessJwt -- claim rejections", () => {
   });
 
   /**
+   * The service-token shape Access issues since 2026-11-18: no `sub` claim at
+   * all, rather than an empty one. A verifier that required `sub` to be a
+   * string refused every machine client with "carries no subject".
+   */
+  it("accepts a service token with NO sub claim, as an empty sub", async () => {
+    const token = await serviceToken({ claims: { sub: undefined } });
+
+    const payload = JSON.parse(
+      atob((token.split(".")[1] ?? "").replaceAll("-", "+").replaceAll("_", "/")),
+    ) as Record<string, unknown>;
+    expect(Object.keys(payload)).not.toContain("sub");
+
+    const claims = await verifyAccessJwt(token, options());
+    expect(claims.sub).toBe("");
+    expect(actorFromClaims(claims)).toMatchObject({
+      kind: "service",
+      subject: "e367826f93b8d71185e03fe518aff3b4.access",
+    });
+  });
+
+  it("still refuses a user token with an email but NO sub", async () => {
+    // Reading an absent `sub` as empty must not let an email stand alone.
+    const token = await userToken({ claims: { sub: undefined } });
+    const claims = await verifyAccessJwt(token, options());
+    throwsWith(() => actorFromClaims(claims), "UNAUTHENTICATED");
+  });
+
+  it("rejects a sub that is not a string", async () => {
+    await rejectsWith(
+      async () =>
+        verifyAccessJwt(await serviceToken({ claims: { sub: 7 as unknown as string } }), options()),
+      "UNAUTHENTICATED",
+    );
+  });
+
+  /**
    * RFC 7519 lets `aud` be a single string or an array, and Access uses both:
    * an array on the tokens it issues to people, a bare string on the tokens it
    * issues to SERVICE TOKENS. This is the exact shape Access issued for a real

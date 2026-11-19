@@ -41,4 +41,4 @@ cannot be verified without a Cloudflare account, say so.
 - [ ] The check goes through the shared core, not through a route handler that
       decides for itself.
 - [ ] Both identity kinds are covered: an SSO user and a service token. Service
-      token claims have no `email`, no `nbf`, and an empty `sub`.
+      token claims have no `email`, no `nbf`, and an empty or absent `sub`.
