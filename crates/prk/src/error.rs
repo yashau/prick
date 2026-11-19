@@ -171,8 +171,20 @@ impl CliError {
     /// The server's own error code, such as `SERVICE_TOKENS_UNCONFIGURED`,
     /// when the failure came from a server that named one.
     pub fn server_code(&self) -> Option<&str> {
+        self.api().and_then(prick_api::ApiError::server_code)
+    }
+
+    /// The request id the failing request was recorded under, when a server
+    /// answered it. The one value that finds this failure in the server's logs.
+    pub fn request_id(&self) -> Option<&str> {
+        self.api().and_then(prick_api::ApiError::request_id)
+    }
+
+    /// The API failure underneath, whether it surfaced directly or through the
+    /// authentication layer, which wraps the same error for its own requests.
+    fn api(&self) -> Option<&prick_api::ApiError> {
         match self {
-            Self::Api(err) => err.server_code(),
+            Self::Api(err) | Self::Auth(prick_auth::AuthError::Api(err)) => Some(err),
             _ => None,
         }
     }
@@ -186,6 +198,7 @@ impl CliError {
     pub fn hint(&self) -> Option<&str> {
         match self {
             Self::Api(err) => err.server_hint().or_else(|| err.hint()),
+            Self::Auth(prick_auth::AuthError::Api(err)) => err.server_hint().or_else(|| err.hint()),
             Self::Auth(err) => err.hint(),
             Self::Target(err) => err.hint(),
             Self::Launch(err) => err.hint(),
@@ -239,6 +252,20 @@ mod tests {
         assert_eq!(err.exit_code(), 3);
         assert_eq!(err.code(), "UNAUTHENTICATED");
         assert!(err.hint().is_some_and(|h| h.contains("prk login")));
+    }
+
+    #[test]
+    fn a_server_refusal_keeps_its_diagnosis_through_the_auth_layer() {
+        // `prk run` and `prk whoami` authenticate through prick-auth, which
+        // wraps the same API error. Its hint and request id must survive that.
+        let api = prick_api::ApiError::new(ErrorKind::Unauthenticated, "no subject")
+            .with_server_hint("Check the token.")
+            .with_request_id("req-7");
+        for err in [CliError::Api(api.clone()), CliError::Auth(prick_auth::AuthError::Api(api))] {
+            assert_eq!(err.hint(), Some("Check the token."));
+            assert_eq!(err.request_id(), Some("req-7"));
+            assert_eq!(err.exit_code(), 3);
+        }
     }
 
     #[test]

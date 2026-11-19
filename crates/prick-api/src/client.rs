@@ -427,11 +427,45 @@ fn response_kind(facts: &ResponseFacts) -> Option<ErrorKind> {
         .or_else(|| (facts.status >= 400).then(|| ErrorKind::from_status(facts.status)))
 }
 
+/// The server's JSON error envelope, if the response is one.
+fn envelope(received: &Received) -> Option<ApiErrorBody> {
+    if !received.facts.is_json() || received.facts.truncated {
+        return None;
+    }
+    serde_json::from_slice::<ApiErrorBody>(&received.body).ok()
+}
+
+/// The error a server's own envelope describes, or `None` if the response does
+/// not carry one with a code.
+fn server_error(received: &Received) -> Option<ApiError> {
+    let body = envelope(received).filter(|body| !body.code.is_empty())?;
+    let hint = body.hint.clone();
+    let code = body.code.clone();
+    let mut err =
+        ApiError::from_server(received.facts.clone(), body.into_message()).with_server_code(code);
+    if let Some(hint) = hint {
+        err = err.with_server_hint(hint);
+    }
+    Some(err)
+}
+
 /// Turns a received response into a value, or into the best available error.
 ///
 /// Borrows rather than consumes so that the caller's [`Received`] lives to the
 /// end of its own scope, where [`Received::drop`] wipes the body.
 fn decode<T: DeserializeOwned>(received: &Received) -> Result<T, ApiError> {
+    // A 401 that is prick's own error envelope says WHICH check refused the
+    // credential -- "the access token carries no subject", "the access token
+    // has expired" -- and that is the whole diagnosis. `classify` decides from
+    // the response's facts alone and cannot see it, so the envelope is read
+    // first here. A 401 in any other shape, such as Access's own challenge,
+    // still gets `classify`'s description of what was observed.
+    if received.facts.status == 401
+        && let Some(err) = server_error(received)
+    {
+        return Err(err);
+    }
+
     if let Some(classified) = classify(&received.facts) {
         return Err(ApiError::from_response(received.facts.clone(), classified));
     }
@@ -442,7 +476,7 @@ fn decode<T: DeserializeOwned>(received: &Received) -> Result<T, ApiError> {
     // a client expecting a wrapping `error` object silently falls back to
     // "the server returned HTTP 422", discarding the only useful part.
     if received.facts.status >= 400 {
-        let body = serde_json::from_slice::<ApiErrorBody>(&received.body).ok();
+        let body = envelope(received);
         let hint = body.as_ref().and_then(|body| body.hint.clone());
         let code = body.as_ref().map(|body| body.code.clone()).filter(|code| !code.is_empty());
         let message = body.map_or_else(
