@@ -102,7 +102,8 @@ export interface AccessPayload {
   iss: string;
   /** An array for people, a bare string for service tokens -- as Access issues them. */
   aud: string | string[];
-  sub: string;
+  /** Absent on the service tokens Access issues since 2026-11-18. */
+  sub?: string;
   exp: number;
   iat?: number;
   nbf?: number;
@@ -172,14 +173,15 @@ export async function mintUserToken(
 export async function mintServiceToken(
   material: AccessKeyMaterial,
   commonName: string,
-  options: { ttlSeconds?: number; now?: number } = {},
+  options: { ttlSeconds?: number; now?: number; omitSub?: boolean } = {},
 ): Promise<string> {
   const seconds = Math.floor((options.now ?? Date.now()) / 1000);
 
+  // `omitSub` mints the other shape Access issues: no `sub` claim at all.
   return signJwt(material.privateJwk, {
     iss: issuer(),
     aud: ACCESS_AUD,
-    sub: "",
+    ...(options.omitSub === true ? {} : { sub: "" }),
     common_name: commonName,
     exp: seconds + (options.ttlSeconds ?? 3600),
     iat: seconds - 5,

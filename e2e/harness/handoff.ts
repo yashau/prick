@@ -24,6 +24,11 @@ export interface Handoff {
   baseUrl: string;
   /** A minted Access assertion per role. */
   tokens: Record<Role, string>;
+  /**
+   * The `service` role's identity, minted with NO `sub` claim: the shape Access
+   * issues to service tokens since 2026-11-18, alongside the `sub: ""` shape.
+   */
+  serviceTokenWithoutSub: string;
   /** Absolute paths to the per-role Playwright storage state files. */
   storageState: Record<Role, string>;
   /** The certs URL the Worker was configured with. Asserted against in a spec. */

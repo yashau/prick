@@ -32,10 +32,11 @@ Mismatched pairs — an `email` with an empty `sub`, a `common_name` with a
 non-empty `sub` — fall through to the same rejection, for the same reason.
 
 :::note[Service tokens are shaped differently, and it matters]
-A service token payload has **no `email`, no `nbf`, and `sub` is the empty
-string**. A verifier written against the human token shape — requiring `nbf`, or
-a non-empty `sub`, or an `email` — rejects every machine client with a message
-that explains nothing. That is an explicit negative test, not a footnote.
+A service token payload has **no `email`, no `nbf`, and `sub` is either the
+empty string or absent altogether**; Access issues both, and an absent `sub` is
+read as the empty string. A verifier written against the human token shape —
+requiring `nbf`, or a `sub`, or an `email` — rejects every machine client with a
+message that explains nothing. Each of these is an explicit test, not a footnote.
 :::
 
 ## Resolution

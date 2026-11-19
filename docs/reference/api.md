@@ -98,7 +98,7 @@ the exact assertions.
 Three things happen on every authenticated request, in this order:
 
 1. The assertion is verified and classified. A non-empty `sub` with an `email`
-   is a user; a `common_name` with an empty `sub` is a service token.
+   is a user; a `common_name` with an empty or absent `sub` is a service token.
 2. `503 NO_ADMINS_CONFIGURED` if neither `BOOTSTRAP_ADMINS` nor a usable global
    admin grant exists. Failing closed beats an installation that answers
    requests, denies every privileged action, and gives no indication why.

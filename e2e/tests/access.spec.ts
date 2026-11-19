@@ -28,7 +28,9 @@
 
 import { environmentPath, expect, test } from "../fixtures";
 import type { AuditPage, GrantRecord, IdentityRecord, SecretListEntry, Whoami } from "../fixtures";
+import { ApiClient } from "../harness/api";
 import { SEED, SUBJECTS } from "../harness/constants";
+import { readHandoff } from "../harness/handoff";
 
 const production = environmentPath(SEED.project, SEED.production);
 const staging = environmentPath(SEED.project, SEED.staging);
@@ -155,6 +157,18 @@ test.describe("access service token", () => {
     expect(whoami.kind).toBe("service");
     expect(whoami.subject).toBe(SUBJECTS.service);
     expect(whoami.identityId).not.toBeNull();
+  });
+
+  test("is accepted with NO sub claim at all, as the same identity", async ({ api }) => {
+    const handoff = readHandoff();
+    const withoutSub = new ApiClient(handoff.baseUrl, handoff.serviceTokenWithoutSub);
+
+    const whoami = await withoutSub.request<Whoami>("/whoami");
+    expect(whoami.kind).toBe("service");
+    expect(whoami.subject).toBe(SUBJECTS.service);
+    expect(whoami.identityId).toBe((await api.request<Whoami>("/whoami")).identityId);
+
+    expect((await withoutSub.raw(`${production}/secrets`)).status).toBe(200);
   });
 
   test("reads under its project grant and cannot write", async ({ api }) => {
