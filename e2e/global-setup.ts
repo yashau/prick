@@ -270,6 +270,9 @@ export default async function globalSetup(_config: FullConfig): Promise<() => Pr
     const handoff: Handoff = {
       baseUrl: server.baseUrl,
       tokens,
+      serviceTokenWithoutSub: await mintServiceToken(accessKey, SUBJECTS.service, {
+        omitSub: true,
+      }),
       storageState,
       certsUrl: jwks.certsUrl,
       cloudflare: { baseUrl: cloudflare.server.baseUrl, apiUrl: cloudflareApi.baseUrl },
