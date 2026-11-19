@@ -54,6 +54,21 @@ behind it, for a script that needs to tell two causes of the same exit apart:
 `server_code` is absent when no server code was involved, such as a missing
 credential or an unreachable host.
 
+When a server answered the failing request, the failure also names the
+**request id** it was recorded under: a `request:` line without `--json`, and
+`request_id` in the envelope. It is the value to search the Worker's logs for.
+
+```
+error: The access token carries no subject. (UNAUTHENTICATED)
+  help: Run `prk login <url>`, or set PRK_ACCESS_CLIENT_ID and PRK_ACCESS_CLIENT_SECRET for a service token.
+  request: 01a1f12c-aa60-7000-864a-7abf1acb1f69
+```
+
+A refused credential is reported in the server's words, naming the check that
+failed, such as an expired token or one with no usable identity. Only a 401
+the server did not explain itself, such as Cloudflare Access's own challenge,
+reads as `the server requires authentication`.
+
 ## Exit codes
 
 Scripts branch on these, so a value keeps its meaning for good.

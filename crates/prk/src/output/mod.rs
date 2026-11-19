@@ -445,6 +445,9 @@ impl Output {
         if let Some(hint) = err.hint() {
             note(&format!("  help: {hint}"));
         }
+        if let Some(request_id) = err.request_id() {
+            note(&format!("  request: {request_id}"));
+        }
     }
 }
 
@@ -468,6 +471,11 @@ fn envelope(err: &CliError) -> serde_json::Value {
     // rather than `SERVICE_UNAVAILABLE`. Present only when a server said it.
     if let Some(server_code) = err.server_code() {
         envelope["error"]["server_code"] = serde_json::Value::String(server_code.to_owned());
+    }
+    // What the server recorded this failure under. Present only when a server
+    // answered, and it is what an operator searches the Worker's logs for.
+    if let Some(request_id) = err.request_id() {
+        envelope["error"]["request_id"] = serde_json::Value::String(request_id.to_owned());
     }
     envelope
 }
@@ -580,6 +588,21 @@ mod tests {
 
         let local = envelope_without_server_code();
         assert!(local["error"].get("server_code").is_none(), "{local}");
+    }
+
+    #[test]
+    fn the_json_envelope_carries_the_request_id_a_server_recorded() {
+        let answered = CliError::Api(
+            prick_api::ApiError::new(
+                prick_core::classify::ErrorKind::Unauthenticated,
+                "The access token carries no subject.",
+            )
+            .with_request_id("01a1f12c-aa60-7000"),
+        );
+        assert_eq!(envelope(&answered)["error"]["request_id"], "01a1f12c-aa60-7000");
+
+        let local = envelope_without_server_code();
+        assert!(local["error"].get("request_id").is_none(), "{local}");
     }
 
     fn envelope_without_server_code() -> serde_json::Value {

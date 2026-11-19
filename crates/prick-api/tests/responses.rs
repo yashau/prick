@@ -517,6 +517,57 @@ async fn an_unknown_api_path_answers_401_and_is_reported_as_such() {
 }
 
 #[tokio::test]
+async fn a_401_from_prick_reports_which_check_refused_the_credential() {
+    // The diagnosis is the server's message. Without it, every refused
+    // credential reads as "the server requires authentication", and a service
+    // token Access had started minting without a `sub` looked exactly like a
+    // revoked one.
+    let server = MockServer::start().await;
+    mount(
+        &server,
+        HEALTH,
+        ResponseTemplate::new(401).insert_header("x-request-id", "01a1f12c-aa60-7000").set_body_raw(
+            br#"{"code":"UNAUTHENTICATED","message":"The access token carries no subject.","hint":"Check the token.","request_id":"01a1f12c-aa60-7000"}"#
+                .to_vec(),
+            "application/json",
+        ),
+    )
+    .await;
+
+    let err = client_for(&server).health().await.expect_err("401 is a failure");
+    assert_eq!(err.kind(), ErrorKind::Unauthenticated);
+    assert_eq!(err.exit_code(), 3);
+    assert_eq!(err.to_string(), "The access token carries no subject. (UNAUTHENTICATED)");
+    assert_eq!(err.server_hint(), Some("Check the token."));
+    assert_eq!(err.server_code(), Some("UNAUTHENTICATED"));
+    assert_eq!(err.request_id(), Some("01a1f12c-aa60-7000"));
+}
+
+#[tokio::test]
+async fn a_401_from_access_itself_keeps_the_observed_description() {
+    // Access's own challenge is JSON too, but not prick's envelope: it names an
+    // OAuth error, not which of prick's checks failed.
+    let server = MockServer::start().await;
+    mount(
+        &server,
+        HEALTH,
+        ResponseTemplate::new(401)
+            .insert_header("www-authenticate", r#"Bearer resource_metadata="https://x/.well-known""#)
+            .set_body_raw(
+                br#"{"error":"invalid_token","error_description":"Missing or invalid access token"}"#
+                    .to_vec(),
+                "application/json",
+            ),
+    )
+    .await;
+
+    let err = client_for(&server).health().await.expect_err("401 is a failure");
+    assert_eq!(err.kind(), ErrorKind::Unauthenticated);
+    assert!(err.to_string().contains("authorization server"), "{err}");
+    assert_eq!(err.server_code(), None);
+}
+
+#[tokio::test]
 async fn a_request_id_is_sent_and_the_servers_own_one_is_preferred_on_the_way_back() {
     let server = MockServer::start().await;
     mount(
